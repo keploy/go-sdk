@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"go.uber.org/zap"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -25,6 +26,7 @@ type App struct {
 	Name string
 	LicenseKey string
 	Host string
+	Log zap.Logger
 }
 
 func (a *App) Capture(req TestCaseReq) {
@@ -49,6 +51,7 @@ func (a *App) check(host , port string, tc TestCase) bool{
 		panic(err)
 	}
 	req.Header = tc.HttpReq.Header
+	req.Header.Set("KEPLOY_TEST_ID", tc.ID)
 	req.ProtoMajor = tc.HttpReq.ProtoMajor
 	req.ProtoMinor = tc.HttpReq.ProtoMinor
 
@@ -80,7 +83,7 @@ func (a *App) check(host , port string, tc TestCase) bool{
 		return false
 	case tc.HttpResp.Body != string(body):
 		fmt.Println("body mismatch", tc.HttpResp.Body,string(body))
-		return true
+		return false
 	}
 	return true
 }
@@ -114,16 +117,30 @@ func (a *App) put(tcs TestCaseReq) {
 	return
 }
 
-func (a *App) fetch() []TestCase {
-	url := fmt.Sprintf("%s/regression/testcase?app=%s", a.Host, a.Name)
+func (a *App) Get(id string) *TestCase {
+	url := fmt.Sprintf("%s/regression/testcase/%s", a.Host, id)
+	body,err := a.newGet(url)
+	if err != nil {
+		a.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
+		return nil
+	}
+	var tcs TestCase
 
+	err = json.Unmarshal(body, &tcs)
+	if err != nil {
+		panic(err)
+	}
+	return &tcs
+
+}
+
+func (a *App) newGet(url string) ([]byte, error){
 	req, err := http.NewRequest("GET", url, http.NoBody)
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("key", a.LicenseKey)
 	req.Header.Set("content-type", "application/json")
-	if err != nil {
-		log.Fatalf("An error occurred %v", err)
-	}
-
 	client := &http.Client{
 		Timeout: time.Second * 600,
 	}
@@ -137,7 +154,16 @@ func (a *App) fetch() []TestCase {
 	if err != nil {
 		log.Fatalln(err)
 	}
+	return body, nil
+}
 
+func (a *App) fetch() []TestCase {
+	url := fmt.Sprintf("%s/regression/testcase?app=%s", a.Host, a.Name)
+	body,err := a.newGet(url)
+	if err != nil {
+		a.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
+		return nil
+	}
 	var tcs []TestCase
 
 	err = json.Unmarshal(body, &tcs)

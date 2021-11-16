@@ -7,6 +7,7 @@ type TestCaseReq struct {
 	AppID    string   `json:"app_id" bson:"app_id"`
 	HttpReq  HttpReq  `json:"http_req" bson:"http_req"`
 	HttpResp HttpResp `json:"http_resp" bson:"http_resp"`
+	Deps   []Dependency `json:"deps" bson:"deps"`
 }
 
 type TestCase struct {
@@ -18,7 +19,22 @@ type TestCase struct {
 	AppID    string   `json:"app_id" bson:"app_id"`
 	HttpReq  HttpReq  `json:"http_req" bson:"http_req"`
 	HttpResp HttpResp `json:"http_resp" bson:"http_resp"`
+	Deps  []Dependency `json:"deps" bson:"deps"`
 }
+
+type Dependency struct {
+	Name string `json:"name" bson:"name"`
+	Type DependencyType `json:"type" bson:"type"`
+	Meta map[string]string `json:"meta" bson:"meta"`
+	Data [][]byte `json:"data" bson:"data"`
+}
+
+type DependencyType string
+
+const (
+	NoSqlDB DependencyType = "DB"
+	SqlDB = "SQL_DB"
+)
 
 // type sql database -> postgres, mysql, redshift..
 

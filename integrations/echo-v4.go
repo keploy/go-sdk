@@ -3,6 +3,7 @@ package integrations
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"github.com/keploy/go-agent/keploy"
 	"github.com/labstack/echo/v4"
 	"io"
@@ -18,15 +19,44 @@ func Start(app *keploy.App, e *echo.Echo, host, port string)  {
 	mode := os.Getenv("KEPLOY_SDK_MODE")
 	switch mode {
 	case "test":
+		e.Use(NewMiddlewareContextValue)
+		e.Use(testMW(app))
 		go app.Test(host, port)
 	case "off":
 		// dont run the SDK
-		return
 	default:
+		e.Use(NewMiddlewareContextValue)
 		e.Use(captureMW(app))
 	}
 	e.Logger.Fatal(e.Start(host + ":" + port))
 }
+
+func testMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
+	if nil == app {
+		return func(next echo.HandlerFunc) echo.HandlerFunc {
+			return next
+		}
+	}
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) (err error) {
+			id := c.Request().Header.Get("KEPLOY_TEST_ID")
+			if id == "" {
+				return next(c)
+			}
+			tc := app.Get(id)
+			if tc == nil {
+				return next(c)
+			}
+			c.Set(keploy.KCTX, &keploy.Context{
+				Mode:   "test",
+				TestID: id,
+				Deps:   tc.Deps,
+			})
+			return next(c)
+		}
+	}
+}
+
 
 func captureMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 	if nil == app {
@@ -36,10 +66,17 @@ func captureMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 	}
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) (err error) {
+			c.Set(keploy.KCTX, &keploy.Context{
+				Mode:   "capture",
+			})
 			// Request
-			reqBody := []byte{}
+			var reqBody []byte
 			if c.Request().Body != nil { // Read
-				reqBody, _ = ioutil.ReadAll(c.Request().Body)
+				reqBody, err = ioutil.ReadAll(c.Request().Body)
+				if err != nil {
+					// TODO right way to log errors
+					return
+				}
 			}
 			c.Request().Body = ioutil.NopCloser(bytes.NewBuffer(reqBody)) // Reset
 
@@ -52,6 +89,13 @@ func captureMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 			if err = next(c); err != nil {
 				c.Error(err)
 			}
+
+			d := c.Request().Context().Value(keploy.KCTX)
+			if d == nil {
+				app.Log.Error("failed to get keploy context")
+				return
+			}
+			deps := d.(*keploy.Context)
 
 			u := &url.URL{
 				Scheme:   c.Scheme(),
@@ -78,6 +122,7 @@ func captureMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 					Header:       c.Response().Header(),
 					Body:         resBody.String(),
 				},
+				Deps: deps.Deps,
 			})
 
 
@@ -94,6 +139,7 @@ type bodyDumpResponseWriter struct {
 	io.Writer
 	http.ResponseWriter
 }
+
 func (w *bodyDumpResponseWriter) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
@@ -108,4 +154,31 @@ func (w *bodyDumpResponseWriter) Flush() {
 
 func (w *bodyDumpResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return w.ResponseWriter.(http.Hijacker).Hijack()
+}
+
+func NewMiddlewareContextValue(fn echo.HandlerFunc) echo.HandlerFunc {
+	return func(ctx echo.Context) error {
+		return fn(contextValue{ctx})
+	}
+}
+
+// from here https://stackoverflow.com/questions/69326129/does-set-method-of-echo-context-saves-the-value-to-the-underlying-context-cont
+
+type contextValue struct {
+	echo.Context
+}
+
+// Get retrieves data from the context.
+func (ctx contextValue) Get(key string) interface{} {
+	// get old context value
+	val := ctx.Context.Get(key)
+	if val != nil {
+		return val
+	}
+	return ctx.Request().Context().Value(key)
+}
+
+// Set saves data in the context.
+func (ctx contextValue) Set(key string, val interface{}) {
+	ctx.SetRequest(ctx.Request().WithContext(context.WithValue(ctx.Request().Context(), key, val)))
 }
