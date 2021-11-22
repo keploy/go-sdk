@@ -6,10 +6,11 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
-	"go.uber.org/zap"
 	"net/http"
 	"os"
 	"reflect"
+
+	"go.uber.org/zap"
 )
 
 const SDKMode = "KeploySDKMode"
@@ -83,6 +84,7 @@ func GetState(ctx context.Context) (*Context, error){
 
 func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, outputs ...interface{}) (bool, []interface{})  {
 	kctx, err := GetState(ctx)
+	fmt.Println("ritik")
 	if err != nil {
 		log.Error("failed to get state from context", zap.Error(err))
 		return false , nil
@@ -126,7 +128,7 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 		for i, t:= range outputs {
 			err = Encode(t,res, i)
 			if err != nil {
-				log.Error("failed to encode object", zap.String("type", reflect.TypeOf(t).String()), zap.String("test id", kctx.TestID))
+				log.Error("failed to encode object", zap.String("type", reflect.TypeOf(t).String()), zap.String("test id", kctx.TestID), zap.Error(err))
 				return false, nil
 			}
 		}
