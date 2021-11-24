@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	github.com/bnkamalesh/webgo/v6 v6.2.2
 	github.com/go-stack/stack v1.8.0 // indirect
 	github.com/golang/snappy v0.0.1 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect

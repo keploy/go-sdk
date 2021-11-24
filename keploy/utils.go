@@ -16,7 +16,8 @@ import (
 const SDKMode = "KeploySDKMode"
 const Deps = "KeployDeps"
 const TestID = "KeployTestID"
-const KCTX = "KeployContext"
+type keyType string
+const KCTX = keyType("KeployContext")
 
 func GetMode() string {
 	return os.Getenv("KEPLOY_SDK_MODE")

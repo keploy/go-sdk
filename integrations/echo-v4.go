@@ -4,8 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"github.com/keploy/go-agent/keploy"
-	"github.com/labstack/echo/v4"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
@@ -13,6 +12,9 @@ import (
 	"net/url"
 	"os"
 	"time"
+
+	"github.com/keploy/go-agent/keploy"
+	"github.com/labstack/echo/v4"
 )
 
 func Start(app *keploy.App, e *echo.Echo, host, port string)  {
@@ -47,7 +49,7 @@ func testMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 			if tc == nil {
 				return next(c)
 			}
-			c.Set(keploy.KCTX, &keploy.Context{
+			c.Set(fmt.Sprintf("%v", keploy.KCTX), &keploy.Context{
 				Mode:   "test",
 				TestID: id,
 				Deps:   tc.Deps,
@@ -66,7 +68,7 @@ func captureMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 	}
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) (err error) {
-			c.Set(keploy.KCTX, &keploy.Context{
+			c.Set(fmt.Sprintf("%v", keploy.KCTX), &keploy.Context{
 				Mode:   "capture",
 			})
 			// Request
@@ -175,10 +177,13 @@ func (ctx contextValue) Get(key string) interface{} {
 	if val != nil {
 		return val
 	}
-	return ctx.Request().Context().Value(key)
+	type keyType string
+	return ctx.Request().Context().Value(keyType(key))
 }
 
 // Set saves data in the context.
 func (ctx contextValue) Set(key string, val interface{}) {
-	ctx.SetRequest(ctx.Request().WithContext(context.WithValue(ctx.Request().Context(), key, val)))
+	
+	type keyType string
+	ctx.SetRequest(ctx.Request().WithContext(context.WithValue(ctx.Request().Context(), keyType(key), val)))
 }
