@@ -16,8 +16,10 @@ import (
 const SDKMode = "KeploySDKMode"
 const Deps = "KeployDeps"
 const TestID = "KeployTestID"
-type keyType string
-const KCTX = keyType("KeployContext")
+
+// type keyType string
+
+const KCTX = "KeployContext"
 
 func GetMode() string {
 	return os.Getenv("KEPLOY_SDK_MODE")
@@ -30,7 +32,7 @@ func compareHeaders(h1 http.Header, h2 http.Header) bool {
 
 func cmpHeader(h1 http.Header, h2 http.Header) bool {
 	for k, v := range h1 {
-		val, ok:= h2[k]
+		val, ok := h2[k]
 		if !ok {
 			fmt.Println("header not present", k)
 			return false
@@ -75,7 +77,7 @@ func Encode(obj interface{}, arr [][]byte, pos int) error {
 	return nil
 }
 
-func GetState(ctx context.Context) (*Context, error){
+func GetState(ctx context.Context) (*Context, error) {
 	kctx := ctx.Value(KCTX)
 	if kctx == nil {
 		return nil, errors.New("failed to get Keploy context")
@@ -83,12 +85,11 @@ func GetState(ctx context.Context) (*Context, error){
 	return kctx.(*Context), nil
 }
 
-func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, outputs ...interface{}) (bool, []interface{})  {
+func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, outputs ...interface{}) (bool, []interface{}) {
 	kctx, err := GetState(ctx)
-	fmt.Println("ritik")
 	if err != nil {
 		log.Error("failed to get state from context", zap.Error(err))
-		return false , nil
+		return false, nil
 	}
 	// capture the object
 	switch kctx.Mode {
@@ -126,14 +127,13 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 
 	case "capture":
 		res := make([][]byte, len(outputs))
-		for i, t:= range outputs {
-			err = Encode(t,res, i)
+		for i, t := range outputs {
+			err = Encode(t, res, i)
 			if err != nil {
 				log.Error("failed to encode object", zap.String("type", reflect.TypeOf(t).String()), zap.String("test id", kctx.TestID), zap.Error(err))
 				return false, nil
 			}
 		}
-
 		//err = keploy.Encode(err1,res, 1)
 		//if err != nil {
 		//	c.log.Error("failed to encode ddb resp", zap.String("test id", id))
