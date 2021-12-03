@@ -1,31 +1,133 @@
 package integrations
 
 import (
+	"errors"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/keploy/go-agent/keploy"
+	"go.uber.org/zap"
 )
 
 func NewDynamoDB(cl *dynamodb.DynamoDB) * DynamoDB{
-	return &DynamoDB{DynamoDB: *cl}
+	logger, _ := zap.NewProduction()
+	defer logger.Sync() // flushes buffer, if any
+	return &DynamoDB{
+		DynamoDB: *cl,
+		log: logger,
+	}
 }
 
 type DynamoDB struct {
 	dynamodb.DynamoDB
+	log *zap.Logger
 }
 
 func (c *DynamoDB) QueryWithContext(ctx aws.Context, input *dynamodb.QueryInput, opts ...request.Option) (*dynamodb.QueryOutput, error) {
+	if keploy.GetMode() == "off" {
+		return c.DynamoDB.QueryWithContext(ctx, input, opts...)
+	}
+	output, err := &dynamodb.QueryOutput{}, errors.New("")
 
-	return c.DynamoDB.QueryWithContext(ctx, input, opts...)
+	if keploy.GetMode() != "test" {
+		output, err = c.DynamoDB.QueryWithContext(ctx, input, opts...)
+	}
+
+	meta := map[string]string{
+		"operation": "QueryWithContext",
+		"query": input.String(),
+	}
+
+	if input.TableName != nil {
+		meta["table"] = *input.TableName
+	}
+
+	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, err)
+	if mock {
+		var mockOutput *dynamodb.QueryOutput
+		var mockErr error
+		if res[0] != nil {
+			mockOutput =  res[0].(*dynamodb.QueryOutput)
+		}
+		if res[1] != nil {
+			mockErr =  res[1].(error)
+		}
+		return mockOutput, mockErr
+	}
+	return output, err
 }
 
 func (c *DynamoDB) GetItemWithContext(ctx aws.Context, input *dynamodb.GetItemInput, opts ...request.Option) (*dynamodb.GetItemOutput, error) {
+	if keploy.GetMode() == "off" {
+		return c.DynamoDB.GetItemWithContext(ctx, input, opts...)
+	}
 
-	return c.DynamoDB.GetItemWithContext(ctx, input, opts...)
+	output, err := &dynamodb.GetItemOutput{}, errors.New("")
+
+	if keploy.GetMode() != "test" {
+		output, err = c.DynamoDB.GetItemWithContext(ctx, input, opts...)
+	}
+
+
+	meta := map[string]string{
+		"operation": "GetItemWithContext",
+		"query": input.String(),
+	}
+
+	if input.TableName != nil {
+		meta["table"] = *input.TableName
+	}
+
+	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, err)
+
+	if mock {
+		var mockOutput *dynamodb.GetItemOutput
+		var mockErr error
+		if res[0] != nil {
+			mockOutput =  res[0].(*dynamodb.GetItemOutput)
+		}
+		if res[1] != nil {
+			mockErr =  res[1].(error)
+		}
+		return mockOutput, mockErr
+	}
+	return output, err
 }
 
 func (c *DynamoDB) PutItemWithContext(ctx aws.Context, input *dynamodb.PutItemInput, opts ...request.Option) (*dynamodb.PutItemOutput, error) {
-	return c.DynamoDB.PutItemWithContext(ctx, input, opts...)
+	if keploy.GetMode() == "off" {
+		return c.DynamoDB.PutItemWithContext(ctx, input, opts...)
+	}
+
+	output, err := &dynamodb.PutItemOutput{}, errors.New("")
+
+	if keploy.GetMode() != "test" {
+		output, err = c.DynamoDB.PutItemWithContext(ctx, input, opts...)
+	}
+
+	meta := map[string]string{
+		"operation": "PutItemWithContext",
+		"query": input.String(),
+	}
+
+	if input.TableName != nil {
+		meta["table"] = *input.TableName
+	}
+
+	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, err)
+
+	if mock {
+		var mockOutput *dynamodb.PutItemOutput
+		var mockErr error
+		if res[0] != nil {
+			mockOutput =  res[0].(*dynamodb.PutItemOutput)
+		}
+		if res[1] != nil {
+			mockErr =  res[1].(error)
+		}
+		return mockOutput, mockErr
+	}
+	return output, err
 }
 
 
