@@ -1,6 +1,7 @@
 package integrations
 
 import (
+	"errors"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
@@ -9,7 +10,12 @@ import (
 )
 
 func NewDynamoDB(cl *dynamodb.DynamoDB) * DynamoDB{
-	return &DynamoDB{DynamoDB: *cl}
+	logger, _ := zap.NewProduction()
+	defer logger.Sync() // flushes buffer, if any
+	return &DynamoDB{
+		DynamoDB: *cl,
+		log: logger,
+	}
 }
 
 type DynamoDB struct {
@@ -18,12 +24,22 @@ type DynamoDB struct {
 }
 
 func (c *DynamoDB) QueryWithContext(ctx aws.Context, input *dynamodb.QueryInput, opts ...request.Option) (*dynamodb.QueryOutput, error) {
-	output, err := c.DynamoDB.QueryWithContext(ctx, input, opts...)
 	if keploy.GetMode() == "off" {
-		return output, err
+		return c.DynamoDB.QueryWithContext(ctx, input, opts...)
 	}
+	output, err := &dynamodb.QueryOutput{}, errors.New("")
+
+	if keploy.GetMode() != "test" {
+		output, err = c.DynamoDB.QueryWithContext(ctx, input, opts...)
+	}
+
 	meta := map[string]string{
 		"operation": "QueryWithContext",
+		"query": input.String(),
+	}
+
+	if input.TableName != nil {
+		meta["table"] = *input.TableName
 	}
 
 	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, err)
@@ -42,12 +58,24 @@ func (c *DynamoDB) QueryWithContext(ctx aws.Context, input *dynamodb.QueryInput,
 }
 
 func (c *DynamoDB) GetItemWithContext(ctx aws.Context, input *dynamodb.GetItemInput, opts ...request.Option) (*dynamodb.GetItemOutput, error) {
-	output, err := c.DynamoDB.GetItemWithContext(ctx, input, opts...)
 	if keploy.GetMode() == "off" {
-		return output, err
+		return c.DynamoDB.GetItemWithContext(ctx, input, opts...)
 	}
+
+	output, err := &dynamodb.GetItemOutput{}, errors.New("")
+
+	if keploy.GetMode() != "test" {
+		output, err = c.DynamoDB.GetItemWithContext(ctx, input, opts...)
+	}
+
+
 	meta := map[string]string{
 		"operation": "GetItemWithContext",
+		"query": input.String(),
+	}
+
+	if input.TableName != nil {
+		meta["table"] = *input.TableName
 	}
 
 	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, err)
@@ -67,13 +95,25 @@ func (c *DynamoDB) GetItemWithContext(ctx aws.Context, input *dynamodb.GetItemIn
 }
 
 func (c *DynamoDB) PutItemWithContext(ctx aws.Context, input *dynamodb.PutItemInput, opts ...request.Option) (*dynamodb.PutItemOutput, error) {
-	output, err := c.DynamoDB.PutItemWithContext(ctx, input, opts...)
 	if keploy.GetMode() == "off" {
-		return output, err
+		return c.DynamoDB.PutItemWithContext(ctx, input, opts...)
 	}
+
+	output, err := &dynamodb.PutItemOutput{}, errors.New("")
+
+	if keploy.GetMode() != "test" {
+		output, err = c.DynamoDB.PutItemWithContext(ctx, input, opts...)
+	}
+
 	meta := map[string]string{
 		"operation": "PutItemWithContext",
+		"query": input.String(),
 	}
+
+	if input.TableName != nil {
+		meta["table"] = *input.TableName
+	}
+
 	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, err)
 
 	if mock {

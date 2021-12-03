@@ -28,6 +28,10 @@ func compareHeaders(h1 http.Header, h2 http.Header) bool {
 
 func cmpHeader(h1 http.Header, h2 http.Header) bool {
 	for k, v := range h1 {
+		// Ignore go http router default headers
+		if k == "Date" || k == "Content-Length" {
+			return true
+		}
 		val, ok:= h2[k]
 		if !ok {
 			fmt.Println("header not present", k)
@@ -126,7 +130,7 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 		for i, t:= range outputs {
 			err = Encode(t,res, i)
 			if err != nil {
-				log.Error("failed to encode object", zap.String("type", reflect.TypeOf(t).String()), zap.String("test id", kctx.TestID))
+				log.Error("failed to encode object", zap.String("type", reflect.TypeOf(t).String()), zap.String("test id", kctx.TestID), zap.Error(err))
 				return false, nil
 			}
 		}

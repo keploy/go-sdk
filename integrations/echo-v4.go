@@ -10,12 +10,11 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"time"
 )
 
-func Start(app *keploy.App, e *echo.Echo, host, port string)  {
+func EchoV4(app *keploy.App, e *echo.Echo, host, port string)  {
 	mode := os.Getenv("KEPLOY_SDK_MODE")
 	switch mode {
 	case "test":
@@ -28,7 +27,6 @@ func Start(app *keploy.App, e *echo.Echo, host, port string)  {
 		e.Use(NewMiddlewareContextValue)
 		e.Use(captureMW(app))
 	}
-	e.Logger.Fatal(e.Start(host + ":" + port))
 }
 
 func testMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
@@ -97,22 +95,22 @@ func captureMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 			}
 			deps := d.(*keploy.Context)
 
-			u := &url.URL{
-				Scheme:   c.Scheme(),
-				//User:     url.UserPassword("me", "pass"),
-				Host:     c.Request().Host,
-				Path:     c.Request().URL.Path,
-				RawQuery: c.Request().URL.RawQuery,
-			}
+			//u := &url.URL{
+			//	Scheme:   c.Scheme(),
+			//	//User:     url.UserPassword("me", "pass"),
+			//	Host:     c.Request().Host,
+			//	Path:     c.Request().URL.Path,
+			//	RawQuery: c.Request().URL.RawQuery,
+			//}
 			
 			app.Capture(keploy.TestCaseReq{
 				Captured: time.Now().Unix(),
 				AppID:    app.Name,
+				URI: c.Request().URL.Path,
 				HttpReq:  keploy.HttpReq{
 					Method: keploy.Method(c.Request().Method),
 					ProtoMajor: c.Request().ProtoMajor,
 					ProtoMinor: c.Request().ProtoMinor,
-					URL:        u.String(),
 					Header:     c.Request().Header,
 					Body:       string(reqBody),
 				},
