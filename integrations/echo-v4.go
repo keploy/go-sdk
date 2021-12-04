@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+
+	"github.com/keploy/go-agent/keploy"
+	"github.com/labstack/echo/v4"
 	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"time"
 
@@ -16,7 +18,9 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-func Start(app *keploy.App, e *echo.Echo, host, port string) {
+
+func EchoV4(app *keploy.App, e *echo.Echo, host, port string)  {
+
 	mode := os.Getenv("KEPLOY_SDK_MODE")
 	switch mode {
 	case "test":
@@ -29,7 +33,6 @@ func Start(app *keploy.App, e *echo.Echo, host, port string) {
 		e.Use(NewMiddlewareContextValue)
 		e.Use(captureMW(app))
 	}
-	e.Logger.Fatal(e.Start(host + ":" + port))
 }
 
 func testMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
@@ -58,6 +61,9 @@ func testMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 	}
 }
 
+
+
+
 func captureMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 	if nil == app {
 		return func(next echo.HandlerFunc) echo.HandlerFunc {
@@ -67,7 +73,9 @@ func captureMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) (err error) {
 			c.Set(keploy.KCTX, &keploy.Context{
-				Mode: "capture",
+
+				Mode:   "capture",
+
 			})
 			// Request
 			var reqBody []byte
@@ -94,25 +102,27 @@ func captureMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 			if d == nil {
 				app.Log.Error("failed to get keploy context")
 				return
+
 			}
 			deps := d.(*keploy.Context)
 
-			u := &url.URL{
-				Scheme: c.Scheme(),
-				//User:     url.UserPassword("me", "pass"),
-				Host:     c.Request().Host,
-				Path:     c.Request().URL.Path,
-				RawQuery: c.Request().URL.RawQuery,
-			}
-
+			//u := &url.URL{
+			//	Scheme:   c.Scheme(),
+			//	//User:     url.UserPassword("me", "pass"),
+			//	Host:     c.Request().Host,
+			//	Path:     c.Request().URL.Path,
+			//	RawQuery: c.Request().URL.RawQuery,
+			//}
+			
 			app.Capture(keploy.TestCaseReq{
 				Captured: time.Now().Unix(),
 				AppID:    app.Name,
-				HttpReq: keploy.HttpReq{
-					Method:     keploy.Method(c.Request().Method),
+				URI: c.Request().URL.Path,
+				HttpReq:  keploy.HttpReq{
+					Method: keploy.Method(c.Request().Method),
+
 					ProtoMajor: c.Request().ProtoMajor,
 					ProtoMinor: c.Request().ProtoMinor,
-					URL:        u.String(),
 					Header:     c.Request().Header,
 					Body:       string(reqBody),
 				},
@@ -174,13 +184,12 @@ func (ctx contextValue) Get(key string) interface{} {
 	if val != nil {
 		return val
 	}
-	// type keyType string
 	return ctx.Request().Context().Value(key)
 }
 
 // Set saves data in the context.
 func (ctx contextValue) Set(key string, val interface{}) {
 
-	// type keyType string
 	ctx.SetRequest(ctx.Request().WithContext(context.WithValue(ctx.Request().Context(), key, val)))
 }
+
