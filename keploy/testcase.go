@@ -2,14 +2,20 @@ package keploy
 
 import "net/http"
 
+type DeNoiseReq struct {
+	ID      string      `json:"id" bson:"id"`
+	AppID   string      `json:"app_id" bson:"app_id"`
+	Body    string      `json:"body"`
+	Headers http.Header `json:"headers" bson:"headers"`
+}
 
 type TestCaseReq struct {
-	Captured int64 `json:"captured" bson:"captured"`
-	AppID    string   `json:"app_id" bson:"app_id"`
-	URI      string              `json:"uri" bson:"uri"`
-	HttpReq  HttpReq  `json:"http_req" bson:"http_req"`
-	HttpResp HttpResp `json:"http_resp" bson:"http_resp"`
-	Deps   []Dependency `json:"deps" bson:"deps"`
+	Captured int64        `json:"captured" bson:"captured"`
+	AppID    string       `json:"app_id" bson:"app_id"`
+	URI      string       `json:"uri" bson:"uri"`
+	HttpReq  HttpReq      `json:"http_req" bson:"http_req"`
+	HttpResp HttpResp     `json:"http_resp" bson:"http_resp"`
+	Deps     []Dependency `json:"deps" bson:"deps"`
 }
 
 type TestCase struct {

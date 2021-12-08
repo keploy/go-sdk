@@ -11,9 +11,9 @@ import (
 	"time"
 )
 
-func NewApp(name, licenseKey, host string) *App {
-	if host == "" {
-		host = "http://localhost:8081"
+func NewApp(name, licenseKey, keployHost, host, port string) *App {
+	if keployHost == "" {
+		keployHost = "http://localhost:8081"
 	}
 	logger, err := zap.NewProduction()
 	if err != nil {
@@ -22,38 +22,42 @@ func NewApp(name, licenseKey, host string) *App {
 	defer logger.Sync() // flushes buffer, if any
 
 	return &App{
-		Name:       name,
-		LicenseKey: licenseKey,
-		Host: host,
-		Log: logger,
+		Name:        name,
+		LicenseKey:  licenseKey,
+		KelployHost: keployHost,
+		Host:        host,
+		Port:        port,
+		Log:         logger,
 	}
 }
 
 type App struct {
-	Name string
-	LicenseKey string
-	Host string
-	Log *zap.Logger
+	Name        string
+	LicenseKey  string
+	KelployHost string
+	Host        string
+	Port        string
+	Log         *zap.Logger
 }
 
 func (a *App) Capture(req TestCaseReq) {
 	a.put(req)
 }
 
-func(a *App) Test(host, port string)  {
+func (a *App) Test() {
 	// fetch test cases from web server and save to memory
-	time.Sleep(time.Second*5)
+	time.Sleep(time.Second * 5)
 	tcs := a.fetch()
 	// call the service for each test case
 	for _, tc := range tcs {
 		fmt.Println("testing: ", tc.ID)
-		fmt.Println("testcase result: ", a.check(host, port, tc))
+		fmt.Println("testcase result: ", a.check(tc))
 	}
 	//
 }
 
-func (a *App) check(host , port string, tc TestCase) bool{
-	req, err := http.NewRequest(string(tc.HttpReq.Method), "http://" + host + ":" + port + tc.URI, bytes.NewBufferString(tc.HttpReq.Body))
+func (a *App) simulate(tc TestCase) (http.Header, []byte, error) {
+	req, err := http.NewRequest(string(tc.HttpReq.Method), "http://"+a.Host+":"+a.Port+tc.URI, bytes.NewBufferString(tc.HttpReq.Body))
 	if err != nil {
 		panic(err)
 	}
@@ -68,7 +72,7 @@ func (a *App) check(host , port string, tc TestCase) bool{
 	resp, err := client.Do(req)
 	if err != nil {
 		a.Log.Error("failed sending testcase request to backend", zap.Error(err))
-		return false
+		return nil, nil, err
 	}
 
 	defer resp.Body.Close()
@@ -76,9 +80,17 @@ func (a *App) check(host , port string, tc TestCase) bool{
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		a.Log.Error("failed getting testcases from backend", zap.Error(err))
+		return nil, nil, err
+	}
+	return resp.Header, body, nil
+}
+
+func (a *App) check(tc TestCase) bool {
+	header, body, err := a.simulate(tc)
+	if err != nil {
+		a.Log.Error("failed to simulate request on local server", zap.Error(err))
 		return false
 	}
-
 	// TODO move this diff logic to server
 	switch {
 	//case tc.HttpResp.ProtoMajor != resp.ProtoMajor:
@@ -87,8 +99,8 @@ func (a *App) check(host , port string, tc TestCase) bool{
 	//case tc.HttpResp.ProtoMinor != resp.ProtoMinor:
 	//	fmt.Println("incorrect proto minor", tc.HttpResp.ProtoMinor, resp.ProtoMinor)
 	//	return false
-	case compareHeaders(tc.HttpResp.Header, resp.Header):
-		a.Log.Info("incorrect headers", zap.String("id", tc.ID), zap.String("uri", tc.URI), zap.Any("expected headers", tc.HttpResp.Header), zap.Any("actual headers", resp.Header))
+	case compareHeaders(tc.HttpResp.Header, header):
+		a.Log.Info("incorrect headers", zap.String("id", tc.ID), zap.String("uri", tc.URI), zap.Any("expected headers", tc.HttpResp.Header), zap.Any("actual headers", header))
 
 		return false
 	case tc.HttpResp.Body != string(body):
@@ -104,7 +116,7 @@ func (a *App) put(tcs TestCaseReq) {
 		a.Log.Error("failed to marshall testcase request", zap.String("url", tcs.URI), zap.Error(err))
 		return
 	}
-	req, err := http.NewRequest("POST", a.Host + "/regression/testcase", bytes.NewBuffer(bin))
+	req, err := http.NewRequest("POST", a.Host+"/regression/testcase", bytes.NewBuffer(bin))
 	if err != nil {
 		a.Log.Error("failed to create testcase request", zap.String("url", tcs.URI), zap.Error(err))
 		return
@@ -126,18 +138,65 @@ func (a *App) put(tcs TestCaseReq) {
 		err = Body.Close()
 		if err != nil {
 			a.Log.Error("failed to close connecton reader", zap.String("url", tcs.URI), zap.Error(err))
+			return
 		}
 	}(resp.Body)
-	_, err = ioutil.ReadAll(resp.Body)
+	var res map[string]string
+	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		a.Log.Error("failed to read response from backend", zap.String("url", tcs.URI), zap.Error(err))
 	}
+	err = json.Unmarshal(body, &res)
+	if err != nil {
+		a.Log.Error("failed to read testcases from keploy cloud", zap.Error(err))
+		return
+	}
+	if res["id"] != "" {
+		// run the request again to find noisy fields
+		h, b, err := a.simulate(TestCase{
+			Captured: tcs.Captured,
+			URI:      tcs.URI,
+			HttpReq:  tcs.HttpReq,
+			Deps:     tcs.Deps,
+		})
+		if err != nil {
+			a.Log.Error("failed to simulate request on local server", zap.Error(err))
+			return
+		}
+
+		bin, err := json.Marshal(&DeNoiseReq{
+			ID:      res["id"],
+			AppID:   a.Name,
+			Body:    string(b),
+			Headers: h,
+		})
+		if err != nil {
+			a.Log.Error("failed to marshall testcase request", zap.String("url", tcs.URI), zap.Error(err))
+			return
+		}
+
+		// send de-noise request to server
+		r, err := http.NewRequest("POST", a.Host+"/regression/denoise", bytes.NewBuffer(bin))
+		if err != nil {
+			a.Log.Error("failed to create de-noise request", zap.String("url", tcs.URI), zap.Error(err))
+			return
+		}
+
+		r.Header.Set("key", a.LicenseKey)
+
+		_, err = client.Do(req)
+		if err != nil {
+			a.Log.Error("failed to send de-noise request to backend", zap.String("url", tcs.URI), zap.Error(err))
+			return
+		}
+	}
+
 	return
 }
 
 func (a *App) Get(id string) *TestCase {
 	url := fmt.Sprintf("%s/regression/testcase/%s", a.Host, id)
-	body,err := a.newGet(url)
+	body, err := a.newGet(url)
 	if err != nil {
 		a.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
 		return nil
@@ -153,7 +212,7 @@ func (a *App) Get(id string) *TestCase {
 
 }
 
-func (a *App) newGet(url string) ([]byte, error){
+func (a *App) newGet(url string) ([]byte, error) {
 	req, err := http.NewRequest("GET", url, http.NoBody)
 	if err != nil {
 		return nil, err
@@ -178,7 +237,7 @@ func (a *App) newGet(url string) ([]byte, error){
 
 func (a *App) fetch() []TestCase {
 	url := fmt.Sprintf("%s/regression/testcase?app=%s", a.Host, a.Name)
-	body,err := a.newGet(url)
+	body, err := a.newGet(url)
 	if err != nil {
 		a.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
 		return nil
