@@ -5,9 +5,7 @@ import (
 	"context"
 	"encoding/gob"
 	"errors"
-	"fmt"
 	"go.uber.org/zap"
-	"net/http"
 	"os"
 	"reflect"
 )
@@ -19,32 +17,6 @@ const KCTX = "KeployContext"
 
 func GetMode() string {
 	return os.Getenv("KEPLOY_SDK_MODE")
-}
-
-func compareHeaders(h1 http.Header, h2 http.Header) bool {
-	return !(cmpHeader(h1, h2) && cmpHeader(h2, h1))
-
-}
-
-func cmpHeader(h1 http.Header, h2 http.Header) bool {
-	for k, v := range h1 {
-		// Ignore go http router default headers
-		if k == "Date" || k == "Content-Length" {
-			return true
-		}
-		val, ok:= h2[k]
-		if !ok {
-			fmt.Println("header not present", k)
-			return false
-		}
-		for i, e := range v {
-			if val[i] != e {
-				fmt.Println("value not same", k, v, val)
-				return false
-			}
-		}
-	}
-	return true
 }
 
 func Decode(bin []byte, obj interface{}) (interface{}, error) {
@@ -77,7 +49,7 @@ func Encode(obj interface{}, arr [][]byte, pos int) error {
 	return nil
 }
 
-func GetState(ctx context.Context) (*Context, error){
+func GetState(ctx context.Context) (*Context, error) {
 	kctx := ctx.Value(KCTX)
 	if kctx == nil {
 		return nil, errors.New("failed to get Keploy context")
@@ -85,11 +57,11 @@ func GetState(ctx context.Context) (*Context, error){
 	return kctx.(*Context), nil
 }
 
-func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, outputs ...interface{}) (bool, []interface{})  {
+func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, outputs ...interface{}) (bool, []interface{}) {
 	kctx, err := GetState(ctx)
 	if err != nil {
 		log.Error("failed to get state from context", zap.Error(err))
-		return false , nil
+		return false, nil
 	}
 	// capture the object
 	switch kctx.Mode {
@@ -127,8 +99,8 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 
 	case "capture":
 		res := make([][]byte, len(outputs))
-		for i, t:= range outputs {
-			err = Encode(t,res, i)
+		for i, t := range outputs {
+			err = Encode(t, res, i)
 			if err != nil {
 				log.Error("failed to encode object", zap.String("type", reflect.TypeOf(t).String()), zap.String("test id", kctx.TestID), zap.Error(err))
 				return false, nil
