@@ -28,6 +28,9 @@ func NewApp(name, licenseKey, keployHost, host, port string) *App {
 		Host:        host,
 		Port:        port,
 		Log:         logger,
+		client: &http.Client{
+			Timeout: time.Second * 600,
+		},
 	}
 }
 
@@ -38,6 +41,7 @@ type App struct {
 	Host        string
 	Port        string
 	Log         *zap.Logger
+	client      *http.Client
 }
 
 func (a *App) Capture(req TestCaseReq) {
@@ -66,10 +70,7 @@ func (a *App) simulate(tc TestCase) (http.Header, []byte, error) {
 	req.ProtoMajor = tc.HttpReq.ProtoMajor
 	req.ProtoMinor = tc.HttpReq.ProtoMinor
 
-	client := &http.Client{
-		Timeout: time.Second * 600,
-	}
-	resp, err := client.Do(req)
+	resp, err := a.client.Do(req)
 	if err != nil {
 		a.Log.Error("failed sending testcase request to backend", zap.Error(err))
 		return nil, nil, err
@@ -86,28 +87,50 @@ func (a *App) simulate(tc TestCase) (http.Header, []byte, error) {
 }
 
 func (a *App) check(tc TestCase) bool {
-	header, body, err := a.simulate(tc)
+	headers, body, err := a.simulate(tc)
 	if err != nil {
 		a.Log.Error("failed to simulate request on local server", zap.Error(err))
 		return false
 	}
-	// TODO move this diff logic to server
-	switch {
-	//case tc.HttpResp.ProtoMajor != resp.ProtoMajor:
-	//	fmt.Println("incorrect proto major", tc.HttpResp.ProtoMajor, resp.ProtoMajor)
-	//	return false
-	//case tc.HttpResp.ProtoMinor != resp.ProtoMinor:
-	//	fmt.Println("incorrect proto minor", tc.HttpResp.ProtoMinor, resp.ProtoMinor)
-	//	return false
-	case compareHeaders(tc.HttpResp.Header, header):
-		a.Log.Info("incorrect headers", zap.String("id", tc.ID), zap.String("uri", tc.URI), zap.Any("expected headers", tc.HttpResp.Header), zap.Any("actual headers", header))
 
-		return false
-	case tc.HttpResp.Body != string(body):
-		a.Log.Info("body mismatch", zap.String("id", tc.ID), zap.String("uri", tc.URI), zap.Any("expected body", tc.HttpResp.Body), zap.String("actual body", string(body)))
+	bin, err := json.Marshal(&DeNoiseReq{
+		ID:      tc.ID,
+		AppID:   a.Name,
+		Body:    string(body),
+		Headers: headers,
+	})
+	if err != nil {
+		a.Log.Error("failed to marshal testcase request", zap.String("url", tc.URI), zap.Error(err))
 		return false
 	}
-	return true
+
+	// send de-noise request to server
+	r, err := http.NewRequest("POST", a.Host+"/regression/test", bytes.NewBuffer(bin))
+	if err != nil {
+		a.Log.Error("failed to create test request request server", zap.String("id", tc.ID), zap.String("url", tc.URI), zap.Error(err))
+		return false
+	}
+
+	r.Header.Set("key", a.LicenseKey)
+	resp, err := a.client.Do(r)
+	if err != nil {
+		a.Log.Error("failed to send test request to backend", zap.String("url", tc.URI), zap.Error(err))
+		return false
+	}
+	var res map[string]bool
+	b, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		a.Log.Error("failed to read response from backend", zap.String("url", tc.URI), zap.Error(err))
+	}
+	err = json.Unmarshal(b, &res)
+	if err != nil {
+		a.Log.Error("failed to read test result from keploy cloud", zap.Error(err))
+		return false
+	}
+	if res["pass"] {
+		return true
+	}
+	return false
 }
 
 func (a *App) put(tcs TestCaseReq) {
@@ -125,10 +148,7 @@ func (a *App) put(tcs TestCaseReq) {
 	req.Header.Set("key", a.LicenseKey)
 	req.Header.Set("content-type", "application/json")
 
-	client := &http.Client{
-		Timeout: time.Second * 600,
-	}
-	resp, err := client.Do(req)
+	resp, err := a.client.Do(req)
 	if err != nil {
 		a.Log.Error("failed to send testcase to backend", zap.String("url", tcs.URI), zap.Error(err))
 		return
@@ -184,7 +204,7 @@ func (a *App) put(tcs TestCaseReq) {
 
 		r.Header.Set("key", a.LicenseKey)
 
-		_, err = client.Do(req)
+		_, err = a.client.Do(req)
 		if err != nil {
 			a.Log.Error("failed to send de-noise request to backend", zap.String("url", tcs.URI), zap.Error(err))
 			return
@@ -219,10 +239,7 @@ func (a *App) newGet(url string) ([]byte, error) {
 	}
 	req.Header.Set("key", a.LicenseKey)
 	req.Header.Set("content-type", "application/json")
-	client := &http.Client{
-		Timeout: time.Second * 600,
-	}
-	resp, err := client.Do(req)
+	resp, err := a.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
