@@ -66,6 +66,18 @@ func captureMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 			c.Set(keploy.KCTX, &keploy.Context{
 				Mode: "capture",
 			})
+			id := c.Request().Header.Get("KEPLOY_TEST_ID")
+			if id != "" {
+				// id is only present during simulation
+				// run it similar to how testcases would run
+				c.Set(keploy.KCTX, &keploy.Context{
+					Mode:   "test",
+					TestID: id,
+					Deps:   app.Deps[id],
+				})
+				return next(c)
+			}
+
 			// Request
 			var reqBody []byte
 			if c.Request().Body != nil { // Read

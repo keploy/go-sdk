@@ -59,7 +59,6 @@ type HttpReq struct {
 }
 
 type HttpResp struct {
-	Status       string      `json:"status" bson:"status"`           // e.g. "200 OK"
 	StatusCode   int         `json:"status_code" bson:"status_code"` // e.g. 200
 	ProtoMajor   int         `json:"proto_major" bson:"proto_major"` // e.g. 1
 	ProtoMinor   int         `json:"proto_minor" bson:"proto_minor"` // e.g. 0
