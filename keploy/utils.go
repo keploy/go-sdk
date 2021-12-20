@@ -70,6 +70,7 @@ func Encode(obj interface{}, arr [][]byte, pos int) error {
 	enc := gob.NewEncoder(&buf) // Will write to network.
 	// Encode (send) some values.
 	err := enc.Encode(obj)
+	fmt.Printf("utils line73: %v, %", obj)
 	if err != nil {
 		return err
 	}
@@ -91,6 +92,7 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 		log.Error("failed to get state from context", zap.Error(err))
 		return false , nil
 	}
+	log.Info(kctx.Mode, )
 	// capture the object
 	switch kctx.Mode {
 	case "test":

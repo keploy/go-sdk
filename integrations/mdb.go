@@ -3,10 +3,12 @@ package integrations
 import (
 	"context"
 	"encoding/gob"
+	// "fmt"
 
 	"github.com/keploy/go-agent/keploy"
 	"go.uber.org/zap"
 
+	// "go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -24,38 +26,61 @@ type MongoDB struct {
 	log *zap.Logger
 }
 
-func (c *MongoDB) FindOne(ctx context.Context, filter interface{}, opts ...*options.FindOneOptions) *mongo.SingleResult {
-	//We should do this only when GetMode is capture. But here it is calling for both.
-	var output *mongo.SingleResult
+type MongoSingleResult struct{
+	Err error
+	mongo.SingleResult
+	Kcontext *keploy.Context
+	ctx context.Context
+	log *zap.Logger
+}
+
+func (msr *MongoSingleResult) Decode(v interface{}) error{
+
+	var err error
 	mode := keploy.GetMode()
 	switch mode {
 	case "test":
 		//dont run mongo query as it is stored in context
-		output = &mongo.SingleResult{}
+		err = nil
 	case "off":
-		output = c.Collection.FindOne(ctx, filter, opts...)
-		return output
+		err = msr.SingleResult.Decode(v)
+		return err
 	default:
-		output = c.Collection.FindOne(ctx, filter, opts...)
+		err = msr.SingleResult.Decode(v)
 	}
 
 	meta := map[string]string{
-		"operation": "FindOne",
+		"operation": "Decode",
 	}
 
-	mock, res := keploy.ProcessDep(ctx, c.log, meta, output)
+	mock, res := keploy.ProcessDep(msr.ctx, msr.log, meta, v, err)
+
 	if mock {
-		var mockOutput *mongo.SingleResult
-		// var mockErr error
+		var mockErr error
 		if res[0] != nil {
-			mockOutput = res[0].(*mongo.SingleResult)
+			v = res[0]
 		}
-		// if res[1] != nil {
-		// 	mockErr =  res[1].(error)
-		// }
-		return mockOutput
+		if res[1] != nil {
+			mockErr = res[1].(error)
+		}
+		return  mockErr
 	}
-	return output
+	return err
+}
+
+func (c *MongoDB) FindOne(ctx context.Context, filter interface{}, opts ...*options.FindOneOptions) *MongoSingleResult {
+	sr := c.Collection.FindOne(ctx, filter, opts...)
+	kcontext,ok := ctx.Value(keploy.KCTX).(*keploy.Context)
+	if !ok{
+		c.log.Error("keploy context not present ")
+	}
+	return &MongoSingleResult{
+		Err: sr.Err(),
+		SingleResult: *sr,
+		log: c.log,
+		Kcontext: kcontext,
+		ctx: ctx,
+	}
 }
 
 func (c *MongoDB) InsertOne(ctx context.Context, document interface{},
@@ -99,45 +124,61 @@ func (c *MongoDB) InsertOne(ctx context.Context, document interface{},
 	return output, err
 }
 
-func (c *MongoDB) Find(ctx context.Context, filter interface{},
-	opts ...*options.FindOptions) (*mongo.Cursor, error) {
+type MongoCursor struct{
+	Err error
+	mongo.Cursor
+	Kcontext *keploy.Context
+	ctx context.Context
+	log *zap.Logger
+}
 
-	var output *mongo.Cursor
+func (cr *MongoCursor) Decode(v interface{}) error{
 	var err error
 	mode := keploy.GetMode()
 	switch mode {
 	case "test":
 		//dont run mongo query as it is stored in context
-		output = &mongo.Cursor{}
 		err = nil
 	case "off":
-		output, err = c.Collection.Find(ctx, filter, opts...)
-		return output, err
+		err = cr.Cursor.Decode(v)
+		return err
 	default:
-		output, err = c.Collection.Find(ctx, filter, opts...)
+		err = cr.Cursor.Decode(v)
 	}
 
-	if keploy.GetMode() == "off" {
-		return output, err
-	}
 	meta := map[string]string{
-		"operation": "Find",
+		"operation": "Decode",
 	}
 
-	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, err)
+	mock, res := keploy.ProcessDep(cr.ctx, cr.log, meta, v, err)
 
 	if mock {
-		var mockOutput *mongo.Cursor
 		var mockErr error
 		if res[0] != nil {
-			mockOutput = res[0].(*mongo.Cursor)
+			v = res[0]
 		}
 		if res[1] != nil {
 			mockErr = res[1].(error)
 		}
-		return mockOutput, mockErr
+		return  mockErr
 	}
-	return output, err
+	return err
+}
+
+func (c *MongoDB) Find(ctx context.Context, filter interface{},
+	opts ...*options.FindOptions) (*MongoCursor, error) {
+	cursor,err := c.Collection.Find(ctx, filter, opts...)
+	kcontext,ok := ctx.Value(keploy.KCTX).(*keploy.Context)
+	if !ok{
+		c.log.Error("keploy context not present ")
+	}
+	return &MongoCursor{
+		Err: err,
+		Cursor: *cursor,
+		log: c.log,
+		Kcontext: kcontext,
+		ctx: ctx,
+	}, err
 }
 
 func (c *MongoDB) InsertMany(ctx context.Context, documents []interface{},

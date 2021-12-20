@@ -1,9 +1,11 @@
 package integrations
 
 import (
+	// "errors"
 	"io"
 
 	"github.com/keploy/go-agent/keploy"
+	// "github.com/labstack/gommon/log"
 	"google.golang.org/grpc"
 
 	"go.uber.org/zap"
@@ -11,7 +13,7 @@ import (
 	"context"
 )
 
-func clientInterceptor(
+func clientInterceptor(app *keploy.App) func (
 	ctx context.Context,
 	method string,
 	req interface{},
@@ -20,7 +22,16 @@ func clientInterceptor(
 	invoker grpc.UnaryInvoker,
 	opts ...grpc.CallOption,
 ) error {
-	// Logic before invoking the invoker
+	return func (
+		ctx context.Context,
+		method string,
+		req interface{},
+		reply interface{},
+		cc *grpc.ClientConn,
+		invoker grpc.UnaryInvoker,
+		opts ...grpc.CallOption,
+	) error {
+		// Logic before invoking the invoker
 
 	// Calls the invoker to execute RPC
 	var err error
@@ -47,6 +58,10 @@ func clientInterceptor(
 	mock, res := keploy.ProcessDep(ctx, logger, meta, reply)
 	if mock {
 		var mockErr error
+		if len(res)!=2{
+			app.Log.Error("Did not recieve grpc client object")
+			return nil
+		}
 		if res[0] != nil {
 			reply = res[0]
 		}
@@ -58,7 +73,61 @@ func clientInterceptor(
 	}
 
 	return err
+	}
 }
+
+// func clientInterceptor(
+// 	ctx context.Context,
+// 	method string,
+// 	req interface{},
+// 	reply interface{},
+// 	cc *grpc.ClientConn,
+// 	invoker grpc.UnaryInvoker,
+// 	opts ...grpc.CallOption,
+// ) error {
+// 	// Logic before invoking the invoker
+
+// 	// Calls the invoker to execute RPC
+// 	var err error
+// 	mode := keploy.GetMode()
+// 	switch mode {
+// 	case "test":
+// 		//dont run invoker
+// 	case "off":
+// 		err = invoker(ctx, method, req, reply, cc, opts...)
+// 		return err
+// 	default:
+// 		err = invoker(ctx, method, req, reply, cc, opts...)
+// 	}
+
+// 	// Logic after invoking the invoker
+
+// 	meta := map[string]string{
+// 		"operation": method,
+// 	}
+
+// 	logger, _ := zap.NewProduction()
+// 	defer logger.Sync()
+
+// 	mock, res := keploy.ProcessDep(ctx, logger, meta, reply)
+// 	if mock {
+// 		var mockErr error
+// 		if len(res)!=2{
+			
+// 			return 
+// 		}
+// 		if res[0] != nil {
+// 			reply = res[0]
+// 		}
+// 		if res[1] != nil {
+// 			mockErr = res[1].(error)
+// 			return mockErr
+// 		}
+
+// 	}
+
+// 	return err
+// }
 
 func StreamClientInterceptor(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
 
@@ -148,8 +217,8 @@ func (s *tracedClientStream) RecvMsg(m interface{}) error {
 	return err
 }
 
-func WithClientUnaryInterceptor() grpc.DialOption {
-	return grpc.WithUnaryInterceptor(clientInterceptor)
+func WithClientUnaryInterceptor(app *keploy.App) grpc.DialOption {
+	return grpc.WithUnaryInterceptor(clientInterceptor(app))
 }
 
 func WithClientStreamInterceptor() grpc.DialOption {

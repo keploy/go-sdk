@@ -14,8 +14,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/keploy/go-agent/keploy"
-	"github.com/labstack/echo/v4"
 )
 
 

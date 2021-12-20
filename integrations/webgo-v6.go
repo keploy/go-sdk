@@ -4,13 +4,15 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"io/ioutil"
 
 	// "log"
 	"net"
 	"net/http"
-	"net/url"
+
+	// "net/url"
 	"os"
 	"time"
 
@@ -20,21 +22,21 @@ import (
 	"github.com/keploy/go-agent/keploy"
 )
 
-func WebGoStart(app *keploy.App, w *webgo.Router, host, port string) {
+func WebGoV6(app *keploy.App, w *webgo.Router, host, port string) {
 	mode := os.Getenv("KEPLOY_SDK_MODE")
 	switch mode {
 	case "test":
-		w.Use(testMWWebGo(app))
+		w.Use(testMWWebGoV6(app))
 		go app.Test(host, port)
 	case "off":
 		// dont run the SDK
 	default:
-		w.Use(captureMWWebGo(app))
+		w.Use(captureMWWebGoV6(app))
 	}
 	w.Start()
 }
 
-func testMWWebGo(app *keploy.App) func(http.ResponseWriter, *http.Request, http.HandlerFunc) {
+func testMWWebGoV6(app *keploy.App) func(http.ResponseWriter, *http.Request, http.HandlerFunc) {
 	if nil == app {
 		return func(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
 			next(w, r)
@@ -60,7 +62,7 @@ func testMWWebGo(app *keploy.App) func(http.ResponseWriter, *http.Request, http.
 	}
 }
 
-func captureMWWebGo(app *keploy.App) func(http.ResponseWriter, *http.Request, http.HandlerFunc) {
+func captureMWWebGoV6(app *keploy.App) func(http.ResponseWriter, *http.Request, http.HandlerFunc) {
 	if nil == app {
 		return func(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
 			next(w, r)
@@ -89,7 +91,7 @@ func captureMWWebGo(app *keploy.App) func(http.ResponseWriter, *http.Request, ht
 		// Response
 		resBody := new(bytes.Buffer)
 		mw := io.MultiWriter(w, resBody)
-		writer := &bodyDumpResponseWriterWebgo{Writer: mw, ResponseWriter: w}
+		writer := &bodyDumpResponseWriterWebgoV6{Writer: mw, ResponseWriter: w}
 		w = writer
 
 		next(w, r)
@@ -100,24 +102,26 @@ func captureMWWebGo(app *keploy.App) func(http.ResponseWriter, *http.Request, ht
 			return
 		}
 		deps := d.(*keploy.Context)
+		fmt.Println("go-agent, line 105: ",deps)
 
-		u := &url.URL{
-			Scheme: r.URL.Scheme,
-			//User:     url.UserPassword("me", "pass"),
-			Host:     r.URL.Host,
-			Path:     r.URL.Path,
-			RawQuery: r.URL.RawQuery,
-		}
+		// u := &url.URL{
+		// 	Scheme: r.URL.Scheme,
+		// 	//User:     url.UserPassword("me", "pass"),
+		// 	Host:     r.URL.Host,
+		// 	Path:     r.URL.Path,
+		// 	RawQuery: r.URL.RawQuery,
+		// }
 		app.Capture(keploy.TestCaseReq{
 			Captured: time.Now().Unix(),
 			AppID:    app.Name,
+			URI: r.URL.Path,
 			HttpReq: keploy.HttpReq{
 				Method:     keploy.Method(r.Method),
 				ProtoMajor: r.ProtoMajor,
 				ProtoMinor: r.ProtoMinor,
-				URL:        u.String(),
-				Header:     r.Header,
-				Body:       string(reqBody),
+
+				Header: r.Header,
+				Body:   string(reqBody),
 			},
 			HttpResp: keploy.HttpResp{
 				//Status
@@ -131,24 +135,23 @@ func captureMWWebGo(app *keploy.App) func(http.ResponseWriter, *http.Request, ht
 	}
 }
 
-type bodyDumpResponseWriterWebgo struct {
+type bodyDumpResponseWriterWebgoV6 struct {
 	io.Writer
 	http.ResponseWriter
 }
 
-func (w *bodyDumpResponseWriterWebgo) WriteHeader(code int) {
+func (w *bodyDumpResponseWriterWebgoV6) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
-func (w *bodyDumpResponseWriterWebgo) Write(b []byte) (int, error) {
+func (w *bodyDumpResponseWriterWebgoV6) Write(b []byte) (int, error) {
 	return w.Writer.Write(b)
 }
 
-func (w *bodyDumpResponseWriterWebgo) Flush() {
+func (w *bodyDumpResponseWriterWebgoV6) Flush() {
 	w.ResponseWriter.(http.Flusher).Flush()
 }
 
-func (w *bodyDumpResponseWriterWebgo) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+func (w *bodyDumpResponseWriterWebgoV6) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return w.ResponseWriter.(http.Hijacker).Hijack()
 }
-
