@@ -114,6 +114,8 @@ func (a *App) check(tc TestCase) bool {
 	}
 
 	r.Header.Set("key", a.LicenseKey)
+	r.Header.Set("Content-Type", "application/json")
+
 	resp, err := a.client.Do(r)
 	if err != nil {
 		a.Log.Error("failed to send test request to backend", zap.String("url", tc.URI), zap.Error(err))
@@ -246,7 +248,6 @@ func (a *App) newGet(url string) ([]byte, error) {
 		return nil, err
 	}
 	req.Header.Set("key", a.LicenseKey)
-	req.Header.Set("content-type", "application/json")
 	resp, err := a.client.Do(req)
 	if err != nil {
 		return nil, err
