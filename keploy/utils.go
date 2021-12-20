@@ -42,7 +42,6 @@ func Encode(obj interface{}, arr [][]byte, pos int) error {
 	enc := gob.NewEncoder(&buf) // Will write to network.
 	// Encode (send) some values.
 	err := enc.Encode(obj)
-	fmt.Printf("utils line73: %v, %", obj)
 	if err != nil {
 		return err
 	}

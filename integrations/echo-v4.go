@@ -193,7 +193,3 @@ func (ctx contextValue) Set(key string, val interface{}) {
 
 	ctx.SetRequest(ctx.Request().WithContext(context.WithValue(ctx.Request().Context(), key, val)))
 }
-<<<<<<< HEAD
-
-=======
->>>>>>> ca4bf8bea9cfceeeb7ec29a5c21da7fe5632c22d

@@ -5,7 +5,7 @@ import (
 	"encoding/gob"
 	// "fmt"
 
-	"github.com/keploy/go-agent/keploy"
+	"github.com/keploy/go-sdk/keploy"
 	"go.uber.org/zap"
 
 	// "go.mongodb.org/mongo-driver/bson"

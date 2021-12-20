@@ -4,7 +4,7 @@ import (
 	// "errors"
 	"io"
 
-	"github.com/keploy/go-agent/keploy"
+	"github.com/keploy/go-sdk/keploy"
 	// "github.com/labstack/gommon/log"
 	"google.golang.org/grpc"
 

@@ -19,7 +19,7 @@ import (
 	"github.com/bnkamalesh/webgo/v4"
 	// "github.com/bnkamalesh/webgo/v4/middleware/accesslog"
 	// "github.com/bnkamalesh/webgo/v4/middleware/cors"
-	"github.com/keploy/go-agent/keploy"
+	"github.com/keploy/go-sdk/keploy"
 )
 
 func WebGoV4(app *keploy.App, w *webgo.Router, host, port string) {
@@ -27,7 +27,7 @@ func WebGoV4(app *keploy.App, w *webgo.Router, host, port string) {
 	switch mode {
 	case "test":
 		w.Use(testMWWebGoV4(app))
-		go app.Test(host, port)
+		go app.Test()
 	case "off":
 		// dont run the SDK
 	default:
@@ -103,7 +103,7 @@ func captureMWWebGoV4(app *keploy.App) func(http.ResponseWriter, *http.Request, 
 			return
 		}
 		deps := d.(*keploy.Context)
-		fmt.Println("go-agent, line 105: ", deps)
+		fmt.Println("go-sdk, line 105: ", deps)
 
 		// u := &url.URL{
 		// 	Scheme: r.URL.Scheme,
