@@ -67,11 +67,11 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 	switch kctx.Mode {
 	case "test":
 		if kctx.Deps == nil || len(kctx.Deps) == 0 {
-			log.Error("incorrect number of dynamodb dependencies in keploy context", zap.String("test id", kctx.TestID))
+			log.Error("incorrect number of dependencies in keploy context", zap.String("test id", kctx.TestID))
 			return false, nil
 		}
 		if len(kctx.Deps[0].Data) != len(outputs) {
-			log.Error("incorrect number of dynamodb dependencies in keploy context", zap.String("test id", kctx.TestID))
+			log.Error("incorrect number of dependencies in keploy context", zap.String("test id", kctx.TestID))
 			return false, nil
 		}
 		var res []interface{}
@@ -112,8 +112,6 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 		//	c.log.Error("failed to encode ddb resp", zap.String("test id", id))
 		//}
 		kctx.Deps = append(kctx.Deps, Dependency{
-			Name: "dynamodb",
-			Type: NoSqlDB,
 			Data: res,
 			Meta: meta,
 		})
