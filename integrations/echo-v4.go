@@ -4,8 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-
-	"github.com/keploy/go-agent/keploy"
+	"github.com/keploy/go-sdk/keploy"
 	"github.com/labstack/echo/v4"
 	"io"
 	"io/ioutil"
@@ -16,15 +15,13 @@ import (
 
 )
 
-
-func EchoV4(app *keploy.App, e *echo.Echo, host, port string)  {
-
+func EchoV4(app *keploy.App, e *echo.Echo) {
 	mode := os.Getenv("KEPLOY_SDK_MODE")
 	switch mode {
 	case "test":
 		e.Use(NewMiddlewareContextValue)
 		e.Use(testMW(app))
-		go app.Test(host, port)
+		go app.Test()
 	case "off":
 		// dont run the SDK
 	default:
@@ -59,9 +56,6 @@ func testMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 	}
 }
 
-
-
-
 func captureMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 	if nil == app {
 		return func(next echo.HandlerFunc) echo.HandlerFunc {
@@ -71,10 +65,20 @@ func captureMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) (err error) {
 			c.Set(keploy.KCTX, &keploy.Context{
-
-				Mode:   "capture",
-
+				Mode: "capture",
 			})
+			id := c.Request().Header.Get("KEPLOY_TEST_ID")
+			if id != "" {
+				// id is only present during simulation
+				// run it similar to how testcases would run
+				c.Set(keploy.KCTX, &keploy.Context{
+					Mode:   "test",
+					TestID: id,
+					Deps:   app.Deps[id],
+				})
+				return next(c)
+			}
+
 			// Request
 			var reqBody []byte
 			if c.Request().Body != nil { // Read
@@ -111,14 +115,13 @@ func captureMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 			//	Path:     c.Request().URL.Path,
 			//	RawQuery: c.Request().URL.RawQuery,
 			//}
-			
+
 			app.Capture(keploy.TestCaseReq{
 				Captured: time.Now().Unix(),
 				AppID:    app.Name,
-				URI: c.Request().URL.Path,
-				HttpReq:  keploy.HttpReq{
-					Method: keploy.Method(c.Request().Method),
-
+				URI:      c.Request().URL.Path,
+				HttpReq: keploy.HttpReq{
+					Method:     keploy.Method(c.Request().Method),
 					ProtoMajor: c.Request().ProtoMajor,
 					ProtoMinor: c.Request().ProtoMinor,
 					Header:     c.Request().Header,
@@ -190,4 +193,7 @@ func (ctx contextValue) Set(key string, val interface{}) {
 
 	ctx.SetRequest(ctx.Request().WithContext(context.WithValue(ctx.Request().Context(), key, val)))
 }
+<<<<<<< HEAD
 
+=======
+>>>>>>> ca4bf8bea9cfceeeb7ec29a5c21da7fe5632c22d

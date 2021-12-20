@@ -5,16 +5,16 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/keploy/go-agent/keploy"
+	"github.com/keploy/go-sdk/keploy"
 	"go.uber.org/zap"
 )
 
-func NewDynamoDB(cl *dynamodb.DynamoDB) * DynamoDB{
+func NewDynamoDB(cl *dynamodb.DynamoDB) *DynamoDB {
 	logger, _ := zap.NewProduction()
 	defer logger.Sync() // flushes buffer, if any
 	return &DynamoDB{
 		DynamoDB: *cl,
-		log: logger,
+		log:      logger,
 	}
 }
 
@@ -35,8 +35,10 @@ func (c *DynamoDB) QueryWithContext(ctx aws.Context, input *dynamodb.QueryInput,
 	}
 
 	meta := map[string]string{
+		"name":      "dynamodb",
+		"type":      string(keploy.NoSqlDB),
 		"operation": "QueryWithContext",
-		"query": input.String(),
+		"query":     input.String(),
 	}
 
 	if input.TableName != nil {
@@ -49,10 +51,10 @@ func (c *DynamoDB) QueryWithContext(ctx aws.Context, input *dynamodb.QueryInput,
 		var mockOutput *dynamodb.QueryOutput
 		var mockErr error
 		if res[0] != nil {
-			mockOutput =  res[0].(*dynamodb.QueryOutput)
+			mockOutput = res[0].(*dynamodb.QueryOutput)
 		}
 		if res[1] != nil {
-			mockErr =  res[1].(error)
+			mockErr = res[1].(error)
 		}
 		return mockOutput, mockErr
 	}
@@ -71,10 +73,11 @@ func (c *DynamoDB) GetItemWithContext(ctx aws.Context, input *dynamodb.GetItemIn
 		output, err = c.DynamoDB.GetItemWithContext(ctx, input, opts...)
 	}
 
-
 	meta := map[string]string{
+		"name":      "dynamodb",
+		"type":      string(keploy.NoSqlDB),
 		"operation": "GetItemWithContext",
-		"query": input.String(),
+		"query":     input.String(),
 	}
 
 	if input.TableName != nil {
@@ -88,10 +91,10 @@ func (c *DynamoDB) GetItemWithContext(ctx aws.Context, input *dynamodb.GetItemIn
 		var mockOutput *dynamodb.GetItemOutput
 		var mockErr error
 		if res[0] != nil {
-			mockOutput =  res[0].(*dynamodb.GetItemOutput)
+			mockOutput = res[0].(*dynamodb.GetItemOutput)
 		}
 		if res[1] != nil {
-			mockErr =  res[1].(error)
+			mockErr = res[1].(error)
 		}
 		return mockOutput, mockErr
 	}
@@ -111,8 +114,10 @@ func (c *DynamoDB) PutItemWithContext(ctx aws.Context, input *dynamodb.PutItemIn
 	}
 
 	meta := map[string]string{
+		"name":      "dynamodb",
+		"type":      string(keploy.NoSqlDB),
 		"operation": "PutItemWithContext",
-		"query": input.String(),
+		"query":     input.String(),
 	}
 
 	if input.TableName != nil {
@@ -126,16 +131,12 @@ func (c *DynamoDB) PutItemWithContext(ctx aws.Context, input *dynamodb.PutItemIn
 		var mockOutput *dynamodb.PutItemOutput
 		var mockErr error
 		if res[0] != nil {
-			mockOutput =  res[0].(*dynamodb.PutItemOutput)
+			mockOutput = res[0].(*dynamodb.PutItemOutput)
 		}
 		if res[1] != nil {
-			mockErr =  res[1].(error)
+			mockErr = res[1].(error)
 		}
 		return mockOutput, mockErr
 	}
 	return output, err
 }
-
-
-
-
