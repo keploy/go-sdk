@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"go.uber.org/zap"
+	"errors"
 
 	"io"
 	"io/ioutil"
@@ -46,6 +47,40 @@ type App struct {
 	client     *http.Client
 	Deps       map[string][]Dependency
 }
+
+type KError struct{
+	Err error
+}
+
+func (e *KError) Error() string{
+	return e.Err.Error()
+}
+
+const version = 1
+
+func (e *KError) GobEncode() ([]byte, error) {
+	r := make([]byte, 0)
+	r = append(r, version)
+	
+	if e.Err!=nil{
+		r =append(r, e.Err.Error()...)
+	}
+	return r, nil
+}
+
+func (e *KError) GobDecode(b []byte) error {
+	if b[0] != version {
+		return errors.New("gob decode of errors.errorString failed: unsupported version")
+	}
+	str := string(b[1:])
+	if str!=""{
+		e.Err = errors.New(str)
+	}else{
+		e.Err = nil
+	}
+	return nil
+}
+
 
 func (a *App) Capture(req TestCaseReq) {
 	a.put(req)

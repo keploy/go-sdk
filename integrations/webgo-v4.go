@@ -77,6 +77,20 @@ func captureMWWebGoV4(app *keploy.App) func(http.ResponseWriter, *http.Request, 
 
 		r = r.WithContext(ctx)
 
+		id := r.Header.Get("KEPLOY_TEST_ID")
+		if id != "" {
+			// id is only present during simulation
+			// run it similar to how testcases would run
+			ctx := context.WithValue(r.Context(), keploy.KCTX, &keploy.Context{
+				Mode:   "test",
+				TestID: id,
+				Deps:   app.Deps[id],
+			})
+	
+			r = r.WithContext(ctx)
+			next(w, r)
+			return
+		}
 		// Request
 		var reqBody []byte
 		var err error

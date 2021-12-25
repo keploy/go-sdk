@@ -2,6 +2,7 @@ package integrations
 
 import (
 	// "errors"
+	"fmt"
 	"io"
 
 	"github.com/keploy/go-sdk/keploy"
@@ -31,17 +32,20 @@ func clientInterceptor(app *keploy.App) func (
 		invoker grpc.UnaryInvoker,
 		opts ...grpc.CallOption,
 	) error {
-		// Logic before invoking the invoker
-
-	// Calls the invoker to execute RPC
+	if keploy.GetMode()=="off"{
+		err := invoker(ctx, method, req, reply, cc, opts...)
+		return err
+	}
 	var err error
-	mode := keploy.GetMode()
+	var kerr *keploy.KError = &keploy.KError{Err: nil}
+	kctx,er := keploy.GetState(ctx)
+	if er!=nil{
+		app.Log.Error(er.Error())
+	}
+	mode := kctx.Mode
 	switch mode {
 	case "test":
 		//dont run invoker
-	case "off":
-		err = invoker(ctx, method, req, reply, cc, opts...)
-		return err
 	default:
 		err = invoker(ctx, method, req, reply, cc, opts...)
 	}
@@ -52,10 +56,12 @@ func clientInterceptor(app *keploy.App) func (
 		"operation": method,
 	}
 
-	logger, _ := zap.NewProduction()
-	defer logger.Sync()
-
-	mock, res := keploy.ProcessDep(ctx, logger, meta, reply)
+	if err!=nil{
+		kerr = &keploy.KError{Err: err}
+		fmt.Printf(" -- %v", reply)
+		app.Log.Error("d", zap.Error(err))
+	}
+	mock, res := keploy.ProcessDep(ctx, app.Log, meta, reply, kerr)
 	if mock {
 		var mockErr error
 		if len(res)!=2{
@@ -65,10 +71,11 @@ func clientInterceptor(app *keploy.App) func (
 		if res[0] != nil {
 			reply = res[0]
 		}
-		if res[1] != nil {
-			mockErr = res[1].(error)
-			return mockErr
+		x := res[1].(*keploy.KError)
+		if x.Err != nil {
+			mockErr = x.Err
 		}
+		return mockErr
 
 	}
 
@@ -76,59 +83,7 @@ func clientInterceptor(app *keploy.App) func (
 	}
 }
 
-// func clientInterceptor(
-// 	ctx context.Context,
-// 	method string,
-// 	req interface{},
-// 	reply interface{},
-// 	cc *grpc.ClientConn,
-// 	invoker grpc.UnaryInvoker,
-// 	opts ...grpc.CallOption,
-// ) error {
-// 	// Logic before invoking the invoker
-
-// 	// Calls the invoker to execute RPC
-// 	var err error
-// 	mode := keploy.GetMode()
-// 	switch mode {
-// 	case "test":
-// 		//dont run invoker
-// 	case "off":
-// 		err = invoker(ctx, method, req, reply, cc, opts...)
-// 		return err
-// 	default:
-// 		err = invoker(ctx, method, req, reply, cc, opts...)
-// 	}
-
-// 	// Logic after invoking the invoker
-
-// 	meta := map[string]string{
-// 		"operation": method,
-// 	}
-
-// 	logger, _ := zap.NewProduction()
-// 	defer logger.Sync()
-
-// 	mock, res := keploy.ProcessDep(ctx, logger, meta, reply)
-// 	if mock {
-// 		var mockErr error
-// 		if len(res)!=2{
-			
-// 			return 
-// 		}
-// 		if res[0] != nil {
-// 			reply = res[0]
-// 		}
-// 		if res[1] != nil {
-// 			mockErr = res[1].(error)
-// 			return mockErr
-// 		}
-
-// 	}
-
-// 	return err
-// }
-
+//not added KError for encoding and decoding
 func StreamClientInterceptor(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
 
 	var (
@@ -158,7 +113,6 @@ func StreamClientInterceptor(ctx context.Context, desc *grpc.StreamDesc, cc *grp
 		context:      ctx,
 		testMode:     testingMode,
 	}, err
-
 }
 
 type tracedClientStream struct {

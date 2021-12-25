@@ -63,7 +63,6 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 		log.Error("failed to get state from context", zap.Error(err))
 		return false, nil
 	}
-	log.Info(kctx.Mode, )
 	// capture the object
 	switch kctx.Mode {
 	case "test":

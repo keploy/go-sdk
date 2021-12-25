@@ -3,6 +3,10 @@ package integrations
 import (
 	"context"
 	"encoding/gob"
+
+	// "fmt"
+
+	// "errors"
 	// "fmt"
 
 	"github.com/keploy/go-sdk/keploy"
@@ -26,89 +30,162 @@ type MongoDB struct {
 	log *zap.Logger
 }
 
-type MongoSingleResult struct{
-	Err error
+type MongoSingleResult struct {
 	mongo.SingleResult
-	Kcontext *keploy.Context
 	ctx context.Context
 	log *zap.Logger
 }
 
-func (msr *MongoSingleResult) Decode(v interface{}) error{
-
+func (msr *MongoSingleResult) Err() error {
+	if keploy.GetMode() == "off" {
+		err := msr.SingleResult.Err()
+		return err
+	}
 	var err error
-	mode := keploy.GetMode()
+	var kerr *keploy.KError = &keploy.KError{Err: nil}
+	kctx, er := keploy.GetState(msr.ctx)
+	if er != nil {
+		msr.log.Error(er.Error())
+	}
+	mode := kctx.Mode
 	switch mode {
 	case "test":
 		//dont run mongo query as it is stored in context
-		err = nil
-	case "off":
-		err = msr.SingleResult.Decode(v)
+	default:
+		err = msr.SingleResult.Err()
+	}
+
+	meta := map[string]string{
+		"name":      "mongodb",
+		"type":      string(keploy.NoSqlDB),
+		"operation": "FindOne.Err",
+	}
+
+	if err != nil {
+		kerr = &keploy.KError{Err: err}
+	}
+	mock, res := keploy.ProcessDep(msr.ctx, msr.log, meta, kerr)
+
+	if mock {
+		var mockErr error
+		x := res[0].(*keploy.KError)
+		if x.Err != nil {
+			mockErr = x.Err
+		}
+		return mockErr
+	}
+	return err
+}
+
+func (msr *MongoSingleResult) Decode(v interface{}) error {
+	if keploy.GetMode() == "off" {
+		err := msr.SingleResult.Decode(v)
 		return err
+	}
+	var err error
+	var kerr *keploy.KError = &keploy.KError{Err: nil}
+	kctx, er := keploy.GetState(msr.ctx)
+	if er != nil {
+		msr.log.Error(er.Error())
+	}
+	mode := kctx.Mode
+	switch mode {
+	case "test":
+		//dont run mongo query as it is stored in context
 	default:
 		err = msr.SingleResult.Decode(v)
 	}
 
 	meta := map[string]string{
-		"operation": "Decode",
+		"name":      "mongodb",
+		"type":      string(keploy.NoSqlDB),
+		"operation": "FindOne.Decode",
 	}
 
-	mock, res := keploy.ProcessDep(msr.ctx, msr.log, meta, v, err)
+	if err != nil {
+		kerr = &keploy.KError{Err: err}
+	}
+	mock, res := keploy.ProcessDep(msr.ctx, msr.log, meta, v, kerr)
 
 	if mock {
 		var mockErr error
 		if res[0] != nil {
 			v = res[0]
 		}
-		if res[1] != nil {
-			mockErr = res[1].(error)
+		x := res[1].(*keploy.KError)
+		if x.Err != nil {
+			mockErr = x.Err
 		}
-		return  mockErr
+		return mockErr
 	}
 	return err
 }
 
 func (c *MongoDB) FindOne(ctx context.Context, filter interface{}, opts ...*options.FindOneOptions) *MongoSingleResult {
-	sr := c.Collection.FindOne(ctx, filter, opts...)
-	kcontext,ok := ctx.Value(keploy.KCTX).(*keploy.Context)
-	if !ok{
-		c.log.Error("keploy context not present ")
+	if keploy.GetMode() == "off" {
+		sr := c.Collection.FindOne(ctx, filter, opts...)
+		return &MongoSingleResult{
+			SingleResult: *sr,
+			log:          c.log,
+			ctx:          ctx,
+		}
 	}
+	kctx, er := keploy.GetState(ctx)
+	if er != nil {
+		c.log.Error(er.Error())
+	}
+	mode := kctx.Mode
+	var sr *mongo.SingleResult
+	switch mode {
+	case "test":
+		return &MongoSingleResult{
+			log: c.log,
+			ctx: ctx,
+		}
+	default:
+		sr = c.Collection.FindOne(ctx, filter, opts...)
+	}
+
 	return &MongoSingleResult{
-		Err: sr.Err(),
 		SingleResult: *sr,
-		log: c.log,
-		Kcontext: kcontext,
-		ctx: ctx,
+		log:          c.log,
+		ctx:          ctx,
 	}
 }
 
 func (c *MongoDB) InsertOne(ctx context.Context, document interface{},
 	opts ...*options.InsertOneOptions) (*mongo.InsertOneResult, error) {
-
+	if keploy.GetMode() == "off" {
+		output, err := c.Collection.InsertOne(ctx, document, opts...)
+		return output, err
+	}
 	var output *mongo.InsertOneResult
 	var err error
-	mode := keploy.GetMode()
+	var kerr *keploy.KError = &keploy.KError{Err: nil}
+	kctx, er := keploy.GetState(ctx)
+	if er != nil {
+		c.log.Error(er.Error())
+	}
+	mode := kctx.Mode
 	switch mode {
 	case "test":
 		//dont run mongo query as it is stored in context
 		output = &mongo.InsertOneResult{}
-		err = nil
-	case "off":
-		output, err = c.Collection.InsertOne(ctx, document, opts...)
-		return output, err
 	default:
 		output, err = c.Collection.InsertOne(ctx, document, opts...)
 	}
 
-	if keploy.GetMode() == "off" {
-		return output, err
-	}
 	meta := map[string]string{
+		"name":      "mongodb",
+		"type":      string(keploy.NoSqlDB),
 		"operation": "InsertOne",
 	}
 
-	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, err)
+	if err != nil {
+		kerr = &keploy.KError{Err: err}
+		output = &mongo.InsertOneResult{}
+	}
+	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, kerr)
 
 	if mock {
 		var mockOutput *mongo.InsertOneResult
@@ -116,94 +193,119 @@ func (c *MongoDB) InsertOne(ctx context.Context, document interface{},
 		if res[0] != nil {
 			mockOutput = res[0].(*mongo.InsertOneResult)
 		}
-		if res[1] != nil {
-			mockErr = res[1].(error)
+		x := res[1].(*keploy.KError)
+		if x.Err != nil {
+			mockErr = x.Err
 		}
 		return mockOutput, mockErr
 	}
 	return output, err
 }
 
-type MongoCursor struct{
+type MongoCursor struct {
 	Err error
 	mongo.Cursor
 	Kcontext *keploy.Context
-	ctx context.Context
-	log *zap.Logger
+	ctx      context.Context
+	log      *zap.Logger
 }
 
-func (cr *MongoCursor) Decode(v interface{}) error{
+func (cr *MongoCursor) Decode(v interface{}) error {
+	if keploy.GetMode() == "off" {
+		err := cr.Cursor.Decode(v)
+		return err
+	}
 	var err error
-	mode := keploy.GetMode()
+	var kerr *keploy.KError = &keploy.KError{Err: nil}
+	kctx, er := keploy.GetState(cr.ctx)
+	if er != nil {
+		cr.log.Error(er.Error())
+	}
+	mode := kctx.Mode
 	switch mode {
 	case "test":
 		//dont run mongo query as it is stored in context
 		err = nil
-	case "off":
-		err = cr.Cursor.Decode(v)
-		return err
 	default:
 		err = cr.Cursor.Decode(v)
 	}
 
 	meta := map[string]string{
-		"operation": "Decode",
+		"name":      "mongodb",
+		"type":      string(keploy.NoSqlDB),
+		"operation": "Find.Decode",
 	}
 
-	mock, res := keploy.ProcessDep(cr.ctx, cr.log, meta, v, err)
+	if err != nil {
+		kerr = &keploy.KError{Err: err}
+	}
+	mock, res := keploy.ProcessDep(cr.ctx, cr.log, meta, v, kerr)
 
 	if mock {
 		var mockErr error
 		if res[0] != nil {
 			v = res[0]
 		}
-		if res[1] != nil {
-			mockErr = res[1].(error)
+		x := res[1].(*keploy.KError)
+		if x.Err != nil {
+			mockErr = x.Err
 		}
-		return  mockErr
+		return mockErr
 	}
 	return err
 }
 
+//have to work on this. It might fail
 func (c *MongoDB) Find(ctx context.Context, filter interface{},
 	opts ...*options.FindOptions) (*MongoCursor, error) {
-	cursor,err := c.Collection.Find(ctx, filter, opts...)
-	kcontext,ok := ctx.Value(keploy.KCTX).(*keploy.Context)
-	if !ok{
+	cursor, err := c.Collection.Find(ctx, filter, opts...)
+	kcontext, ok := ctx.Value(keploy.KCTX).(*keploy.Context)
+	if !ok {
 		c.log.Error("keploy context not present ")
 	}
 	return &MongoCursor{
-		Err: err,
-		Cursor: *cursor,
-		log: c.log,
+		Err:      err,
+		Cursor:   *cursor,
+		log:      c.log,
 		Kcontext: kcontext,
-		ctx: ctx,
+		ctx:      ctx,
 	}, err
 }
 
 func (c *MongoDB) InsertMany(ctx context.Context, documents []interface{},
 	opts ...*options.InsertManyOptions) (*mongo.InsertManyResult, error) {
-
+	if keploy.GetMode() == "off" {
+		output, err := c.Collection.InsertMany(ctx, documents, opts...)
+		return output, err
+	}
 	var output *mongo.InsertManyResult
 	var err error
-	mode := keploy.GetMode()
+	var kerr *keploy.KError = &keploy.KError{Err: nil}
+	kctx, er := keploy.GetState(ctx)
+	if er != nil {
+		c.log.Error(er.Error())
+	}
+	mode := kctx.Mode
 	switch mode {
 	case "test":
 		//dont run mongo query as it is stored in context
 		output = &mongo.InsertManyResult{}
 		err = nil
-	case "off":
-		output, err = c.Collection.InsertMany(ctx, documents, opts...)
-		return output, err
 	default:
 		output, err = c.Collection.InsertMany(ctx, documents, opts...)
 	}
 
 	meta := map[string]string{
+		"name":      "mongodb",
+		"type":      string(keploy.NoSqlDB),
 		"operation": "InsertMany",
 	}
 
-	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, err)
+	if err != nil {
+		kerr = &keploy.KError{Err: err}
+		output = &mongo.InsertManyResult{}
+	}
+	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, kerr)
 
 	if mock {
 		var mockOutput *mongo.InsertManyResult
@@ -211,8 +313,9 @@ func (c *MongoDB) InsertMany(ctx context.Context, documents []interface{},
 		if res[0] != nil {
 			mockOutput = res[0].(*mongo.InsertManyResult)
 		}
-		if res[1] != nil {
-			mockErr = res[1].(error)
+		x := res[1].(*keploy.KError)
+		if x.Err != nil {
+			mockErr = x.Err
 		}
 		return mockOutput, mockErr
 	}
@@ -221,30 +324,39 @@ func (c *MongoDB) InsertMany(ctx context.Context, documents []interface{},
 
 func (c *MongoDB) UpdateOne(ctx context.Context, filter interface{}, update interface{},
 	opts ...*options.UpdateOptions) (*mongo.UpdateResult, error) {
-
+	if keploy.GetMode() == "off" {
+		output, err := c.Collection.UpdateOne(ctx, filter, update, opts...)
+		return output, err
+	}
 	var output *mongo.UpdateResult
 	var err error
-	mode := keploy.GetMode()
+	var kerr *keploy.KError = &keploy.KError{Err: nil}
+	kctx, er := keploy.GetState(ctx)
+	if er != nil {
+		c.log.Error(er.Error())
+	}
+	mode := kctx.Mode
 	switch mode {
 	case "test":
 		//dont run mongo query as it is stored in context
 		output = &mongo.UpdateResult{}
 		err = nil
-	case "off":
-		output, err = c.Collection.UpdateOne(ctx, filter, update, opts...)
-		return output, err
 	default:
 		output, err = c.Collection.UpdateOne(ctx, filter, update, opts...)
 	}
 
-	if keploy.GetMode() == "off" {
-		return output, err
-	}
 	meta := map[string]string{
+		"name":      "mongodb",
+		"type":      string(keploy.NoSqlDB),
 		"operation": "UpdateOne",
 	}
 
-	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, err)
+	if err != nil {
+		kerr = &keploy.KError{Err: err}
+		c.log.Error(err.Error())
+		output = &mongo.UpdateResult{}
+	}
+	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, kerr)
 
 	if mock {
 		var mockOutput *mongo.UpdateResult
@@ -252,8 +364,9 @@ func (c *MongoDB) UpdateOne(ctx context.Context, filter interface{}, update inte
 		if res[0] != nil {
 			mockOutput = res[0].(*mongo.UpdateResult)
 		}
-		if res[1] != nil {
-			mockErr = res[1].(error)
+		x := res[1].(*keploy.KError)
+		if x.Err != nil {
+			mockErr = x.Err
 		}
 		return mockOutput, mockErr
 	}
@@ -262,30 +375,39 @@ func (c *MongoDB) UpdateOne(ctx context.Context, filter interface{}, update inte
 
 func (c *MongoDB) UpdateMany(ctx context.Context, filter interface{}, update interface{},
 	opts ...*options.UpdateOptions) (*mongo.UpdateResult, error) {
-
+	if keploy.GetMode() == "off" {
+		output, err := c.Collection.UpdateMany(ctx, filter, update, opts...)
+		return output, err
+	}
 	var output *mongo.UpdateResult
 	var err error
-	mode := keploy.GetMode()
+	var kerr *keploy.KError = &keploy.KError{Err: nil}
+	kctx, er := keploy.GetState(ctx)
+	if er != nil {
+		c.log.Error(er.Error())
+	}
+	mode := kctx.Mode
 	switch mode {
 	case "test":
 		//dont run mongo query as it is stored in context
 		output = &mongo.UpdateResult{}
 		err = nil
-	case "off":
-		output, err = c.Collection.UpdateMany(ctx, filter, update, opts...)
-		return output, err
 	default:
 		output, err = c.Collection.UpdateMany(ctx, filter, update, opts...)
 	}
 
-	if keploy.GetMode() == "off" {
-		return output, err
-	}
 	meta := map[string]string{
+		"name":      "mongodb",
+		"type":      string(keploy.NoSqlDB),
 		"operation": "UpdateMany",
 	}
 
-	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, err)
+	if err != nil {
+		kerr = &keploy.KError{Err: err}
+		c.log.Error(err.Error())
+		output = &mongo.UpdateResult{}
+	}
+	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, kerr)
 
 	if mock {
 		var mockOutput *mongo.UpdateResult
@@ -293,8 +415,9 @@ func (c *MongoDB) UpdateMany(ctx context.Context, filter interface{}, update int
 		if res[0] != nil {
 			mockOutput = res[0].(*mongo.UpdateResult)
 		}
-		if res[1] != nil {
-			mockErr = res[1].(error)
+		x := res[1].(*keploy.KError)
+		if x.Err != nil {
+			mockErr = x.Err
 		}
 		return mockOutput, mockErr
 	}
@@ -303,30 +426,39 @@ func (c *MongoDB) UpdateMany(ctx context.Context, filter interface{}, update int
 
 func (c *MongoDB) DeleteOne(ctx context.Context, filter interface{},
 	opts ...*options.DeleteOptions) (*mongo.DeleteResult, error) {
-
+	if keploy.GetMode() == "off" {
+		output, err := c.Collection.DeleteOne(ctx, filter, opts...)
+		return output, err
+	}
 	var output *mongo.DeleteResult
 	var err error
-	mode := keploy.GetMode()
+	var kerr *keploy.KError = &keploy.KError{Err: nil}
+	kctx, er := keploy.GetState(ctx)
+	if er != nil {
+		c.log.Error(er.Error())
+	}
+	mode := kctx.Mode
 	switch mode {
 	case "test":
 		//dont run mongo query as it is stored in context
 		output = &mongo.DeleteResult{}
 		err = nil
-	case "off":
-		output, err = c.Collection.DeleteOne(ctx, filter, opts...)
-		return output, err
 	default:
 		output, err = c.Collection.DeleteOne(ctx, filter, opts...)
 	}
 
-	if keploy.GetMode() == "off" {
-		return output, err
-	}
 	meta := map[string]string{
+		"name":      "mongodb",
+		"type":      string(keploy.NoSqlDB),
 		"operation": "DeleteOne",
 	}
 
-	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, err)
+	if err != nil {
+		kerr = &keploy.KError{Err: err}
+		c.log.Error(err.Error())
+		output = &mongo.DeleteResult{}
+	}
+	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, kerr)
 
 	if mock {
 		var mockOutput *mongo.DeleteResult
@@ -334,8 +466,9 @@ func (c *MongoDB) DeleteOne(ctx context.Context, filter interface{},
 		if res[0] != nil {
 			mockOutput = res[0].(*mongo.DeleteResult)
 		}
-		if res[1] != nil {
-			mockErr = res[1].(error)
+		x := res[1].(*keploy.KError)
+		if x.Err != nil {
+			mockErr = x.Err
 		}
 		return mockOutput, mockErr
 	}
@@ -344,30 +477,39 @@ func (c *MongoDB) DeleteOne(ctx context.Context, filter interface{},
 
 func (c *MongoDB) DeleteMany(ctx context.Context, filter interface{},
 	opts ...*options.DeleteOptions) (*mongo.DeleteResult, error) {
-
+	if keploy.GetMode() == "off" {
+		output, err := c.Collection.DeleteMany(ctx, filter, opts...)
+		return output, err
+	}
 	var output *mongo.DeleteResult
 	var err error
-	mode := keploy.GetMode()
+	var kerr *keploy.KError = &keploy.KError{Err: nil}
+	kctx, er := keploy.GetState(ctx)
+	if er != nil {
+		c.log.Error(er.Error())
+	}
+	mode := kctx.Mode
 	switch mode {
 	case "test":
 		//dont run mongo query as it is stored in context
 		output = &mongo.DeleteResult{}
 		err = nil
-	case "off":
-		output, err = c.Collection.DeleteMany(ctx, filter, opts...)
-		return output, err
 	default:
 		output, err = c.Collection.DeleteMany(ctx, filter, opts...)
 	}
 
-	if keploy.GetMode() == "off" {
-		return output, err
-	}
 	meta := map[string]string{
+		"name":      "mongodb",
+		"type":      string(keploy.NoSqlDB),
 		"operation": "DeleteMany",
 	}
 
-	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, err)
+	if err != nil {
+		kerr = &keploy.KError{Err: err}
+		c.log.Error(err.Error())
+		output = &mongo.DeleteResult{}
+	}
+	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, kerr)
 
 	if mock {
 		var mockOutput *mongo.DeleteResult
@@ -375,8 +517,9 @@ func (c *MongoDB) DeleteMany(ctx context.Context, filter interface{},
 		if res[0] != nil {
 			mockOutput = res[0].(*mongo.DeleteResult)
 		}
-		if res[1] != nil {
-			mockErr = res[1].(error)
+		x := res[1].(*keploy.KError)
+		if x.Err != nil {
+			mockErr = x.Err
 		}
 		return mockOutput, mockErr
 	}
