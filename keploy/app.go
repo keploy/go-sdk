@@ -72,12 +72,14 @@ func (e *KError) GobDecode(b []byte) error {
 	if b[0] != version {
 		return errors.New("gob decode of errors.errorString failed: unsupported version")
 	}
-	str := string(b[1:])
-	if str!=""{
-		e.Err = errors.New(str)
-	}else{
+	if len(b)==1{
 		e.Err = nil
+	}else{
+		str := string(b[1:])
+		// fmt.Println(b[1: ], " --- -- - ", str, " END \n")
+		e.Err = errors.New(str)
 	}
+
 	return nil
 }
 

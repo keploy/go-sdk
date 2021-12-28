@@ -2,6 +2,7 @@ package integrations
 
 import (
 	// "errors"
+	"errors"
 	"fmt"
 	"io"
 
@@ -41,16 +42,18 @@ func clientInterceptor(app *keploy.App) func (
 	kctx,er := keploy.GetState(ctx)
 	if er!=nil{
 		app.Log.Error(er.Error())
+		return er
 	}
 	mode := kctx.Mode
 	switch mode {
 	case "test":
 		//dont run invoker
-	default:
+	case "capture":
 		err = invoker(ctx, method, req, reply, cc, opts...)
+	default:
+		app.Log.Error("integrations: Not in a valid sdk mode")
+		return  errors.New("integrations: Not in a valid sdk mode")
 	}
-
-	// Logic after invoking the invoker
 
 	meta := map[string]string{
 		"operation": method,
