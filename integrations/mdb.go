@@ -142,7 +142,10 @@ func (c *MongoDB) FindOne(ctx context.Context, filter interface{}, opts ...*opti
 	kctx, er := keploy.GetState(ctx)
 	if er != nil {
 		c.log.Error(er.Error())
-		return nil
+		return &MongoSingleResult{
+			log: c.log,
+			ctx: ctx,
+		}
 	}
 	mode := kctx.Mode
 	var sr *mongo.SingleResult
@@ -156,7 +159,10 @@ func (c *MongoDB) FindOne(ctx context.Context, filter interface{}, opts ...*opti
 		sr = c.Collection.FindOne(ctx, filter, opts...)
 	default:
 		c.log.Error("integrations: Not in a valid sdk mode")
-		return nil
+		return &MongoSingleResult{
+			log: c.log,
+			ctx: ctx,
+		}
 	}
 
 	return &MongoSingleResult{
@@ -329,7 +335,10 @@ func (c *MongoDB) Find(ctx context.Context, filter interface{},
 	kctx, er := keploy.GetState(ctx)
 	if er != nil {
 		c.log.Error(er.Error())
-		return nil, er
+		return &MongoCursor{
+			log: c.log,
+			ctx: ctx,
+		}, er
 	}
 	mode := kctx.Mode
 	var (
@@ -352,7 +361,10 @@ func (c *MongoDB) Find(ctx context.Context, filter interface{},
 		}, err
 	default:
 		c.log.Error("integrations: Not in a valid sdk mode")
-		return nil, errors.New("integrations: Not in a valid sdk mode")
+		return &MongoCursor{
+			log: c.log,
+			ctx: ctx,
+		}, errors.New("integrations: Not in a valid sdk mode")
 	}
 
 }

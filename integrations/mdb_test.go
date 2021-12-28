@@ -136,6 +136,24 @@ func TestMDB(t *testing.T){
 			},
 			err: errors.New("mongo: no documents in result"),
 		},
+		//not in a valid SDK mode
+		{
+			ctx : context.WithValue(context.TODO(), keploy.KCTX, &keploy.Context{
+				Mode: "XYZ",
+				TestID: "",
+				Deps: []keploy.Dependency{},
+			}),
+			filter: bson.M{"name": "Ash"},
+			result: Trainer{},
+			err: errors.New("integrations: Not in a valid sdk mode"),
+		},
+		//keploy context not present
+		{
+			ctx: context.TODO(),
+			filter: bson.M{"name": "Ash"},
+			result: Trainer{},
+			err: errors.New("failed to get Keploy context"),
+		},
 	}{
 		var res Trainer = Trainer{}
 		eRr := collection.FindOne(tt.ctx, tt.filter).Decode(&res)
@@ -208,6 +226,32 @@ func TestMDB(t *testing.T){
 			result: &mongo.InsertOneResult{},
 			err: nil,
 		},
+		//not in a valid mode
+		{
+			ctx: context.WithValue(context.TODO(), keploy.KCTX, &keploy.Context{
+				Mode: "XYZ",
+				TestID: "",
+				Deps: []keploy.Dependency{},
+			}),
+			document: Trainer{
+				Name: "Brock",
+				Age: 15,
+				City: "Pewter City",
+			},
+			result: nil,
+			err : errors.New("integrations: Not in a valid sdk mode"),
+		},
+		//keploy context not present
+		{
+			ctx: context.TODO(),
+			document: Trainer{
+				Name: "Brock",
+				Age: 15,
+				City: "Pewter City",
+			},
+			result: nil,
+			err : errors.New("failed to get Keploy context"),
+		},
 	}{
 		res, eRr := collection.InsertOne(ti.ctx, ti.document)
 		
@@ -215,8 +259,8 @@ func TestMDB(t *testing.T){
 			log.Fatal(" Testcase ", index," failed in error \n ", ti.ctx, ti.document,"\n   ", ti.err,"\n   ", eRr )
 		}
 		d := ti.ctx.Value(keploy.KCTX)
-		deps := d.(*keploy.Context)
-		if deps.Mode!="test" || (
+		deps,ok := d.(*keploy.Context)
+		if !ok || deps.Mode!="test" || (
 			deps.Mode=="test" && 
 			res.InsertedID.(primitive.ObjectID).Hex() == ti.result.InsertedID.(primitive.ObjectID).Hex()){
 			
