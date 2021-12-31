@@ -127,6 +127,7 @@ func captureMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 				},
 				HttpResp: keploy.HttpResp{
 					//Status
+
 					StatusCode: c.Response().Status,
 					Header:     c.Response().Header(),
 					Body:       resBody.String(),

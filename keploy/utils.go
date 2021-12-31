@@ -112,6 +112,8 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 		//	c.log.Error("failed to encode ddb resp", zap.String("test id", id))
 		//}
 		kctx.Deps = append(kctx.Deps, Dependency{
+			Name: meta["name"],
+			Type: DependencyType(meta["type"]),
 			Data: res,
 			Meta: meta,
 		})

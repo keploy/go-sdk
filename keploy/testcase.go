@@ -2,11 +2,11 @@ package keploy
 
 import "net/http"
 
-type DeNoiseReq struct {
-	ID      string      `json:"id" bson:"id"`
-	AppID   string      `json:"app_id" bson:"app_id"`
-	Body    string      `json:"body"`
-	Headers http.Header `json:"headers" bson:"headers"`
+type TestReq struct {
+	ID    string   `json:"id" bson:"_id"`
+	AppID string   `json:"app_id" bson:"app_id"`
+	RunID string   `json:"run_id" bson:"run_id"`
+	Resp  HttpResp `json:"resp" bson:"resp"`
 }
 
 type TestCaseReq struct {
@@ -59,12 +59,9 @@ type HttpReq struct {
 }
 
 type HttpResp struct {
-	StatusCode   int         `json:"status_code" bson:"status_code"` // e.g. 200
-	ProtoMajor   int         `json:"proto_major" bson:"proto_major"` // e.g. 1
-	ProtoMinor   int         `json:"proto_minor" bson:"proto_minor"` // e.g. 0
-	Header       http.Header `json:"header" bson:"header"`
-	Body         string      `json:"body" bson:"body"`
-	Uncompressed bool        `json:"uncompressed" bson:"uncompressed"`
+	StatusCode int         `json:"status_code" bson:"status_code"` // e.g. 200
+	Header     http.Header `json:"header" bson:"header"`
+	Body       string      `json:"body" bson:"body"`
 }
 
 type Method string
