@@ -14,7 +14,6 @@ require (
 
 require (
 	github.com/go-stack/stack v1.8.0 // indirect
-	github.com/go-test/deep v1.0.8
 	github.com/golang/protobuf v1.4.3 // indirect
 	github.com/golang/snappy v0.0.1 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect

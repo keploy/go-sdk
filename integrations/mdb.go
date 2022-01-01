@@ -4,15 +4,12 @@ import (
 	"context"
 	"encoding/gob"
 	"errors"
-
+	// "reflect"
 	// "fmt"
-
 	// "errors"
 	// "fmt"
-
 	"github.com/keploy/go-sdk/keploy"
 	"go.uber.org/zap"
-
 	// "go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -22,7 +19,9 @@ import (
 func NewMongoDB(cl *mongo.Collection) *MongoDB {
 	gob.Register(primitive.ObjectID{})
 	logger, _ := zap.NewProduction()
-	defer logger.Sync()
+	defer func(){
+		_ = logger.Sync() // flushes buffer, if any
+	}()
 	return &MongoDB{Collection: *cl, log: logger}
 }
 
@@ -43,10 +42,9 @@ func (msr *MongoSingleResult) Err() error {
 		return err
 	}
 	var err error
-	var kerr *keploy.KError = &keploy.KError{Err: nil}
+	var kerr *keploy.KError = &keploy.KError{}
 	kctx, er := keploy.GetState(msr.ctx)
 	if er != nil {
-		msr.log.Error(er.Error())
 		return er
 	}
 	mode := kctx.Mode
@@ -56,8 +54,7 @@ func (msr *MongoSingleResult) Err() error {
 	case "capture":
 		err = msr.SingleResult.Err()
 	default:
-		msr.log.Error("integrations: Not in a valid sdk mode")
-		return  errors.New("integrations: Not in a valid sdk mode")
+		return errors.New("integrations: Not in a valid sdk mode")
 	}
 
 	meta := map[string]string{
@@ -88,10 +85,9 @@ func (msr *MongoSingleResult) Decode(v interface{}) error {
 		return err
 	}
 	var err error
-	var kerr *keploy.KError = &keploy.KError{Err: nil}
+	var kerr *keploy.KError = &keploy.KError{}
 	kctx, er := keploy.GetState(msr.ctx)
 	if er != nil {
-		msr.log.Error(er.Error())
 		return er
 	}
 	mode := kctx.Mode
@@ -101,8 +97,7 @@ func (msr *MongoSingleResult) Decode(v interface{}) error {
 	case "capture":
 		err = msr.SingleResult.Decode(v)
 	default:
-		msr.log.Error("integrations: Not in a valid sdk mode")
-		return  errors.New("integrations: Not in a valid sdk mode")
+		return errors.New("integrations: Not in a valid sdk mode")
 	}
 
 	meta := map[string]string{
@@ -118,9 +113,9 @@ func (msr *MongoSingleResult) Decode(v interface{}) error {
 
 	if mock {
 		var mockErr error
-		if res[0] != nil {
-			v = res[0]
-		}
+		// rv := reflect.ValueOf(v)
+		// rv.Elem().Set(reflect.ValueOf(res[0]).Elem())
+
 		x := res[1].(*keploy.KError)
 		if x.Err != nil {
 			mockErr = x.Err
@@ -141,7 +136,6 @@ func (c *MongoDB) FindOne(ctx context.Context, filter interface{}, opts ...*opti
 	}
 	kctx, er := keploy.GetState(ctx)
 	if er != nil {
-		c.log.Error(er.Error())
 		return &MongoSingleResult{
 			log: c.log,
 			ctx: ctx,
@@ -158,7 +152,6 @@ func (c *MongoDB) FindOne(ctx context.Context, filter interface{}, opts ...*opti
 	case "capture":
 		sr = c.Collection.FindOne(ctx, filter, opts...)
 	default:
-		c.log.Error("integrations: Not in a valid sdk mode")
 		return &MongoSingleResult{
 			log: c.log,
 			ctx: ctx,
@@ -178,25 +171,19 @@ func (c *MongoDB) InsertOne(ctx context.Context, document interface{},
 		output, err := c.Collection.InsertOne(ctx, document, opts...)
 		return output, err
 	}
-	var output *mongo.InsertOneResult
+	var output *mongo.InsertOneResult = &mongo.InsertOneResult{}
 	var err error
-	var kerr *keploy.KError = &keploy.KError{Err: nil}
-	kctx, er := keploy.GetState(ctx)
-	if er != nil {
-		c.log.Error(er.Error())
-		return nil,er
+	var kerr *keploy.KError = &keploy.KError{}
+	var data []interface{}
+	data = append(data, document)
+	for _, j := range opts {
+		data = append(data, j)
 	}
-	mode := kctx.Mode
-	switch mode {
-	case "test":
-		//dont run mongo query as it is stored in context
-		output = &mongo.InsertOneResult{}
-	case "capture":
-		output, err = c.Collection.InsertOne(ctx, document, opts...)
-	default:
-		c.log.Error("integrations: Not in a valid sdk mode")
-		return nil,errors.New("integrations: Not in a valid sdk mode")
+	o, e := c.getOutput(ctx, "InsertOne", data)
+	if o != nil {
+		output = o.(*mongo.InsertOneResult)
 	}
+	err = e
 
 	meta := map[string]string{
 		"name":      "mongodb",
@@ -227,20 +214,19 @@ func (c *MongoDB) InsertOne(ctx context.Context, document interface{},
 
 type MongoCursor struct {
 	mongo.Cursor
-	ctx      context.Context
-	log      *zap.Logger
+	ctx context.Context
+	log *zap.Logger
 }
 
-func (cr *MongoCursor) Next(ctx context.Context) bool{
+func (cr *MongoCursor) Next(ctx context.Context) bool {
 	if keploy.GetMode() == "off" {
 		return cr.Cursor.Next(ctx)
 	}
 	kctx, er := keploy.GetState(cr.ctx)
 	if er != nil {
-		cr.log.Error(er.Error())
 		return false
 	}
-	var output *bool 
+	var output *bool
 	mode := kctx.Mode
 	switch mode {
 	case "test":
@@ -250,8 +236,7 @@ func (cr *MongoCursor) Next(ctx context.Context) bool{
 	case "capture":
 		n := cr.Cursor.Next(ctx)
 		output = &n
-	default:
-		cr.log.Error("integrations: Not in a valid SDK mode")
+	default:	
 		return false
 	}
 
@@ -260,7 +245,7 @@ func (cr *MongoCursor) Next(ctx context.Context) bool{
 		"type":      string(keploy.NoSqlDB),
 		"operation": "Find.Next",
 	}
-	
+
 	mock, res := keploy.ProcessDep(cr.ctx, cr.log, meta, output)
 
 	if mock {
@@ -277,10 +262,9 @@ func (cr *MongoCursor) Decode(v interface{}) error {
 		return err
 	}
 	var err error
-	var kerr *keploy.KError = &keploy.KError{Err: nil}
+	var kerr *keploy.KError = &keploy.KError{}
 	kctx, er := keploy.GetState(cr.ctx)
-	if er != nil {
-		cr.log.Error(er.Error())
+	if er != nil {	
 		return er
 	}
 	mode := kctx.Mode
@@ -291,8 +275,7 @@ func (cr *MongoCursor) Decode(v interface{}) error {
 	case "capture":
 		err = cr.Cursor.Decode(v)
 	default:
-		cr.log.Error("integrations: Not in a valid sdk mode")
-		return  errors.New("integrations: Not in a valid sdk mode")
+		return errors.New("integrations: Not in a valid sdk mode")
 	}
 
 	meta := map[string]string{
@@ -308,9 +291,6 @@ func (cr *MongoCursor) Decode(v interface{}) error {
 
 	if mock {
 		var mockErr error
-		if res[0] != nil {
-			v = res[0]
-		}
 		x := res[1].(*keploy.KError)
 		if x.Err != nil {
 			mockErr = x.Err
@@ -323,18 +303,18 @@ func (cr *MongoCursor) Decode(v interface{}) error {
 //have to work on this. It might fail
 func (c *MongoDB) Find(ctx context.Context, filter interface{},
 	opts ...*options.FindOptions) (*MongoCursor, error) {
-	if keploy.GetMode()=="off"{
+	if keploy.GetMode() == "off" {
 		cursor, err := c.Collection.Find(ctx, filter, opts...)
 		return &MongoCursor{
 			Cursor: *cursor,
-			ctx: ctx,
-			log: c.log,
+			ctx:    ctx,
+			log:    c.log,
 		}, err
 	}
-	
+
 	kctx, er := keploy.GetState(ctx)
 	if er != nil {
-		c.log.Error(er.Error())
+
 		return &MongoCursor{
 			log: c.log,
 			ctx: ctx,
@@ -343,11 +323,11 @@ func (c *MongoDB) Find(ctx context.Context, filter interface{},
 	mode := kctx.Mode
 	var (
 		cursor *mongo.Cursor
-		err error
+		err    error
 	)
 	switch mode {
 	case "test":
-		//don't call method in test mode	
+		//don't call method in test mode
 		return &MongoCursor{
 			log: c.log,
 			ctx: ctx,
@@ -355,9 +335,9 @@ func (c *MongoDB) Find(ctx context.Context, filter interface{},
 	case "capture":
 		cursor, err = c.Collection.Find(ctx, filter, opts...)
 		return &MongoCursor{
-			Cursor:   *cursor,
-			log:      c.log,
-			ctx:      ctx,
+			Cursor: *cursor,
+			log:    c.log,
+			ctx:    ctx,
 		}, err
 	default:
 		c.log.Error("integrations: Not in a valid sdk mode")
@@ -375,26 +355,19 @@ func (c *MongoDB) InsertMany(ctx context.Context, documents []interface{},
 		output, err := c.Collection.InsertMany(ctx, documents, opts...)
 		return output, err
 	}
-	var output *mongo.InsertManyResult
+	var output *mongo.InsertManyResult = &mongo.InsertManyResult{}
 	var err error
-	var kerr *keploy.KError = &keploy.KError{Err: nil}
-	kctx, er := keploy.GetState(ctx)
-	if er != nil {
-		c.log.Error(er.Error())
-		return nil,er
+	var kerr *keploy.KError = &keploy.KError{}
+	var data []interface{}
+	data = append(data, documents)
+	for _, j := range opts {
+		data = append(data, j)
 	}
-	mode := kctx.Mode
-	switch mode {
-	case "test":
-		//dont run mongo query as it is stored in context
-		output = &mongo.InsertManyResult{}
-		err = nil
-	case "capture":
-		output, err = c.Collection.InsertMany(ctx, documents, opts...)
-	default:
-		c.log.Error("integrations: Not in a valid sdk mode")
-		return nil, errors.New("integrations: Not in a valid sdk mode")
+	o, e := c.getOutput(ctx, "InsertMany", data)
+	if o != nil {
+		output = o.(*mongo.InsertManyResult)
 	}
+	err = e
 
 	meta := map[string]string{
 		"name":      "mongodb",
@@ -429,26 +402,20 @@ func (c *MongoDB) UpdateOne(ctx context.Context, filter interface{}, update inte
 		output, err := c.Collection.UpdateOne(ctx, filter, update, opts...)
 		return output, err
 	}
-	var output *mongo.UpdateResult
+	var output *mongo.UpdateResult = &mongo.UpdateResult{}
 	var err error
-	var kerr *keploy.KError = &keploy.KError{Err: nil}
-	kctx, er := keploy.GetState(ctx)
-	if er != nil {
-		c.log.Error(er.Error())
-		return nil,er
+	var kerr *keploy.KError = &keploy.KError{}
+	var data []interface{}
+	data = append(data, filter)
+	data = append(data, update)
+	for _, j := range opts {
+		data = append(data, j)
 	}
-	mode := kctx.Mode
-	switch mode {
-	case "test":
-		//dont run mongo query as it is stored in context
-		output = &mongo.UpdateResult{}
-		err = nil
-	case "capture":
-		output, err = c.Collection.UpdateOne(ctx, filter, update, opts...)
-	default:
-		c.log.Error("integrations: Not in a valid sdk mode")
-		return nil, errors.New("integrations: Not in a valid sdk mode")
+	o, e := c.getOutput(ctx, "UpdateOne", data)
+	if o != nil {
+		output = o.(*mongo.UpdateResult)
 	}
+	err = e
 
 	meta := map[string]string{
 		"name":      "mongodb",
@@ -484,26 +451,20 @@ func (c *MongoDB) UpdateMany(ctx context.Context, filter interface{}, update int
 		output, err := c.Collection.UpdateMany(ctx, filter, update, opts...)
 		return output, err
 	}
-	var output *mongo.UpdateResult
+	var output *mongo.UpdateResult = &mongo.UpdateResult{}
 	var err error
-	var kerr *keploy.KError = &keploy.KError{Err: nil}
-	kctx, er := keploy.GetState(ctx)
-	if er != nil {
-		c.log.Error(er.Error())
-		return nil,er
+	var kerr *keploy.KError = &keploy.KError{}
+	var data []interface{}
+	data = append(data, filter)
+	data = append(data, update)
+	for _, j := range opts {
+		data = append(data, j)
 	}
-	mode := kctx.Mode
-	switch mode {
-	case "test":
-		//dont run mongo query as it is stored in context
-		output = &mongo.UpdateResult{}
-		err = nil
-	case "capture":
-		output, err = c.Collection.UpdateMany(ctx, filter, update, opts...)
-	default:
-		c.log.Error("integrations: Not in a valid sdk mode")
-		return nil, errors.New("integrations: Not in a valid sdk mode")
+	o, e := c.getOutput(ctx, "UpdateMany", data)
+	if o != nil {
+		output = o.(*mongo.UpdateResult)
 	}
+	err = e
 
 	meta := map[string]string{
 		"name":      "mongodb",
@@ -539,26 +500,19 @@ func (c *MongoDB) DeleteOne(ctx context.Context, filter interface{},
 		output, err := c.Collection.DeleteOne(ctx, filter, opts...)
 		return output, err
 	}
-	var output *mongo.DeleteResult
+	var output *mongo.DeleteResult = &mongo.DeleteResult{}
 	var err error
-	var kerr *keploy.KError = &keploy.KError{Err: nil}
-	kctx, er := keploy.GetState(ctx)
-	if er != nil {
-		c.log.Error(er.Error())
-		return nil,er
+	var kerr *keploy.KError = &keploy.KError{}
+	var data []interface{}
+	data = append(data, filter)
+	for _, j := range opts {
+		data = append(data, j)
 	}
-	mode := kctx.Mode
-	switch mode {
-	case "test":
-		//dont run mongo query as it is stored in context
-		output = &mongo.DeleteResult{}
-		err = nil
-	case "capture":
-		output, err = c.Collection.DeleteOne(ctx, filter, opts...)
-	default:
-		c.log.Error("integrations: Not in a valid sdk mode")
-		return nil, errors.New("integrations: Not in a valid sdk mode")
+	o, e := c.getOutput(ctx, "DeleteOne", data)
+	if o != nil {
+		output = o.(*mongo.DeleteResult)
 	}
+	err = e
 
 	meta := map[string]string{
 		"name":      "mongodb",
@@ -594,26 +548,19 @@ func (c *MongoDB) DeleteMany(ctx context.Context, filter interface{},
 		output, err := c.Collection.DeleteMany(ctx, filter, opts...)
 		return output, err
 	}
-	var output *mongo.DeleteResult
+	var output *mongo.DeleteResult = &mongo.DeleteResult{}
 	var err error
-	var kerr *keploy.KError = &keploy.KError{Err: nil}
-	kctx, er := keploy.GetState(ctx)
-	if er != nil {
-		c.log.Error(er.Error())
-		return nil,er
+	var kerr *keploy.KError = &keploy.KError{}
+	var data []interface{}
+	data = append(data, filter)
+	for _, j := range opts {
+		data = append(data, j)
 	}
-	mode := kctx.Mode
-	switch mode {
-	case "test":
-		//dont run mongo query as it is stored in context
-		output = &mongo.DeleteResult{}
-		err = nil
-	case "capture":
-		output, err = c.Collection.DeleteMany(ctx, filter, opts...)
-	default:
-		c.log.Error("integrations: Not in a valid sdk mode")
-		return nil, errors.New("integrations: Not in a valid sdk mode")
+	o, e := c.getOutput(ctx, "DeleteMany", data)
+	if o != nil {
+		output = o.(*mongo.DeleteResult)
 	}
+	err = e
 
 	meta := map[string]string{
 		"name":      "mongodb",
@@ -639,6 +586,91 @@ func (c *MongoDB) DeleteMany(ctx context.Context, filter interface{},
 			mockErr = x.Err
 		}
 		return mockOutput, mockErr
+	}
+	return output, err
+}
+
+func (c *MongoDB) getOutput(ctx context.Context, str string, data []interface{}) (interface{}, error) {
+	var (
+		output interface{}
+		err    error
+	)
+	kctx, er := keploy.GetState(ctx)
+	if er != nil {
+		return nil, er
+	}
+	mode := kctx.Mode
+	switch mode {
+	case "test":
+		//dont run mongo query as it is stored in context
+		err = nil
+	case "capture":
+		output, err = c.callMethod(ctx, str, data)
+
+	default:
+		return nil, errors.New("integrations: Not in a valid sdk mode")
+	}
+	return output, err
+}
+
+func (c *MongoDB) callMethod(ctx context.Context, str string, data []interface{}) (interface{}, error) {
+	var (
+		output interface{}
+		err    error
+	)
+	switch str {
+	case "InsertOne":
+		doc := data[0]
+		data = data[1:]
+		var opts []*options.InsertOneOptions
+		for _, d := range data {
+			opts = append(opts, d.(*options.InsertOneOptions))
+		}
+		output, err = c.Collection.InsertOne(ctx, doc, opts...)
+	case "InsertMany":
+		doc := data[0].([]interface{})
+		data = data[1:]
+		var opts []*options.InsertManyOptions
+		for _, d := range data {
+			opts = append(opts, d.(*options.InsertManyOptions))
+		}
+		output, err = c.Collection.InsertMany(ctx, doc, opts...)
+	case "UpdateOne":
+		filter := data[0]
+		update := data[1]
+		data = data[2:]
+		var opts []*options.UpdateOptions
+		for _, d := range data {
+			opts = append(opts, d.(*options.UpdateOptions))
+		}
+		output, err = c.Collection.UpdateOne(ctx, filter, update, opts...)
+	case "UpdateMany":
+		filter := data[0]
+		update := data[1]
+		data = data[2:]
+		var opts []*options.UpdateOptions
+		for _, d := range data {
+			opts = append(opts, d.(*options.UpdateOptions))
+		}
+		output, err = c.Collection.UpdateMany(ctx, filter, update, opts...)
+	case "DeleteOne":
+		filter := data[0]
+		data = data[1:]
+		var opts []*options.DeleteOptions
+		for _, d := range data {
+			opts = append(opts, d.(*options.DeleteOptions))
+		}
+		output, err = c.Collection.DeleteOne(ctx, filter, opts...)
+	case "DeleteMany":
+		filter := data[0]
+		data = data[1:]
+		var opts []*options.DeleteOptions
+		for _, d := range data {
+			opts = append(opts, d.(*options.DeleteOptions))
+		}
+		output, err = c.Collection.DeleteMany(ctx, filter, opts...)
+	default:
+		return nil, errors.New("integerations: SDK Not supported for this method")
 	}
 	return output, err
 }

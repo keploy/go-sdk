@@ -2,6 +2,7 @@ package integrations
 
 import (
 	"errors"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
@@ -11,7 +12,9 @@ import (
 
 func NewDynamoDB(cl *dynamodb.DynamoDB) *DynamoDB {
 	logger, _ := zap.NewProduction()
-	defer logger.Sync() // flushes buffer, if any
+	defer func(){
+		_ = logger.Sync() // flushes buffer, if any
+	}()
 	return &DynamoDB{
 		DynamoDB: *cl,
 		log:      logger,

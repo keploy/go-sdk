@@ -46,7 +46,7 @@ func testMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 			if tc == nil {
 				return next(c)
 			}
-			c.Set(keploy.KCTX, &keploy.Context{
+			c.Set(string(keploy.KCTX), &keploy.Context{
 				Mode:   "test",
 				TestID: id,
 				Deps:   tc.Deps,
@@ -64,14 +64,14 @@ func captureMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 	}
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) (err error) {
-			c.Set(keploy.KCTX, &keploy.Context{
+			c.Set(string(keploy.KCTX), &keploy.Context{
 				Mode: "capture",
 			})
 			id := c.Request().Header.Get("KEPLOY_TEST_ID")
 			if id != "" {
 				// id is only present during simulation
 				// run it similar to how testcases would run
-				c.Set(keploy.KCTX, &keploy.Context{
+				c.Set(string(keploy.KCTX), &keploy.Context{
 					Mode:   "test",
 					TestID: id,
 					Deps:   app.Deps[id],
@@ -185,11 +185,11 @@ func (ctx contextValue) Get(key string) interface{} {
 	if val != nil {
 		return val
 	}
-	return ctx.Request().Context().Value(key)
+	return ctx.Request().Context().Value(keploy.KctxType(key))
 }
 
 // Set saves data in the context.
 func (ctx contextValue) Set(key string, val interface{}) {
 
-	ctx.SetRequest(ctx.Request().WithContext(context.WithValue(ctx.Request().Context(), key, val)))
+	ctx.SetRequest(ctx.Request().WithContext(context.WithValue(ctx.Request().Context(), keploy.KctxType(key), val)))
 }

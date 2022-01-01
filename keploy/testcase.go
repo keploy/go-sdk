@@ -42,9 +42,9 @@ type Dependency struct {
 
 type DependencyType string
 
-const (
+const(
 	NoSqlDB DependencyType = "DB"
-	SqlDB                  = "SQL_DB"
+	SqlDB   DependencyType = "SQL_DB"
 )
 
 // type sql database -> postgres, mysql, redshift..
@@ -71,11 +71,11 @@ type Method string
 
 const (
 	MethodGet     Method = "GET"
-	MethodPut            = "PUT"
-	MethodHead           = "HEAD"
-	MethodPost           = "POST"
-	MethodPatch          = "PATCH" // RFC 5789
-	MethodDelete         = "DELETE"
-	MethodOptions        = "OPTIONS"
-	MethodTrace          = "TRACE"
+	MethodPut     Method = "PUT"
+	MethodHead    Method = "HEAD"
+	MethodPost    Method = "POST"
+	MethodPatch   Method = "PATCH" // RFC 5789
+	MethodDelete  Method = "DELETE"
+	MethodOptions Method = "OPTIONS"
+	MethodTrace   Method = "TRACE"
 )

@@ -3,15 +3,14 @@ package integrations
 import (
 	// "errors"
 	"errors"
-	"fmt"
+	"reflect"
+	// "fmt"
 	"io"
-
+	"log"
 	"github.com/keploy/go-sdk/keploy"
 	// "github.com/labstack/gommon/log"
 	"google.golang.org/grpc"
-
 	"go.uber.org/zap"
-
 	"context"
 )
 
@@ -61,8 +60,6 @@ func clientInterceptor(app *keploy.App) func (
 
 	if err!=nil{
 		kerr = &keploy.KError{Err: err}
-		fmt.Printf(" -- %v", reply)
-		app.Log.Error("d", zap.Error(err))
 	}
 	mock, res := keploy.ProcessDep(ctx, app.Log, meta, reply, kerr)
 	if mock {
@@ -70,9 +67,6 @@ func clientInterceptor(app *keploy.App) func (
 		if len(res)!=2{
 			app.Log.Error("Did not recieve grpc client object")
 			return nil
-		}
-		if res[0] != nil {
-			reply = res[0]
 		}
 		x := res[1].(*keploy.KError)
 		if x.Err != nil {
@@ -133,7 +127,12 @@ func (s *tracedClientStream) RecvMsg(m interface{}) error {
 		}
 
 		logger, _ := zap.NewProduction()
-		defer logger.Sync()
+		defer func(){
+			err := logger.Sync() // 
+			if err!=nil{
+				log.Fatal(err)
+			}
+		}()
 
 		mock, res := keploy.ProcessDep(s.context, logger, meta, []interface{}{})
 
@@ -143,7 +142,8 @@ func (s *tracedClientStream) RecvMsg(m interface{}) error {
 				mockErr = res[1].(error)
 				return mockErr
 			}
-			m = res[0]
+			rm := reflect.ValueOf(m)
+			rm.Elem().Set(reflect.ValueOf(res[0]).Elem())
 		}
 		return nil
 	}
@@ -159,7 +159,9 @@ func (s *tracedClientStream) RecvMsg(m interface{}) error {
 	}
 
 	logger, _ := zap.NewProduction()
-	defer logger.Sync()
+	defer func(){
+		_ = logger.Sync() // flushes buffer, if any
+	}()
 
 	mock, res := keploy.ProcessDep(s.context, logger, meta, m)
 

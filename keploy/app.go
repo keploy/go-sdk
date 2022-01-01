@@ -3,9 +3,10 @@ package keploy
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
-	"go.uber.org/zap"
 	"errors"
+	"fmt"
+
+	"go.uber.org/zap"
 
 	"io"
 	"io/ioutil"
@@ -21,7 +22,9 @@ func NewApp(name, licenseKey, keployHost, host, port string) *App {
 	if err != nil {
 		panic(err)
 	}
-	defer logger.Sync() // flushes buffer, if any
+	defer func(){
+		_ = logger.Sync() // flushes buffer, if any
+	}()
 
 	return &App{
 		Name:       name,
@@ -258,8 +261,6 @@ func (a *App) put(tcs TestCaseReq) {
 			return
 		}
 	}
-
-	return
 }
 
 func (a *App) Get(id string) *TestCase {
