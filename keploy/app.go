@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
 	"go.uber.org/zap"
+
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -20,7 +22,9 @@ func NewApp(name, licenseKey, keployHost, host, port string) *App {
 	if err != nil {
 		panic(err)
 	}
-	defer logger.Sync() // flushes buffer, if any
+	defer func(){
+		_ = logger.Sync() // flushes buffer, if any
+	}()
 
 	return &App{
 		Name:       name,
@@ -46,6 +50,42 @@ type App struct {
 	client     *http.Client
 	Deps       map[string][]Dependency
 }
+
+type KError struct{
+	Err error
+}
+
+func (e *KError) Error() string{
+	return e.Err.Error()
+}
+
+const version = 1
+
+func (e *KError) GobEncode() ([]byte, error) {
+	r := make([]byte, 0)
+	r = append(r, version)
+	
+	if e.Err!=nil{
+		r =append(r, e.Err.Error()...)
+	}
+	return r, nil
+}
+
+func (e *KError) GobDecode(b []byte) error {
+	if b[0] != version {
+		return errors.New("gob decode of errors.errorString failed: unsupported version")
+	}
+	if len(b)==1{
+		e.Err = nil
+	}else{
+		str := string(b[1:])
+		// fmt.Println(b[1: ], " --- -- - ", str, " END \n")
+		e.Err = errors.New(str)
+	}
+
+	return nil
+}
+
 
 func (a *App) Capture(req TestCaseReq) {
 	a.put(req)
@@ -273,8 +313,6 @@ func (a *App) put(tcs TestCaseReq) {
 			return
 		}
 	}
-
-	return
 }
 
 func (a *App) Get(id string) *TestCase {

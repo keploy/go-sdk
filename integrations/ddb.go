@@ -2,6 +2,7 @@ package integrations
 
 import (
 	"errors"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
@@ -11,7 +12,9 @@ import (
 
 func NewDynamoDB(cl *dynamodb.DynamoDB) *DynamoDB {
 	logger, _ := zap.NewProduction()
-	defer logger.Sync() // flushes buffer, if any
+	defer func(){
+		_ = logger.Sync() // flushes buffer, if any
+	}()
 	return &DynamoDB{
 		DynamoDB: *cl,
 		log:      logger,
@@ -24,6 +27,7 @@ type DynamoDB struct {
 }
 
 func (c *DynamoDB) QueryWithContext(ctx aws.Context, input *dynamodb.QueryInput, opts ...request.Option) (*dynamodb.QueryOutput, error) {
+
 	if keploy.GetMode() == "off" {
 		return c.DynamoDB.QueryWithContext(ctx, input, opts...)
 	}
@@ -44,6 +48,7 @@ func (c *DynamoDB) QueryWithContext(ctx aws.Context, input *dynamodb.QueryInput,
 		meta["table"] = *input.TableName
 	}
 
+
 	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, err)
 	if mock {
 		var mockOutput *dynamodb.QueryOutput
@@ -60,6 +65,7 @@ func (c *DynamoDB) QueryWithContext(ctx aws.Context, input *dynamodb.QueryInput,
 }
 
 func (c *DynamoDB) GetItemWithContext(ctx aws.Context, input *dynamodb.GetItemInput, opts ...request.Option) (*dynamodb.GetItemOutput, error) {
+
 	if keploy.GetMode() == "off" {
 		return c.DynamoDB.GetItemWithContext(ctx, input, opts...)
 	}
@@ -79,6 +85,7 @@ func (c *DynamoDB) GetItemWithContext(ctx aws.Context, input *dynamodb.GetItemIn
 
 	if input.TableName != nil {
 		meta["table"] = *input.TableName
+
 	}
 
 	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, err)
@@ -98,7 +105,8 @@ func (c *DynamoDB) GetItemWithContext(ctx aws.Context, input *dynamodb.GetItemIn
 }
 
 func (c *DynamoDB) PutItemWithContext(ctx aws.Context, input *dynamodb.PutItemInput, opts ...request.Option) (*dynamodb.PutItemOutput, error) {
-	if keploy.GetMode() == "off" {
+
+  if keploy.GetMode() == "off" {
 		return c.DynamoDB.PutItemWithContext(ctx, input, opts...)
 	}
 
@@ -118,6 +126,7 @@ func (c *DynamoDB) PutItemWithContext(ctx aws.Context, input *dynamodb.PutItemIn
 	if input.TableName != nil {
 		meta["table"] = *input.TableName
 	}
+
 
 	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, err)
 

@@ -13,7 +13,8 @@ import (
 const SDKMode = "KeploySDKMode"
 const Deps = "KeployDeps"
 const TestID = "KeployTestID"
-const KCTX = "KeployContext"
+type KctxType string
+const KCTX KctxType = "KeployContext"
 
 func GetMode() string {
 	return os.Getenv("KEPLOY_SDK_MODE")
@@ -106,7 +107,7 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 				return false, nil
 			}
 		}
-
+    
 		//err = keploy.Encode(err1,res, 1)
 		//if err != nil {
 		//	c.log.Error("failed to encode ddb resp", zap.String("test id", id))
