@@ -104,7 +104,7 @@ func captureMWWebGoV6(app *keploy.App) func(http.ResponseWriter, *http.Request, 
 		// Response
 		resBody := new(bytes.Buffer)
 		mw := io.MultiWriter(w, resBody)
-		writer := &bodyDumpResponseWriterWebgoV6{Writer: mw, ResponseWriter: w}
+		writer := &bodyDumpResponseWriterWebgoV6{Writer: mw, ResponseWriter: w, status: http.StatusOK}
 		w = writer
 
 		next(w, r)
@@ -138,7 +138,7 @@ func captureMWWebGoV6(app *keploy.App) func(http.ResponseWriter, *http.Request, 
 			},
 			HttpResp: keploy.HttpResp{
 				//Status
-				// StatusCode:   w.Status,
+				StatusCode:   writer.status,
 				Header: w.Header(),
 				Body:   resBody.String(),
 			},
@@ -151,9 +151,11 @@ func captureMWWebGoV6(app *keploy.App) func(http.ResponseWriter, *http.Request, 
 type bodyDumpResponseWriterWebgoV6 struct {
 	io.Writer
 	http.ResponseWriter
+	status int
 }
 
 func (w *bodyDumpResponseWriterWebgoV6) WriteHeader(code int) {
+	w.status = code
 	w.ResponseWriter.WriteHeader(code)
 }
 
