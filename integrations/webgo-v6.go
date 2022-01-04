@@ -105,6 +105,7 @@ func captureMWWebGoV6(app *keploy.App) func(http.ResponseWriter, *http.Request, 
 		resBody := new(bytes.Buffer)
 		mw := io.MultiWriter(w, resBody)
 		writer := &bodyDumpResponseWriterWebgoV6{Writer: mw, ResponseWriter: w, status: http.StatusOK}
+
 		w = writer
 
 		next(w, r)

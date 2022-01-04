@@ -158,7 +158,6 @@ type bodyDumpResponseWriterWebgoV4 struct {
 
 func (w *bodyDumpResponseWriterWebgoV4) WriteHeader(code int) {
 	w.status = code
-	fmt.Println("xvbvncfg   ", code)
 	w.ResponseWriter.WriteHeader(code)
 }
 
