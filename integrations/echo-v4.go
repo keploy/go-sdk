@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"time"
-
 )
 
 func EchoV4(app *keploy.App, e *echo.Echo) {
@@ -51,7 +50,9 @@ func testMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 				TestID: id,
 				Deps:   tc.Deps,
 			})
-			return next(c)
+			resp := captureResp(c, next)
+			app.Resp[id] = resp
+			return
 		}
 	}
 }
@@ -76,7 +77,9 @@ func captureMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 					TestID: id,
 					Deps:   app.Deps[id],
 				})
-				return next(c)
+				resp := captureResp(c, next)
+				app.Resp[id] = resp
+				return
 			}
 
 			// Request
@@ -91,14 +94,7 @@ func captureMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 			c.Request().Body = ioutil.NopCloser(bytes.NewBuffer(reqBody)) // Reset
 
 			// Response
-			resBody := new(bytes.Buffer)
-			mw := io.MultiWriter(c.Response().Writer, resBody)
-			writer := &bodyDumpResponseWriter{Writer: mw, ResponseWriter: c.Response().Writer}
-			c.Response().Writer = writer
-
-			if err = next(c); err != nil {
-				c.Error(err)
-			}
+			resp := captureResp(c, next)
 
 			d := c.Request().Context().Value(keploy.KCTX)
 			if d == nil {
@@ -127,14 +123,8 @@ func captureMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 					Header:     c.Request().Header,
 					Body:       string(reqBody),
 				},
-				HttpResp: keploy.HttpResp{
-					//Status
-
-					StatusCode: c.Response().Status,
-					Header:     c.Response().Header(),
-					Body:       resBody.String(),
-				},
-				Deps: deps.Deps,
+				HttpResp: resp,
+				Deps:     deps.Deps,
 			})
 
 			//fmt.Println("This is the request", c.Request().Proto, u.String(), c.Request().Header, "body - " + string(reqBody), c.Request().Cookies())
@@ -144,6 +134,24 @@ func captureMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 		}
 	}
 
+}
+
+func captureResp(c echo.Context, next echo.HandlerFunc) keploy.HttpResp {
+	resBody := new(bytes.Buffer)
+	mw := io.MultiWriter(c.Response().Writer, resBody)
+	writer := &bodyDumpResponseWriter{Writer: mw, ResponseWriter: c.Response().Writer}
+	c.Response().Writer = writer
+
+	if err := next(c); err != nil {
+		c.Error(err)
+	}
+	return keploy.HttpResp{
+		//Status
+
+		StatusCode: c.Response().Status,
+		Header:     c.Response().Header(),
+		Body:       resBody.String(),
+	}
 }
 
 type bodyDumpResponseWriter struct {
