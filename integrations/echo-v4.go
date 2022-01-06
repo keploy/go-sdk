@@ -187,7 +187,7 @@ func pathParamsEcho(c echo.Context) map[string]string{
 	var result map[string]string = make(map[string]string)
 	paramNames := c.ParamNames()
 	paramValues:= c.ParamValues()
-	for i,_ := range paramNames{
+	for i:= 0;i<len(paramNames);i++{
 		fmt.Printf("paramName : %v, paramValue : %v\n", paramNames[i], paramValues[i])
 		result[paramNames[i]] = paramValues[i]
 	}
