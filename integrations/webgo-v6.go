@@ -57,9 +57,8 @@ func testMWWebGoV6(app *keploy.App) func(http.ResponseWriter, *http.Request, htt
 			Deps:   tc.Deps,
 		})
 		r = r.WithContext(ctx)
-		resp := captureRespWebGoV4(w,r, next)
+		resp := captureRespWebGoV6(w,r, next)
 		app.Resp[id] = resp
-		return
 	}
 }
 
@@ -152,7 +151,7 @@ func captureMWWebGoV6(app *keploy.App) func(http.ResponseWriter, *http.Request, 
 				ProtoMajor: r.ProtoMajor,
 				ProtoMinor: r.ProtoMinor,
 				URL:        r.URL.String(),
-				URLParams:  urlParamsWebGo(r),
+				URLParams:  urlParamsWebGoV6(r),
 				Header:     r.Header,
 				Body:       string(reqBody),
 			},
@@ -167,6 +166,27 @@ func captureMWWebGoV6(app *keploy.App) func(http.ResponseWriter, *http.Request, 
 
 	}
 }
+
+func urlParamsWebGoV6 (r *http.Request) map[string]string{
+	result := webgo.Context(r).Params()
+	qp := r.URL.Query()
+	for i,j := range qp{
+		var s string
+		if _,ok:=result[i]; ok{
+			 s = result[i]
+		} 
+		for _,e := range j{
+			if s!=""{
+				s += ", "+e
+			} else {
+				s = e
+			}
+		}
+		result[i] = s
+	}
+	return result
+}
+
 
 type bodyDumpResponseWriterWebgoV6 struct {
 	io.Writer
