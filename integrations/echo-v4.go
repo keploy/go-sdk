@@ -4,14 +4,17 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"github.com/keploy/go-sdk/keploy"
-	"github.com/labstack/echo/v4"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
+
+	"github.com/keploy/go-sdk/keploy"
+	"github.com/labstack/echo/v4"
 )
 
 func EchoV4(app *keploy.App, e *echo.Echo) {
@@ -115,11 +118,13 @@ func captureMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 			app.Capture(keploy.TestCaseReq{
 				Captured: time.Now().Unix(),
 				AppID:    app.Name,
-				URI:      c.Request().URL.Path,
+				URI:      urlPathEcho(c.Request().URL.Path, pathParamsEcho(c)) ,
 				HttpReq: keploy.HttpReq{
 					Method:     keploy.Method(c.Request().Method),
 					ProtoMajor: c.Request().ProtoMajor,
 					ProtoMinor: c.Request().ProtoMinor,
+					URL:        c.Request().URL.String(),
+					URLParams:  urlParamsEcho(c),
 					Header:     c.Request().Header,
 					Body:       string(reqBody),
 				},
@@ -152,6 +157,49 @@ func captureResp(c echo.Context, next echo.HandlerFunc) keploy.HttpResp {
 		Header:     c.Response().Header(),
 		Body:       resBody.String(),
 	}
+}
+
+
+func urlParamsEcho (c echo.Context) map[string]string{
+	result := pathParamsEcho(c)
+	qp := c.QueryParams()
+	for i,j := range qp{
+		var s string
+		if _,ok:=result[i]; ok{
+			 s = result[i]
+		} 
+		for _,e := range j{
+			if s!=""{
+				s += ", "+e
+			} else {
+				s = e
+			}
+		}
+		result[i] = s
+	}
+	return result
+}
+
+
+
+
+func pathParamsEcho(c echo.Context) map[string]string{
+	var result map[string]string = make(map[string]string)
+	paramNames := c.ParamNames()
+	paramValues:= c.ParamValues()
+	for i,_ := range paramNames{
+		fmt.Printf("paramName : %v, paramValue : %v\n", paramNames[i], paramValues[i])
+		result[paramNames[i]] = paramValues[i]
+	}
+	return result
+}
+
+func urlPathEcho(url string, params map[string]string) string{
+	res := url
+	for i,j := range params{
+		res = strings.Replace(url, j, ":"+i, -1)
+	}
+	return res
 }
 
 type bodyDumpResponseWriter struct {

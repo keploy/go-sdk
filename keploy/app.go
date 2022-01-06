@@ -53,11 +53,11 @@ type App struct {
 	Resp       map[string]HttpResp
 }
 
-type KError struct {
+type KError struct{
 	Err error
 }
 
-func (e *KError) Error() string {
+func (e *KError) Error() string{
 	return e.Err.Error()
 }
 
@@ -66,9 +66,9 @@ const version = 1
 func (e *KError) GobEncode() ([]byte, error) {
 	r := make([]byte, 0)
 	r = append(r, version)
-
-	if e.Err != nil {
-		r = append(r, e.Err.Error()...)
+	
+	if e.Err!=nil{
+		r =append(r, e.Err.Error()...)
 	}
 	return r, nil
 }
@@ -77,9 +77,9 @@ func (e *KError) GobDecode(b []byte) error {
 	if b[0] != version {
 		return errors.New("gob decode of errors.errorString failed: unsupported version")
 	}
-	if len(b) == 1 {
+	if len(b)==1{
 		e.Err = nil
-	} else {
+	}else{
 		str := string(b[1:])
 		// fmt.Println(b[1: ], " --- -- - ", str, " END \n")
 		e.Err = errors.New(str)
@@ -87,6 +87,7 @@ func (e *KError) GobDecode(b []byte) error {
 
 	return nil
 }
+
 
 func (a *App) Capture(req TestCaseReq) {
 	go a.put(req)
@@ -153,7 +154,7 @@ func (a *App) end(id string, status bool) error {
 }
 
 func (a *App) simulate(tc TestCase) (*HttpResp, error) {
-	req, err := http.NewRequest(string(tc.HttpReq.Method), "http://"+a.Host+":"+a.Port+tc.URI, bytes.NewBufferString(tc.HttpReq.Body))
+	req, err := http.NewRequest(string(tc.HttpReq.Method), "http://"+a.Host+":"+a.Port+tc.HttpReq.URL, bytes.NewBufferString(tc.HttpReq.Body))
 	if err != nil {
 		panic(err)
 	}
@@ -187,7 +188,7 @@ func (a *App) check(runId string, tc TestCase) bool {
 		a.Log.Error("failed to simulate request on local server", zap.Error(err))
 		return false
 	}
-
+	fmt.Println("go-sdk/app.go line 199:  ",tc.HttpResp, "\n", *resp)
 	bin, err := json.Marshal(&TestReq{
 		ID:    tc.ID,
 		AppID: a.Name,
