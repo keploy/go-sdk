@@ -33,7 +33,6 @@ func WebGoV6(app *keploy.App, w *webgo.Router ) {
 	default:
 		w.Use(captureMWWebGoV6(app))
 	}
-	w.Start()
 }
 
 func testMWWebGoV6(app *keploy.App) func(http.ResponseWriter, *http.Request, http.HandlerFunc) {
@@ -58,7 +57,25 @@ func testMWWebGoV6(app *keploy.App) func(http.ResponseWriter, *http.Request, htt
 			Deps:   tc.Deps,
 		})
 		r = r.WithContext(ctx)
-		next(w, r)
+		resp := captureRespWebGoV6(w,r, next)
+		app.Resp[id] = resp
+	}
+}
+
+
+func captureRespWebGoV6(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) keploy.HttpResp {
+	resBody := new(bytes.Buffer)
+	mw := io.MultiWriter(w , resBody)
+	writer := &bodyDumpResponseWriterWebgoV4{Writer: mw, ResponseWriter: w, status : http.StatusOK}
+	w = writer
+
+	next(w,r)
+	return keploy.HttpResp{
+		//Status
+
+		StatusCode:   writer.status,
+		Header:       w.Header(),
+		Body:         resBody.String(),
 	}
 }
 
@@ -128,14 +145,15 @@ func captureMWWebGoV6(app *keploy.App) func(http.ResponseWriter, *http.Request, 
 		app.Capture(keploy.TestCaseReq{
 			Captured: time.Now().Unix(),
 			AppID:    app.Name,
-			URI: r.URL.Path,
+			URI: 	  urlPathWebGo(r.URL.Path, webgo.Context(r).Params()),
 			HttpReq: keploy.HttpReq{
 				Method:     keploy.Method(r.Method),
 				ProtoMajor: r.ProtoMajor,
 				ProtoMinor: r.ProtoMinor,
-
-				Header: r.Header,
-				Body:   string(reqBody),
+				URL:        r.URL.String(),
+				URLParams:  urlParamsWebGoV6(r),
+				Header:     r.Header,
+				Body:       string(reqBody),
 			},
 			HttpResp: keploy.HttpResp{
 				//Status
@@ -149,6 +167,25 @@ func captureMWWebGoV6(app *keploy.App) func(http.ResponseWriter, *http.Request, 
 	}
 }
 
+func urlParamsWebGoV6 (r *http.Request) map[string]string{
+	result := webgo.Context(r).Params()
+	qp := r.URL.Query()
+	for i,j := range qp{
+		var s string
+		if _,ok:=result[i]; ok{
+			 s = result[i]
+		} 
+		for _,e := range j{
+			if s!=""{
+				s += ", "+e
+			} else {
+				s = e
+			}
+		}
+		result[i] = s
+	}
+	return result
+}
 type bodyDumpResponseWriterWebgoV6 struct {
 	io.Writer
 	http.ResponseWriter

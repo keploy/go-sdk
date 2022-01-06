@@ -4,15 +4,17 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"github.com/keploy/go-sdk/keploy"
-	"github.com/labstack/echo/v4"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/keploy/go-sdk/keploy"
+	"github.com/labstack/echo/v4"
 )
 
 func EchoV4(app *keploy.App, e *echo.Echo) {
@@ -51,7 +53,9 @@ func testMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 				TestID: id,
 				Deps:   tc.Deps,
 			})
-			return next(c)
+			resp := captureResp(c, next)
+			app.Resp[id] = resp
+			return
 		}
 	}
 }
@@ -76,7 +80,9 @@ func captureMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 					TestID: id,
 					Deps:   app.Deps[id],
 				})
-				return next(c)
+				resp := captureResp(c, next)
+				app.Resp[id] = resp
+				return
 			}
 
 			// Request
@@ -91,14 +97,7 @@ func captureMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 			c.Request().Body = ioutil.NopCloser(bytes.NewBuffer(reqBody)) // Reset
 
 			// Response
-			resBody := new(bytes.Buffer)
-			mw := io.MultiWriter(c.Response().Writer, resBody)
-			writer := &bodyDumpResponseWriter{Writer: mw, ResponseWriter: c.Response().Writer}
-			c.Response().Writer = writer
-
-			if err = next(c); err != nil {
-				c.Error(err)
-			}
+			resp := captureResp(c, next)
 
 			d := c.Request().Context().Value(keploy.KCTX)
 			if d == nil {
@@ -119,22 +118,18 @@ func captureMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 			app.Capture(keploy.TestCaseReq{
 				Captured: time.Now().Unix(),
 				AppID:    app.Name,
-				URI:      c.Request().URL.Path,
+				URI:      urlPathEcho(c.Request().URL.Path, pathParamsEcho(c)) ,
 				HttpReq: keploy.HttpReq{
 					Method:     keploy.Method(c.Request().Method),
 					ProtoMajor: c.Request().ProtoMajor,
 					ProtoMinor: c.Request().ProtoMinor,
+					URL:        c.Request().URL.String(),
+					URLParams:  urlParamsEcho(c),
 					Header:     c.Request().Header,
 					Body:       string(reqBody),
 				},
-				HttpResp: keploy.HttpResp{
-					//Status
-
-					StatusCode: c.Response().Status,
-					Header:     c.Response().Header(),
-					Body:       resBody.String(),
-				},
-				Deps: deps.Deps,
+				HttpResp: resp,
+				Deps:     deps.Deps,
 			})
 
 			//fmt.Println("This is the request", c.Request().Proto, u.String(), c.Request().Header, "body - " + string(reqBody), c.Request().Cookies())
@@ -144,6 +139,67 @@ func captureMW(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 		}
 	}
 
+}
+
+func captureResp(c echo.Context, next echo.HandlerFunc) keploy.HttpResp {
+	resBody := new(bytes.Buffer)
+	mw := io.MultiWriter(c.Response().Writer, resBody)
+	writer := &bodyDumpResponseWriter{Writer: mw, ResponseWriter: c.Response().Writer}
+	c.Response().Writer = writer
+
+	if err := next(c); err != nil {
+		c.Error(err)
+	}
+	return keploy.HttpResp{
+		//Status
+
+		StatusCode: c.Response().Status,
+		Header:     c.Response().Header(),
+		Body:       resBody.String(),
+	}
+}
+
+
+func urlParamsEcho (c echo.Context) map[string]string{
+	result := pathParamsEcho(c)
+	qp := c.QueryParams()
+	for i,j := range qp{
+		var s string
+		if _,ok:=result[i]; ok{
+			 s = result[i]
+		} 
+		for _,e := range j{
+			if s!=""{
+				s += ", "+e
+			} else {
+				s = e
+			}
+		}
+		result[i] = s
+	}
+	return result
+}
+
+
+
+
+func pathParamsEcho(c echo.Context) map[string]string{
+	var result map[string]string = make(map[string]string)
+	paramNames := c.ParamNames()
+	paramValues:= c.ParamValues()
+	for i:= 0;i<len(paramNames);i++{
+		fmt.Printf("paramName : %v, paramValue : %v\n", paramNames[i], paramValues[i])
+		result[paramNames[i]] = paramValues[i]
+	}
+	return result
+}
+
+func urlPathEcho(url string, params map[string]string) string{
+	res := url
+	for i,j := range params{
+		res = strings.Replace(url, j, ":"+i, -1)
+	}
+	return res
 }
 
 type bodyDumpResponseWriter struct {
