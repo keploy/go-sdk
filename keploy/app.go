@@ -88,7 +88,7 @@ func (e *KError) GobDecode(b []byte) error {
 
 
 func (a *App) Capture(req TestCaseReq) {
-	a.put(req)
+	go a.put(req)
 }
 
 func (a *App) Test() {
