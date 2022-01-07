@@ -55,6 +55,8 @@ func clientInterceptor(app *keploy.App) func (
 	}
 
 	meta := map[string]string{
+		"name":      "gRPC",
+		"type":      string(keploy.RPC),
 		"operation": method,
 	}
 
