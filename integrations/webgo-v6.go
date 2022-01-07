@@ -22,7 +22,7 @@ import (
 	"github.com/keploy/go-sdk/keploy"
 )
 
-func WebGoV6(app *keploy.App, w *webgo.Router ) {
+func WebGoV6(app *keploy.App, w *webgo.Router) {
 	mode := os.Getenv("KEPLOY_SDK_MODE")
 	switch mode {
 	case "test":
@@ -57,25 +57,24 @@ func testMWWebGoV6(app *keploy.App) func(http.ResponseWriter, *http.Request, htt
 			Deps:   tc.Deps,
 		})
 		r = r.WithContext(ctx)
-		resp := captureRespWebGoV6(w,r, next)
+		resp := captureRespWebGoV6(w, r, next)
 		app.Resp[id] = resp
 	}
 }
 
-
 func captureRespWebGoV6(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) keploy.HttpResp {
 	resBody := new(bytes.Buffer)
-	mw := io.MultiWriter(w , resBody)
-	writer := &bodyDumpResponseWriterWebgoV4{Writer: mw, ResponseWriter: w, status : http.StatusOK}
+	mw := io.MultiWriter(w, resBody)
+	writer := &bodyDumpResponseWriterWebgoV4{Writer: mw, ResponseWriter: w, status: http.StatusOK}
 	w = writer
 
-	next(w,r)
+	next(w, r)
 	return keploy.HttpResp{
 		//Status
 
-		StatusCode:   writer.status,
-		Header:       w.Header(),
-		Body:         resBody.String(),
+		StatusCode: writer.status,
+		Header:     w.Header(),
+		Body:       resBody.String(),
 	}
 }
 
@@ -101,9 +100,10 @@ func captureMWWebGoV6(app *keploy.App) func(http.ResponseWriter, *http.Request, 
 				TestID: id,
 				Deps:   app.Deps[id],
 			})
-	
+
 			r = r.WithContext(ctx)
-			next(w, r)
+			resp := captureRespWebGoV4(w, r, next)
+			app.Resp[id] = resp
 			return
 		}
 		// Request
@@ -133,7 +133,7 @@ func captureMWWebGoV6(app *keploy.App) func(http.ResponseWriter, *http.Request, 
 			return
 		}
 		deps := d.(*keploy.Context)
-		fmt.Println("go-sdk, line 105: ",deps)
+		fmt.Println("go-sdk, line 105: ", deps)
 
 		// u := &url.URL{
 		// 	Scheme: r.URL.Scheme,
@@ -145,7 +145,7 @@ func captureMWWebGoV6(app *keploy.App) func(http.ResponseWriter, *http.Request, 
 		app.Capture(keploy.TestCaseReq{
 			Captured: time.Now().Unix(),
 			AppID:    app.Name,
-			URI: 	  urlPathWebGo(r.URL.Path, webgo.Context(r).Params()),
+			URI:      urlPathWebGo(r.URL.Path, webgo.Context(r).Params()),
 			HttpReq: keploy.HttpReq{
 				Method:     keploy.Method(r.Method),
 				ProtoMajor: r.ProtoMajor,
@@ -157,9 +157,9 @@ func captureMWWebGoV6(app *keploy.App) func(http.ResponseWriter, *http.Request, 
 			},
 			HttpResp: keploy.HttpResp{
 				//Status
-				StatusCode:   writer.status,
-				Header: w.Header(),
-				Body:   resBody.String(),
+				StatusCode: writer.status,
+				Header:     w.Header(),
+				Body:       resBody.String(),
 			},
 			Deps: deps.Deps,
 		})
@@ -167,17 +167,17 @@ func captureMWWebGoV6(app *keploy.App) func(http.ResponseWriter, *http.Request, 
 	}
 }
 
-func urlParamsWebGoV6 (r *http.Request) map[string]string{
+func urlParamsWebGoV6(r *http.Request) map[string]string {
 	result := webgo.Context(r).Params()
 	qp := r.URL.Query()
-	for i,j := range qp{
+	for i, j := range qp {
 		var s string
-		if _,ok:=result[i]; ok{
-			 s = result[i]
-		} 
-		for _,e := range j{
-			if s!=""{
-				s += ", "+e
+		if _, ok := result[i]; ok {
+			s = result[i]
+		}
+		for _, e := range j {
+			if s != "" {
+				s += ", " + e
 			} else {
 				s = e
 			}
@@ -186,6 +186,7 @@ func urlParamsWebGoV6 (r *http.Request) map[string]string{
 	}
 	return result
 }
+
 type bodyDumpResponseWriterWebgoV6 struct {
 	io.Writer
 	http.ResponseWriter
