@@ -188,7 +188,6 @@ func (a *App) check(runId string, tc TestCase) bool {
 		a.Log.Error("failed to simulate request on local server", zap.Error(err))
 		return false
 	}
-	fmt.Println("go-sdk/app.go line 199:  ",tc.HttpResp, "\n", *resp)
 	bin, err := json.Marshal(&TestReq{
 		ID:    tc.ID,
 		AppID: a.Name,
