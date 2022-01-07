@@ -45,6 +45,7 @@ type DependencyType string
 const(
 	NoSqlDB DependencyType = "DB"
 	SqlDB   DependencyType = "SQL_DB"
+	RPC     DependencyType = "RPC"
 )
 
 // type sql database -> postgres, mysql, redshift..
