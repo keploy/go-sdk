@@ -14,9 +14,19 @@ import (
 	"time"
 )
 
+// NewApp creates and returns an App instance for API testing. It takes 5 strings as parameters
+// 
+// name parameter should be the name of project app
+//
+// licenseKey parameter should be the license key for the API
+//
+// keployHost parameter is the keploy's server address. If it is empty, requests are made to the 
+// hosted Keploy server.
+//
+// host and port parameters containes the host and port of API to be tested.
 func NewApp(name, licenseKey, keployHost, host, port string) *App {
 	if keployHost == "" {
-		keployHost = "http://localhost:8081"
+		keployHost = "https://api.keploy.io"
 	}
 	logger, err := zap.NewProduction()
 	if err != nil {
@@ -53,16 +63,20 @@ type App struct {
 	Resp       map[string]HttpResp
 }
 
+// KError stores the error for encoding and decoding as errorString has no exported fields due
+// to gob wasn't able to encode the unexported fields
 type KError struct{
 	Err error
 }
 
+// This method returns error string stored in error
 func (e *KError) Error() string{
 	return e.Err.Error()
 }
 
 const version = 1
 
+// It encodes the Err and returns the binary data 
 func (e *KError) GobEncode() ([]byte, error) {
 	r := make([]byte, 0)
 	r = append(r, version)
@@ -73,6 +87,7 @@ func (e *KError) GobEncode() ([]byte, error) {
 	return r, nil
 }
 
+// It decodes the b([]byte) into error struct 
 func (e *KError) GobDecode(b []byte) error {
 	if b[0] != version {
 		return errors.New("gob decode of errors.errorString failed: unsupported version")
@@ -81,18 +96,19 @@ func (e *KError) GobDecode(b []byte) error {
 		e.Err = nil
 	}else{
 		str := string(b[1:])
-		// fmt.Println(b[1: ], " --- -- - ", str, " END \n")
 		e.Err = errors.New(str)
 	}
 
 	return nil
 }
 
-
+// It captures request, response and output of external dependencies by making Call to keploy server
 func (a *App) Capture(req TestCaseReq) {
 	go a.put(req)
 }
 
+// It fetches the testcases from the keploy and sends the current response of API along with 
+// fetched testcases
 func (a *App) Test() {
 	// fetch test cases from web server and save to memory
 	time.Sleep(time.Second * 5)

@@ -23,6 +23,8 @@ import (
 	"github.com/keploy/go-sdk/keploy"
 )
 
+// WebGoV4 adds middleware for API testing into webgo router. 
+// app parameter is app instance and w parameter is webgo v4 router of your API 
 func WebGoV4(app *keploy.App, w *webgo.Router) {
 	mode := os.Getenv("KEPLOY_SDK_MODE")
 	switch mode {
@@ -31,7 +33,7 @@ func WebGoV4(app *keploy.App, w *webgo.Router) {
 		go app.Test()
 	case "off":
 		// dont run the SDK
-	default:
+	case "capture":
 		w.Use(captureMWWebGoV4(app))
 	}
 }

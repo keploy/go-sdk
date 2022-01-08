@@ -16,6 +16,8 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
+// NewMongoDB creates and returns an instance of MongoDB. 
+// cl parameter is pointer of mongo.Collection which have mongo operations as its method
 func NewMongoDB(cl *mongo.Collection) *MongoDB {
 	gob.Register(primitive.ObjectID{})
 	logger, _ := zap.NewProduction()
@@ -25,17 +27,20 @@ func NewMongoDB(cl *mongo.Collection) *MongoDB {
 	return &MongoDB{Collection: *cl, log: logger}
 }
 
+// MongoDB countains instance of mongo.Collection to mock mongoDB methods
 type MongoDB struct {
 	mongo.Collection
 	log *zap.Logger
 }
 
+// MongoSingleResult countains instance of mongo.SingleResult to mock its methods
 type MongoSingleResult struct {
 	mongo.SingleResult
 	ctx context.Context
 	log *zap.Logger
 }
 
+// Err method returns error message of mongo.SingleResult if any.
 func (msr *MongoSingleResult) Err() error {
 	if keploy.GetMode() == "off" {
 		err := msr.SingleResult.Err()
@@ -79,6 +84,7 @@ func (msr *MongoSingleResult) Err() error {
 	return err
 }
 
+// Decode method decodes the binary data into mongo Document. Returns error 
 func (msr *MongoSingleResult) Decode(v interface{}) error {
 	if keploy.GetMode() == "off" {
 		err := msr.SingleResult.Decode(v)
@@ -125,6 +131,8 @@ func (msr *MongoSingleResult) Decode(v interface{}) error {
 	return err
 }
 
+// FindOne method creates and returns pointer of MongoSingleResult which containes mocked 
+// methods of mongo.SingleResult. Filter parameter should not be nil.
 func (c *MongoDB) FindOne(ctx context.Context, filter interface{}, opts ...*options.FindOneOptions) *MongoSingleResult {
 	if keploy.GetMode() == "off" {
 		sr := c.Collection.FindOne(ctx, filter, opts...)
@@ -165,6 +173,8 @@ func (c *MongoDB) FindOne(ctx context.Context, filter interface{}, opts ...*opti
 	}
 }
 
+// InsertOne method mocks Collection.InsertOne of mongo. Returns pointer of mongo.InsertOneResult
+// document parameter should not be nil. It is the document to be inserted into collection.
 func (c *MongoDB) InsertOne(ctx context.Context, document interface{},
 	opts ...*options.InsertOneOptions) (*mongo.InsertOneResult, error) {
 	if keploy.GetMode() == "off" {
@@ -212,12 +222,15 @@ func (c *MongoDB) InsertOne(ctx context.Context, document interface{},
 	return output, err
 }
 
+// MongoCursor contains emedded mongo.Cursor in order to override its methods
 type MongoCursor struct {
 	mongo.Cursor
 	ctx context.Context
 	log *zap.Logger
 }
 
+// Next function returns boolean that whether the batch is empty or not. returns false if there 
+// there is no more document matching with filter.
 func (cr *MongoCursor) Next(ctx context.Context) bool {
 	if keploy.GetMode() == "off" {
 		return cr.Cursor.Next(ctx)
@@ -256,6 +269,7 @@ func (cr *MongoCursor) Next(ctx context.Context) bool {
 	return *output
 }
 
+// Decode functions decodes []byte into v parameter.
 func (cr *MongoCursor) Decode(v interface{}) error {
 	if keploy.GetMode() == "off" {
 		err := cr.Cursor.Decode(v)
@@ -300,7 +314,12 @@ func (cr *MongoCursor) Decode(v interface{}) error {
 	return err
 }
 
-//have to work on this. It might fail
+// Find creates and returns the instance of pointer to MongoCursor which have overridden methods of mongo.Cursor
+//
+// The filter parameter must be a document containing query operators and can be used to select which documents are
+// included in the result. It cannot be nil. An empty document (e.g. bson.D{}) should be used to include all documents.
+//
+// The opts parameter can be used to specify options for the operation (see the options.FindOptions documentation).
 func (c *MongoDB) Find(ctx context.Context, filter interface{},
 	opts ...*options.FindOptions) (*MongoCursor, error) {
 	if keploy.GetMode() == "off" {

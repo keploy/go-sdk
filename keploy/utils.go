@@ -16,10 +16,12 @@ const TestID = "KeployTestID"
 type KctxType string
 const KCTX KctxType = "KeployContext"
 
+// GetMode returns the mode on which SDK is configured by accessing environment variable
 func GetMode() string {
 	return os.Getenv("KEPLOY_SDK_MODE")
 }
 
+// Decode returns the decoded data by using gob decoder on bin parameter.
 func Decode(bin []byte, obj interface{}) (interface{}, error) {
 	if len(bin) == 0 {
 		return nil, nil
@@ -34,6 +36,8 @@ func Decode(bin []byte, obj interface{}) (interface{}, error) {
 	return obj, nil
 }
 
+// Encode takes obj parameter and encodes its contents into arr parameter. If obj have no 
+// exported field then, it returns an error.
 func Encode(obj interface{}, arr [][]byte, pos int) error {
 	if obj == nil {
 		arr[pos] = nil
@@ -50,6 +54,7 @@ func Encode(obj interface{}, arr [][]byte, pos int) error {
 	return nil
 }
 
+// GetState returns value of "KeployContext" key stored in context of request
 func GetState(ctx context.Context) (*Context, error) {
 	kctx := ctx.Value(KCTX)
 	if kctx == nil {
@@ -58,6 +63,9 @@ func GetState(ctx context.Context) (*Context, error) {
 	return kctx.(*Context), nil
 }
 
+// ProcessDep is a generic method to encode and decode the outputs of external dependecies.  
+// If request is on "test" mode, it returns (true, decoded outputs of stored binaries in keploy context). 
+// Else in "capture" mode, it encodes the outputs of external dependencies and stores in keploy context. Returns (false, nil)
 func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, outputs ...interface{}) (bool, []interface{}) {
 	kctx, err := GetState(ctx)
 	if err != nil {

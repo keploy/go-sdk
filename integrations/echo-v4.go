@@ -17,6 +17,8 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
+// WebGoV4 adds middleware for API testing into webgo router. 
+// app parameter is app instance and w parameter is webgo v4 router of your API 
 func EchoV4(app *keploy.App, e *echo.Echo) {
 	mode := os.Getenv("KEPLOY_SDK_MODE")
 	switch mode {
@@ -26,7 +28,7 @@ func EchoV4(app *keploy.App, e *echo.Echo) {
 		go app.Test()
 	case "off":
 		// dont run the SDK
-	default:
+	case "capture":
 		e.Use(NewMiddlewareContextValue)
 		e.Use(captureMW(app))
 	}

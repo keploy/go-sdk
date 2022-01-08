@@ -178,6 +178,10 @@ func (s *tracedClientStream) RecvMsg(m interface{}) error {
 	return err
 }
 
+// WithClientUnaryInterceptor function adds unary client interceptor to store its request, 
+// response and external dependencies. 
+//
+// app parameter is pointer to app instance of API
 func WithClientUnaryInterceptor(app *keploy.App) grpc.DialOption {
 	return grpc.WithUnaryInterceptor(clientInterceptor(app))
 }
