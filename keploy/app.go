@@ -253,7 +253,7 @@ func (a *App) put(tcs TestCaseReq) {
 	defer func(Body io.ReadCloser) {
 		err = Body.Close()
 		if err != nil {
-			a.Log.Error("failed to close connecton reader", zap.String("url", tcs.URI), zap.Error(err))
+			// a.Log.Error("failed to close connecton reader", zap.String("url", tcs.URI), zap.Error(err))
 			return
 		}
 	}(resp.Body)
