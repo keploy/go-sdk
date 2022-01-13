@@ -5,20 +5,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-
 	"go.uber.org/zap"
-
 	"io"
 	"io/ioutil"
 	"net/http"
 	"time"
 )
 
-// NewApp creates and returns an App instance for API testing. It takes 5 strings as parameters
+// NewApp creates and returns an App instance for API testing. It should be called before router
+// and dependency integration. It takes 5 strings as parameters
 // 
-// name parameter should be the name of project app
+// name parameter should be the name of project app, It should not contain spaces.
 //
-// licenseKey parameter should be the license key for the API
+// licenseKey parameter should be the license key for the API testing.
 //
 // keployHost parameter is the keploy's server address. If it is empty, requests are made to the 
 // hosted Keploy server.
@@ -26,7 +25,7 @@ import (
 // host and port parameters containes the host and port of API to be tested.
 func NewApp(name, licenseKey, keployHost, host, port string) *App {
 	if keployHost == "" {
-		keployHost = "https://api.keploy.io"
+		keployHost = "http://localhost:8081"
 	}
 	logger, err := zap.NewProduction()
 	if err != nil {

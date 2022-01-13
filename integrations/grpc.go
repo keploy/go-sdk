@@ -1,14 +1,11 @@
 package integrations
 
 import (
-	// "errors"
 	"errors"
 	"reflect"
-	// "fmt"
 	"io"
 	"log"
 	"github.com/keploy/go-sdk/keploy"
-	// "github.com/labstack/gommon/log"
 	"google.golang.org/grpc"
 	"go.uber.org/zap"
 	"context"
@@ -179,13 +176,14 @@ func (s *tracedClientStream) RecvMsg(m interface{}) error {
 }
 
 // WithClientUnaryInterceptor function adds unary client interceptor to store its request, 
-// response and external dependencies. 
+// response and external dependencies. It should be called in grpc.Dial method
 //
-// app parameter is pointer to app instance of API
+// app parameter is pointer to app instance of API. It should not be nil.
 func WithClientUnaryInterceptor(app *keploy.App) grpc.DialOption {
 	return grpc.WithUnaryInterceptor(clientInterceptor(app))
 }
 
+	// "errors"
 func WithClientStreamInterceptor() grpc.DialOption {
 	return grpc.WithStreamInterceptor(StreamClientInterceptor)
 }

@@ -1,22 +1,16 @@
 package integrations
 
 import (
-	// "encoding/json"
-	// "bytes"
 	"context"
-	// "encoding/gob"
 	"errors"
 	"fmt"
 	"log"
 	"testing"
-
-	// "github.com/go-test/deep"
 	"github.com/keploy/go-sdk/keploy"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	// "go.uber.org/zap"
 )
 
 type Trainer struct {
@@ -25,7 +19,7 @@ type Trainer struct {
 	City string
 }
 
-func connect() *MongoDB{
+func connect() *MongoCollection{
 	clientOptions := options.Client().ApplyURI("mongodb+srv://admin:zYLnsfk29c770IE1@keploy-test.mujuh.mongodb.net/test?retryWrites=true&w=majority")
 	client, err := mongo.Connect(context.TODO(), clientOptions)
 	if err != nil {
@@ -36,7 +30,7 @@ func connect() *MongoDB{
 	if err != nil {
 		log.Fatal(err)
 	}
-	return NewMongoDB(client.Database("test").Collection("client"))
+	return NewMongoCollection(client.Database("test").Collection("client"))
 }
 
 func TestFindOne(t *testing.T){

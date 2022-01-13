@@ -1,13 +1,20 @@
 package keploy
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/gob"
 	"errors"
-	"go.uber.org/zap"
+	"io"
+	"io/ioutil"
+	"net"
+	"net/http"
 	"os"
 	"reflect"
+	"strings"
+	"time"
+	"go.uber.org/zap"
 )
 
 const SDKMode = "KeploySDKMode"
@@ -128,4 +135,104 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 		})
 	}
 	return false, nil
+}
+
+// 
+func CaptureTestcase (app *App, r *http.Request, resp HttpResp, params map[string]string) {
+
+	// Request
+	var reqBody []byte
+	var err error
+	if r.Body != nil { // Read
+		reqBody, err = ioutil.ReadAll(r.Body)
+		if err != nil {
+			// TODO right way to log errors
+			return
+		}
+	}
+	r.Body = ioutil.NopCloser(bytes.NewBuffer(reqBody)) // Reset
+
+	d := r.Context().Value(KCTX)
+	if d == nil {
+		app.Log.Error("failed to get keploy context")
+		return
+	}
+	deps := d.(*Context)
+
+	// u := &url.URL{
+	// 	Scheme: r.URL.Scheme,
+	// 	//User:     url.UserPassword("me", "pass"),
+	// 	Host:     r.URL.Host,
+	// 	Path:     r.URL.Path,
+	// 	RawQuery: r.URL.RawQuery,
+	// }
+	app.Capture(TestCaseReq{
+		Captured: time.Now().Unix(),
+		AppID:    app.Name,
+		URI:      urlPath(r.URL.Path, params),
+		HttpReq: HttpReq{
+			Method:     Method(r.Method),
+			ProtoMajor: r.ProtoMajor,
+			ProtoMinor: r.ProtoMinor,
+			URL:        r.URL.String(),
+			URLParams:  urlParams(r, params),
+			Header:     r.Header,
+			Body:       string(reqBody),
+		},
+		HttpResp: resp,
+		Deps: deps.Deps,
+	})
+	
+}
+
+func urlParams(r *http.Request, params map[string]string) map[string]string {
+	result := params
+	qp := r.URL.Query()
+	for i, j := range qp {
+		var s string
+		if _, ok := result[i]; ok {
+			s = result[i]
+		}
+		for _, e := range j {
+			if s != "" {
+				s += ", " + e
+			} else {
+				s = e
+			}
+		}
+		result[i] = s
+	}
+	return result
+}
+
+
+func urlPath(url string, params map[string]string) string {
+	res := url
+	for i, j := range params {
+		res = strings.Replace(url, j, ":"+i, -1)
+	}
+	return res
+}
+
+type BodyDumpResponseWriter struct {
+	io.Writer
+	http.ResponseWriter
+	Status int
+}
+
+func (w *BodyDumpResponseWriter) WriteHeader(code int) {
+	w.Status = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *BodyDumpResponseWriter) Write(b []byte) (int, error) {
+	return w.Writer.Write(b)
+}
+
+func (w *BodyDumpResponseWriter) Flush() {
+	w.ResponseWriter.(http.Flusher).Flush()
+}
+
+func (w *BodyDumpResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return w.ResponseWriter.(http.Hijacker).Hijack()
 }
