@@ -13,7 +13,7 @@ import (
 )
 
 // NewApp creates and returns an App instance for API testing. It should be called before router
-// and dependency integration. It takes 5 strings as parameters
+// and dependency integration. It takes 5 strings as parameters.
 // 
 // name parameter should be the name of project app, It should not contain spaces.
 //
@@ -63,19 +63,19 @@ type App struct {
 }
 
 // KError stores the error for encoding and decoding as errorString has no exported fields due
-// to gob wasn't able to encode the unexported fields
+// to gob wasn't able to encode the unexported fields.
 type KError struct{
 	Err error
 }
 
-// This method returns error string stored in error
+// Error method returns error string stored in Err field of KError.
 func (e *KError) Error() string{
 	return e.Err.Error()
 }
 
 const version = 1
 
-// It encodes the Err and returns the binary data 
+// GobEncode encodes the Err and returns the binary data.
 func (e *KError) GobEncode() ([]byte, error) {
 	r := make([]byte, 0)
 	r = append(r, version)
@@ -86,7 +86,7 @@ func (e *KError) GobEncode() ([]byte, error) {
 	return r, nil
 }
 
-// It decodes the b([]byte) into error struct 
+// GobDecode decodes the b([]byte) into error struct.
 func (e *KError) GobDecode(b []byte) error {
 	if b[0] != version {
 		return errors.New("gob decode of errors.errorString failed: unsupported version")
@@ -101,13 +101,12 @@ func (e *KError) GobDecode(b []byte) error {
 	return nil
 }
 
-// It captures request, response and output of external dependencies by making Call to keploy server
+// Capture will capture request, response and output of external dependencies by making Call to keploy server.
 func (a *App) Capture(req TestCaseReq) {
 	go a.put(req)
 }
 
-// It fetches the testcases from the keploy and sends the current response of API along with 
-// fetched testcases
+// Test fetches the testcases from the keploy server and current response of API. Then, both of the responses are sent back to keploy's server for comparision.
 func (a *App) Test() {
 	// fetch test cases from web server and save to memory
 	time.Sleep(time.Second * 5)

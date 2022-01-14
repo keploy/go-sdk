@@ -23,7 +23,7 @@ const TestID = "KeployTestID"
 type KctxType string
 const KCTX KctxType = "KeployContext"
 
-// GetMode returns the mode on which SDK is configured by accessing environment variable
+// GetMode returns the mode on which SDK is configured by accessing environment variable.
 func GetMode() string {
 	return os.Getenv("KEPLOY_SDK_MODE")
 }
@@ -61,7 +61,7 @@ func Encode(obj interface{}, arr [][]byte, pos int) error {
 	return nil
 }
 
-// GetState returns value of "KeployContext" key stored in context of request
+// GetState returns value of "KeployContext" key-value pair which is stored in the request context.
 func GetState(ctx context.Context) (*Context, error) {
 	kctx := ctx.Value(KCTX)
 	if kctx == nil {
@@ -137,7 +137,6 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 	return false, nil
 }
 
-// 
 func CaptureTestcase (app *App, r *http.Request, resp HttpResp, params map[string]string) {
 
 	// Request

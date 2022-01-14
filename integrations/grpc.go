@@ -80,7 +80,8 @@ func clientInterceptor(app *keploy.App) func (
 }
 
 //not added KError for encoding and decoding
-func StreamClientInterceptor(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+
+func streamClientInterceptor(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
 
 	var (
 		err          error
@@ -176,14 +177,14 @@ func (s *tracedClientStream) RecvMsg(m interface{}) error {
 }
 
 // WithClientUnaryInterceptor function adds unary client interceptor to store its request, 
-// response and external dependencies. It should be called in grpc.Dial method
+// response and external dependencies. It should be called in grpc.Dial method.
 //
 // app parameter is pointer to app instance of API. It should not be nil.
 func WithClientUnaryInterceptor(app *keploy.App) grpc.DialOption {
 	return grpc.WithUnaryInterceptor(clientInterceptor(app))
 }
 
-	// "errors"
+// BUG(r): error have no exported field due to gob is not able to decode/encode.
 func WithClientStreamInterceptor() grpc.DialOption {
-	return grpc.WithStreamInterceptor(StreamClientInterceptor)
+	return grpc.WithStreamInterceptor(streamClientInterceptor)
 }

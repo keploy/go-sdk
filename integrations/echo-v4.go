@@ -18,7 +18,7 @@ import (
 // app parameter is keploy app instance created by keploy.NewApp method. If app is nil then, 
 // logic for capture or test middleware won't be added.
 //
-// w parameter is echo v4 router of your API 
+// w parameter is echo v4 router of your API.
 func EchoV4(app *keploy.App, e *echo.Echo) {
 	mode := os.Getenv("KEPLOY_SDK_MODE")
 	switch mode {
@@ -128,6 +128,7 @@ func pathParamsEcho(c echo.Context) map[string]string{
 	return result
 }
 
+// NewMiddlewareContextValue is a middleware used to embed echo.Context into integrations.Context so that key-value pair can be set or retrieved from request. 
 func NewMiddlewareContextValue(fn echo.HandlerFunc) echo.HandlerFunc {
 	return func(ctx echo.Context) error {
 		return fn(contextValue{ctx})
@@ -139,7 +140,7 @@ type contextValue struct {
 	echo.Context
 }
 
-// Get retrieves data from the context.
+// Get retrieves data from the request context.
 func (ctx contextValue) Get(key string) interface{} {
 	// get old context value
 	val := ctx.Context.Get(key)
@@ -149,7 +150,7 @@ func (ctx contextValue) Get(key string) interface{} {
 	return ctx.Request().Context().Value(keploy.KctxType(key))
 }
 
-// Set saves data in the context.
+// Set saves data in the request context.
 func (ctx contextValue) Set(key string, val interface{}) {
 
 	ctx.SetRequest(ctx.Request().WithContext(context.WithValue(ctx.Request().Context(), keploy.KctxType(key), val)))

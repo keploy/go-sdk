@@ -17,7 +17,7 @@ import (
 // app parameter is keploy app instance created by keploy.NewApp method. If app is nil then, 
 // raise a warning to provide non-empty app instance.
 //
-// w parameter is webgo v4 router of your API 
+// w parameter is webgo v4 router of your API.
 func WebGoV4(app *keploy.App, w *webgo.Router) {
 	mode := os.Getenv("KEPLOY_SDK_MODE")
 	switch mode {
