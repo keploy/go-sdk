@@ -20,7 +20,7 @@ type Trainer struct {
 }
 
 func connect() *MongoCollection{
-	clientOptions := options.Client().ApplyURI("mongodb+srv://admin:zYLnsfk29c770IE1@keploy-test.mujuh.mongodb.net/test?retryWrites=true&w=majority")
+	clientOptions := options.Client().ApplyURI("mongodb://localhost:27017")
 	client, err := mongo.Connect(context.TODO(), clientOptions)
 	if err != nil {
 		log.Fatal(err)
