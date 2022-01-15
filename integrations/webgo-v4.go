@@ -14,7 +14,7 @@ import (
 // starting the router. This method adds middlewares for API tesing according to environment 
 // variable "KEPLOY_SDK_MODE".
 //
-// app parameter is keploy app instance created by keploy.NewApp method. If app is nil then, 
+// app parameter is the Keploy App instance created by keploy.NewApp method. If app is nil then, 
 // raise a warning to provide non-empty app instance.
 //
 // w parameter is webgo v4 router of your API.
