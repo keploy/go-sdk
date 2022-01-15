@@ -9,7 +9,7 @@ import(
 	"go.mongodb.org/mongo-driver/bson"
 )
 func ExampleNewMongoCollection(){
-	clientOptions := options.Client().ApplyURI("mongodb+srv://<name>:<password>@<DB>.mujuh.mongodb.net/<collection>?retryWrites=true&w=majority")
+	clientOptions := options.Client().ApplyURI("mongodb://localhost:27017")
 	client, err := mongo.Connect(context.TODO(), clientOptions)
 	if err != nil {
 		log.Fatal(err)
