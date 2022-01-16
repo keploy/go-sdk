@@ -357,5 +357,4 @@ func ExampleWithClientUnaryInterceptor(){
 		log.Fatalf("Did not connect : %v", err)
 	}
 	defer conn.Close()
-	
 }
