@@ -20,7 +20,7 @@ type Trainer struct {
 }
 
 func connect() *MongoCollection{
-	clientOptions := options.Client().ApplyURI("mongodb+srv://admin:zYLnsfk29c770IE1@keploy-test.mujuh.mongodb.net/test?retryWrites=true&w=majority")
+	clientOptions := options.Client().ApplyURI("mongodb://localhost:27017")
 	client, err := mongo.Connect(context.TODO(), clientOptions)
 	if err != nil {
 		log.Fatal(err)
@@ -217,9 +217,9 @@ func TestInsertOne (t *testing.T){
 				Deps: []keploy.Dependency{},
 			}),
 			document: Trainer{
-				Name: "Brock",
-				Age: 15,
-				City: "Pewter City",
+				Name: "Ash",
+				Age: 10,
+				City: "Pallet Town",
 			},
 			result: &mongo.InsertOneResult{},
 			err: nil,

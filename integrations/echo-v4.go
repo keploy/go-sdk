@@ -15,10 +15,10 @@ import (
 // starting the router. This method adds middlewares for API tesing according to environment 
 // variable "KEPLOY_SDK_MODE".
 //
-// app parameter is keploy app instance created by keploy.NewApp method. If app is nil then, 
+// app parameter is the Keploy App instance created by keploy.NewApp method. If app is nil then, 
 // logic for capture or test middleware won't be added.
 //
-// w parameter is echo v4 router of your API.
+// w parameter is the Echo version 4 router of your API.
 func EchoV4(app *keploy.App, e *echo.Echo) {
 	mode := os.Getenv("KEPLOY_SDK_MODE")
 	switch mode {

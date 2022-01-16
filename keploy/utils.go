@@ -72,7 +72,7 @@ func GetState(ctx context.Context) (*Context, error) {
 
 // ProcessDep is a generic method to encode and decode the outputs of external dependecies.  
 // If request is on "test" mode, it returns (true, decoded outputs of stored binaries in keploy context). 
-// Else in "capture" mode, it encodes the outputs of external dependencies and stores in keploy context. Returns (false, nil)
+// Else in "capture" mode, it encodes the outputs of external dependencies and stores in keploy context. Returns (false, nil).
 func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, outputs ...interface{}) (bool, []interface{}) {
 	kctx, err := GetState(ctx)
 	if err != nil {
