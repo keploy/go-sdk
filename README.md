@@ -36,11 +36,11 @@ import(
 
 Create your app instance
 ```go
-kApp := keploy.NewApp("<app_name>", "<license_key>", "<keploy_host>", "app_ip_addr", "app_port")
+app := keploy.NewApp("<app_name>", "<license_key>", "<keploy_host>", "app_ip_addr", "app_port")
 ```
 For example: 
 ```go
-kApp := keploy.NewApp("my_app", "adkjhf9adf9adf", "", "0.0.0.0", "8080")
+app := keploy.NewApp("my_app", "adkjhf9adf9adf", "", "0.0.0.0", "8080")
 ```
     
 ## Configure
@@ -59,22 +59,22 @@ There are 3 modes:
 ### 1. WebGo
 #### WebGoV4
 ```go
-kApp := keploy.NewApp("my_app", "adkjhf9adf9adf", "", "0.0.0.0", "8080")
-integrations.WebGoV4(kApp, router)
+app := keploy.NewApp("my_app", "adkjhf9adf9adf", "", "0.0.0.0", "8080")
+integrations.WebGoV4(app, router)
 router.Start()
 ```
 #### WebGoV6
 ```go
-kApp := keploy.NewApp("my_app", "adkjhf9adf9adf", "", "0.0.0.0", "8080")
-integrations.WebGoV6(kApp, router)
+app := keploy.NewApp("my_app", "adkjhf9adf9adf", "", "0.0.0.0", "8080")
+integrations.WebGoV6(app, router)
 router.Start()
 ```
 
 ### 2. Echo
 ```go
 e := echo.New()
-kApp := keploy.NewApp("my_app", "adkjhf9adf9adf", "", "0.0.0.0", "8080")
-integrations.EchoV4(kApp, e)
+app := keploy.NewApp("my_app", "adkjhf9adf9adf", "", "0.0.0.0", "8080")
+integrations.EchoV4(app, e)
 e.Start(":8080")
 ```
 
@@ -104,7 +104,7 @@ Following operations are supported:<br>
 ## Supported Clients
 ### gRPC
 ```go
-kApp := keploy.NewApp("my_app", "adkjhf9adf9adf", "", "0.0.0.0", "8080")
-conn, err := grpc.Dial(address, grpc.WithInsecure(), integrations.WithClientUnaryInterceptor(kApp))
+app := keploy.NewApp("my_app", "adkjhf9adf9adf", "", "0.0.0.0", "8080")
+conn, err := grpc.Dial(address, grpc.WithInsecure(), integrations.WithClientUnaryInterceptor(app))
 ```
 Note: Currently streaming is not yet supported. 
