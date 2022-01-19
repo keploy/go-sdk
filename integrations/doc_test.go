@@ -5,14 +5,16 @@ import (
 	"fmt"
 	"log"
 	"time"
-	"google.golang.org/grpc"
+
 	"github.com/bnkamalesh/webgo/v4"
+	"github.com/gin-gonic/gin"
 	"github.com/keploy/go-sdk/integrations"
 	"github.com/keploy/go-sdk/keploy"
 	"github.com/labstack/echo/v4"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"google.golang.org/grpc"
 )
 func ExampleNewMongoCollection(){
 	clientOptions := options.Client().ApplyURI("mongodb://localhost:27017")
@@ -346,13 +348,39 @@ func ExampleWebGoV4(){
 func ExampleEchoV4(){
 	e := echo.New()
 	app := keploy.NewApp("Echo-App", "81f83aeehdjbh34hbfjrudf45646c65", "https://api.keploy.io",  "0.0.0.0", "6060")
+	// Remember to call integrations.EchoV4 before route handling
 	integrations.EchoV4(app, e)
+	e.GET("/echo", func(c echo.Context) error {
+		return nil
+	})
 	e.Start(":6060")
+}
+
+func ExampleGinV1(){
+	r:=gin.New()
+	app := keploy.NewApp("Gin-v1-App", "81f83aeehdjbh34hbfdfgf45646c65", "https://api.keploy.io",  "0.0.0.0", "8080")
+	//Call integration.GinV1 before routes handling
+	integrations.GinV1(app, r)
+	r.GET("/gin/:color/*type", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"message": "pong",
+		})
+	})
+	r.Run()
 }
 
 func ExampleWithClientUnaryInterceptor(){
 	app := keploy.NewApp("CheckNoisyBody", "81f83aeeedddf453966347dc136c65", "", "0.0.0.0", "8080")
 	conn, err := grpc.Dial("localhost:50051", grpc.WithInsecure(), integrations.WithClientUnaryInterceptor(app))
+	if err != nil {
+		log.Fatalf("Did not connect : %v", err)
+	}
+	defer conn.Close()
+}
+
+func ExampleWithClientStreamInterceptor(){
+	app := keploy.NewApp("CheckNoisyBody", "81f83aeeedddf453966347dc136c65", "", "0.0.0.0", "8080")
+	conn, err := grpc.Dial("localhost:50051", grpc.WithInsecure(), integrations.WithClientStreamInterceptor(app))
 	if err != nil {
 		log.Fatalf("Did not connect : %v", err)
 	}

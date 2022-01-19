@@ -12,7 +12,7 @@ import (
 )
 
 // EchoV4 method used for integrarting echo router version 4. It should be called just before 
-// starting the router. This method adds middlewares for API tesing according to environment 
+// starting the routes handling. This method adds middlewares for API tesing according to environment 
 // variable "KEPLOY_SDK_MODE".
 //
 // app parameter is the Keploy App instance created by keploy.NewApp method. If app is nil then, 
@@ -23,13 +23,13 @@ func EchoV4(app *keploy.App, e *echo.Echo) {
 	mode := os.Getenv("KEPLOY_SDK_MODE")
 	switch mode {
 	case "test":
-		e.Use(NewMiddlewareContextValue)
+		e.Use(EchoContext)
 		e.Use(testMWEchoV4(app))
 		go app.Test()
 	case "off":
 		// dont run the SDK
 	case "capture":
-		e.Use(NewMiddlewareContextValue)
+		e.Use(EchoContext)
 		e.Use(captureMWEchoV4(app))
 	}
 }
@@ -128,20 +128,20 @@ func pathParamsEcho(c echo.Context) map[string]string{
 	return result
 }
 
-// NewMiddlewareContextValue is a middleware used to embed echo.Context into integrations.Context so that key-value pair can be set or retrieved from request. 
-func NewMiddlewareContextValue(fn echo.HandlerFunc) echo.HandlerFunc {
+// EchoContext is a middleware used to embed echo.Context into integrations.echoContext so that key-value pair can be set or retrieved from request. 
+func EchoContext(fn echo.HandlerFunc) echo.HandlerFunc {
 	return func(ctx echo.Context) error {
-		return fn(contextValue{ctx})
+		return fn(echoContext{ctx})
 	}
 }
 
 // from here https://stackoverflow.com/questions/69326129/does-set-method-of-echo-context-saves-the-value-to-the-underlying-context-cont
-type contextValue struct {
+type echoContext struct {
 	echo.Context
 }
 
 // Get retrieves data from the request context.
-func (ctx contextValue) Get(key string) interface{} {
+func (ctx echoContext) Get(key string) interface{} {
 	// get old context value
 	val := ctx.Context.Get(key)
 	if val != nil {
@@ -151,7 +151,7 @@ func (ctx contextValue) Get(key string) interface{} {
 }
 
 // Set saves data in the request context.
-func (ctx contextValue) Set(key string, val interface{}) {
+func (ctx echoContext) Set(key string, val interface{}) {
 
 	ctx.SetRequest(ctx.Request().WithContext(context.WithValue(ctx.Request().Context(), keploy.KctxType(key), val)))
 }
