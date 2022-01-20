@@ -11,7 +11,7 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// EchoV4 method used for integrarting echo router version 4. It should be called just before 
+// EchoV4 method should be used for integrarting echo router version 4. It should be called just before 
 // starting the routes handling. This method adds middlewares for API tesing according to environment 
 // variable "KEPLOY_SDK_MODE".
 //
@@ -23,15 +23,21 @@ func EchoV4(app *keploy.App, e *echo.Echo) {
 	mode := os.Getenv("KEPLOY_SDK_MODE")
 	switch mode {
 	case "test":
-		e.Use(EchoContext)
+		// e.Use(EchoContext)
 		e.Use(testMWEchoV4(app))
 		go app.Test()
 	case "off":
 		// dont run the SDK
 	case "capture":
-		e.Use(EchoContext)
+		// e.Use(EchoContext)
 		e.Use(captureMWEchoV4(app))
 	}
+}
+
+// Similar to gin.Context. Visit https://stackoverflow.com/questions/67267065/how-to-propagate-context-values-from-gin-middleware-to-gqlgen-resolvers
+func setContextValEchoV4(c echo.Context,  val interface{}){
+	ctx := context.WithValue(c.Request().Context() , keploy.KCTX, val)
+	c.SetRequest( c.Request().WithContext(ctx) ) 
 }
 
 func testMWEchoV4(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
@@ -50,7 +56,12 @@ func testMWEchoV4(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 			if tc == nil {
 				return next(c)
 			}
-			c.Set(string(keploy.KCTX), &keploy.Context{
+			// c.Set(string(keploy.KCTX), &keploy.Context{
+			// 	Mode:   "test",
+			// 	TestID: id,
+			// 	Deps:   tc.Deps,
+			// })
+			setContextValEchoV4(c, &keploy.Context{
 				Mode:   "test",
 				TestID: id,
 				Deps:   tc.Deps,
@@ -70,14 +81,22 @@ func captureMWEchoV4(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 	}
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) (err error) {
-			c.Set(string(keploy.KCTX), &keploy.Context{
+			// c.Set(string(keploy.KCTX), &keploy.Context{
+			// 	Mode: "capture",
+			// })
+			setContextValEchoV4(c, &keploy.Context{
 				Mode: "capture",
 			})
 			id := c.Request().Header.Get("KEPLOY_TEST_ID")
 			if id != "" {
 				// id is only present during simulation
 				// run it similar to how testcases would run
-				c.Set(string(keploy.KCTX), &keploy.Context{
+				// c.Set(string(keploy.KCTX), &keploy.Context{
+				// 	Mode:   "test",
+				// 	TestID: id,
+				// 	Deps:   app.Deps[id],
+				// })
+				setContextValEchoV4(c, &keploy.Context{
 					Mode:   "test",
 					TestID: id,
 					Deps:   app.Deps[id],
@@ -126,32 +145,4 @@ func pathParamsEcho(c echo.Context) map[string]string{
 		result[paramNames[i]] = paramValues[i]
 	}
 	return result
-}
-
-// EchoContext is a middleware used to embed echo.Context into integrations.echoContext so that key-value pair can be set or retrieved from request. 
-func EchoContext(fn echo.HandlerFunc) echo.HandlerFunc {
-	return func(ctx echo.Context) error {
-		return fn(echoContext{ctx})
-	}
-}
-
-// from here https://stackoverflow.com/questions/69326129/does-set-method-of-echo-context-saves-the-value-to-the-underlying-context-cont
-type echoContext struct {
-	echo.Context
-}
-
-// Get retrieves data from the request context.
-func (ctx echoContext) Get(key string) interface{} {
-	// get old context value
-	val := ctx.Context.Get(key)
-	if val != nil {
-		return val
-	}
-	return ctx.Request().Context().Value(keploy.KctxType(key))
-}
-
-// Set saves data in the request context.
-func (ctx echoContext) Set(key string, val interface{}) {
-
-	ctx.SetRequest(ctx.Request().WithContext(context.WithValue(ctx.Request().Context(), keploy.KctxType(key), val)))
 }

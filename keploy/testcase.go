@@ -43,9 +43,10 @@ type Dependency struct {
 type DependencyType string
 
 const(
-	NoSqlDB DependencyType = "DB"
-	SqlDB   DependencyType = "SQL_DB"
-	RPC     DependencyType = "RPC"
+	NoSqlDB    DependencyType = "DB"
+	SqlDB      DependencyType = "SQL_DB"
+	RPC        DependencyType = "RPC"
+	HttpClient DependencyType = "HTTP_CLIENT"
 )
 
 // type sql database -> postgres, mysql, redshift..

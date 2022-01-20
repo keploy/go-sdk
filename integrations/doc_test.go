@@ -1,9 +1,13 @@
 package integrations_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"time"
 
 	"github.com/bnkamalesh/webgo/v4"
@@ -370,7 +374,7 @@ func ExampleGinV1(){
 }
 
 func ExampleWithClientUnaryInterceptor(){
-	app := keploy.NewApp("CheckNoisyBody", "81f83aeeedddf453966347dc136c65", "", "0.0.0.0", "8080")
+	app := keploy.NewApp("CheckNoisyBody", "81f83aeeedddf4fddf47dc16c6eui", "", "0.0.0.0", "8080")
 	conn, err := grpc.Dial("localhost:50051", grpc.WithInsecure(), integrations.WithClientUnaryInterceptor(app))
 	if err != nil {
 		log.Fatalf("Did not connect : %v", err)
@@ -379,10 +383,103 @@ func ExampleWithClientUnaryInterceptor(){
 }
 
 func ExampleWithClientStreamInterceptor(){
-	app := keploy.NewApp("CheckNoisyBody", "81f83aeeedddf453966347dc136c65", "", "0.0.0.0", "8080")
+	app := keploy.NewApp("CheckNoisyBody", "81f83aeeedddf453966347dc13677", "", "0.0.0.0", "8080")
 	conn, err := grpc.Dial("localhost:50051", grpc.WithInsecure(), integrations.WithClientStreamInterceptor(app))
 	if err != nil {
 		log.Fatalf("Did not connect : %v", err)
 	}
 	defer conn.Close()
+}
+
+func ExampleNewHttpClient(){
+	r := &http.Request{} // Here, r is for demo. You should use your handler's request as r 
+	tr := &http.Transport{
+		MaxIdleConns:       10,
+		IdleConnTimeout:    30 * time.Second,
+		DisableCompression: true,
+	}
+	client := integrations.NewHttpClient(&http.Client{
+		Transport: tr,
+	}) 
+
+	// SetCtxHttpClient is called before mocked http.Client's Get method
+	client.SetCtxHttpClient(r.Context())
+	resp, err := client.Get("https://example.com")
+	if err!=nil{
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	fmt.Println("BODY : ", body)
+}
+
+func ExampleHttpClient_SetCtxHttpClient(){
+	r := &http.Request{} // Here, r is for demo. You should use your handler's request as r 
+	client := integrations.NewHttpClient(&http.Client{}) 
+	
+	// SetCtxHttpClient is called before mocked http.Client's Get method
+	client.SetCtxHttpClient(r.Context())
+	resp, err := client.Get("https://example.com")
+	if err!=nil{
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	fmt.Println("BODY : ", body)
+}
+
+func ExampleHttpClient_Get(){
+	r := &http.Request{} // Here, r is for demo. You should use your handler's request as r 
+	client := integrations.NewHttpClient(&http.Client{}) 
+
+	// SetCtxHttpClient is called before mocked http.Client's Get method
+	client.SetCtxHttpClient(r.Context())
+	resp, err := client.Get("https://example.com")
+	if err!=nil{
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	fmt.Println("BODY : ", body)
+}
+
+func ExampleHttpClient_Do(){
+	r := &http.Request{} // Here, r is for demo. You should use your handler's request as r 
+	client := integrations.NewHttpClient(&http.Client{}) 
+
+	// SetCtxHttpClient is called before mocked http.Client's Get method
+	client.SetCtxHttpClient(r.Context())
+	req,err := http.NewRequestWithContext(r.Context(), "GET", "http://localhost:6060/getdocs?name=name&value=Ash", nil)
+	if err!=nil{
+		log.Fatal("http client in webgo-v4 main.go")
+	}
+	resp,err := client.Do(req)
+	if err!=nil{
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	fmt.Println("BODY : ", body)
+}
+
+func ExampleHttpClient_Post(){
+	r := &http.Request{} // Here, r is for demo. You should use your handler's request as r 
+	client := integrations.NewHttpClient(&http.Client{}) 
+
+	// SetCtxHttpClient is called before mocked http.Client's Get method
+	client.SetCtxHttpClient(r.Context())
+	postBody, _ := json.Marshal(map[string]interface{}{
+		"name":  "Toby",
+		"age": 21,
+		"city": "New York",
+	})
+	responseBody := bytes.NewBuffer(postBody)
+	resp, err := http.Post("http://localhost:6060/createone", "application/json", responseBody)
+
+	if err!=nil{
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	fmt.Println("BODY : ", body)
 }

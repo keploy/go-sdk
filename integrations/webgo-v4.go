@@ -10,7 +10,7 @@ import (
 	"github.com/keploy/go-sdk/keploy"
 )
 
-// WebGoV4 method used for integrarting webgo router version 4. It should be called just before 
+// WebGoV4 method should be used for integrarting webgo router version 4. It should be called just before 
 // starting the router. This method adds middlewares for API tesing according to environment 
 // variable "KEPLOY_SDK_MODE".
 //

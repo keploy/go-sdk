@@ -18,7 +18,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// GinV1 method used for integrarting Gin router version 1. It should be called just before 
+// GinV1 method should be used for integrarting Gin router version 1. It should be called just before 
 // routing for paths. This method adds middlewares for API tesing according to environment 
 // variable "KEPLOY_SDK_MODE".
 //
@@ -84,6 +84,7 @@ func captureRespGin(c *gin.Context) keploy.HttpResp {
 	}
 }
 
+// from here https://stackoverflow.com/questions/67267065/how-to-propagate-context-values-from-gin-middleware-to-gqlgen-resolvers
 func setContextValGin(c *gin.Context,  val interface{}){
 	ctx := context.WithValue(c.Request.Context(), keploy.KCTX, val)
 	c.Request = c.Request.WithContext(ctx)
