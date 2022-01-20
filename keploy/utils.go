@@ -208,7 +208,10 @@ func urlParams(r *http.Request, params map[string]string) map[string]string {
 func urlPath(url string, params map[string]string) string {
 	res := url
 	for i, j := range params {
-		res = strings.Replace(url, j, ":"+i, -1)
+		res = strings.Replace(res, "/"+j+"/", "/:"+i+"/", -1)
+		if strings.HasSuffix(res,"/"+j){
+			res = strings.TrimSuffix(res, "/"+j) + "/:"+i
+		}
 	}
 	return res
 }

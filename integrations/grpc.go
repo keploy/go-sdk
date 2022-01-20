@@ -82,7 +82,7 @@ func clientInterceptor(app *keploy.App) func (
 	}
 }
 
-// Deprecated: streamClientInterceptor is not supported when you use a go routine in bidirectional streaming.
+// TODO: Add support to use a go routine in bidirectional streaming.
 func streamClientInterceptor(app *keploy.App) func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
 		return func(ctx context.Context,
 			desc *grpc.StreamDesc,
