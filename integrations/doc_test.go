@@ -383,6 +383,7 @@ func ExampleWithClientUnaryInterceptor(){
 }
 
 func ExampleWithClientStreamInterceptor(){
+
 	app := keploy.NewApp("CheckNoisyBody", "81f83aeeedddf453966347dc13677", "", "0.0.0.0", "8080")
 	conn, err := grpc.Dial("localhost:50051", grpc.WithInsecure(), integrations.WithClientStreamInterceptor(app))
 	if err != nil {
@@ -482,4 +483,5 @@ func ExampleHttpClient_Post(){
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	fmt.Println("BODY : ", body)
+
 }
