@@ -78,6 +78,18 @@ integrations.EchoV4(app, e)
 e.Start(":8080")
 ```
 
+### 3. Gin
+```go
+r:=gin.New()
+integrations.GinV1(kApp, r)
+r.GET("/url", func(c *gin.Context) {
+    c.JSON(200, gin.H{
+        "message": "pong",
+    })
+}
+r.Run(":8080")
+```
+
 ## Supported Databases
 ### 1. MongoDB
 ```go
@@ -102,6 +114,13 @@ Following operations are supported:<br>
 - GetItemWithContext
 - PutItemWithContext
 ## Supported Clients
+### net/http
+```go
+client := integrations.NewHttpClient(&http.Client{}) 
+client.SetCtxHttpClient(r.Context())
+resp, err := client.Get("https://example.com")
+```
+
 ### gRPC
 ```go
 app := keploy.NewApp("my_app", "adkjhf9adf9adf", "", "0.0.0.0", "8080")
