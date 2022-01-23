@@ -25,13 +25,11 @@ func EchoV4(app *keploy.App, e *echo.Echo) {
 	mode := os.Getenv("KEPLOY_SDK_MODE")
 	switch mode {
 	case "test":
-		// e.Use(EchoContext)
 		e.Use(testMWEchoV4(app))
 		go app.Test()
 	case "off":
 		// dont run the SDK
 	case "capture":
-		// e.Use(EchoContext)
 		e.Use(captureMWEchoV4(app))
 	}
 }
