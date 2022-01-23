@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 
 	// "fmt"
 	"io"
@@ -18,11 +19,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// GinV1 method should be used for integrarting Gin router version 1. It should be called just before 
-// routing for paths. This method adds middlewares for API tesing according to environment 
+// GinV1 method should be used for integrarting Gin router version 1. It should be called just before
+// routing for paths. This method adds middlewares for API tesing according to environment
 // variable "KEPLOY_SDK_MODE".
 //
-// app parameter is the Keploy App instance created by keploy.NewApp method. If app is nil then, 
+// app parameter is the Keploy App instance created by keploy.NewApp method. If app is nil then,
 // logic for capture or test middleware won't be added.
 //
 // r parameter is the Gin version 1 router of your API.
@@ -113,9 +114,22 @@ func captureMWGin(app *keploy.App) gin.HandlerFunc {
 			return
 		}
 
+		// Request
+		var reqBody []byte
+		var err error
+		if c.Request.Body != nil { // Read
+			reqBody, err = ioutil.ReadAll(c.Request.Body)
+			if err != nil {
+				// TODO right way to log errors
+				app.Log.Error("Unable to read request body", zap.Error( err))
+				return
+			}
+		}
+		c.Request.Body = ioutil.NopCloser(bytes.NewBuffer(reqBody)) // Reset
+		
 		resp := captureRespGin(c)
 		params := urlParamsGin(c, app)
-		keploy.CaptureTestcase(app, c.Request, resp, params)
+		keploy.CaptureTestcase(app, c.Request, reqBody, resp, params)
 	}
 }
 

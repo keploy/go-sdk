@@ -392,7 +392,7 @@ func ExampleWithClientStreamInterceptor(){
 }
 
 func ExampleNewHttpClient(){
-	r := &http.Request{} // Here, r is for demo. You should use your handler's request as r 
+	r := &http.Request{} // Here, r is for demo. You should use your handler's request as r. 
 	tr := &http.Transport{
 		MaxIdleConns:       10,
 		IdleConnTimeout:    30 * time.Second,
@@ -402,7 +402,7 @@ func ExampleNewHttpClient(){
 		Transport: tr,
 	}) 
 
-	// SetCtxHttpClient is called before mocked http.Client's Get method
+	// SetCtxHttpClient is called before mocked http.Client's Get method.
 	client.SetCtxHttpClient(r.Context())
 	resp, err := client.Get("https://example.com")
 	if err!=nil{
@@ -414,10 +414,10 @@ func ExampleNewHttpClient(){
 }
 
 func ExampleHttpClient_SetCtxHttpClient(){
-	r := &http.Request{} // Here, r is for demo. You should use your handler's request as r 
+	r := &http.Request{} // Here, r is for demo. You should use your handler's request as r. 
 	client := integrations.NewHttpClient(&http.Client{}) 
 	
-	// SetCtxHttpClient is called before mocked http.Client's Get method
+	// SetCtxHttpClient is called before mocked http.Client's Get method.
 	client.SetCtxHttpClient(r.Context())
 	resp, err := client.Get("https://example.com")
 	if err!=nil{
@@ -429,10 +429,10 @@ func ExampleHttpClient_SetCtxHttpClient(){
 }
 
 func ExampleHttpClient_Get(){
-	r := &http.Request{} // Here, r is for demo. You should use your handler's request as r 
+	r := &http.Request{} // Here, r is for demo. You should use your handler's request as r. 
 	client := integrations.NewHttpClient(&http.Client{}) 
 
-	// SetCtxHttpClient is called before mocked http.Client's Get method
+	// SetCtxHttpClient is called before mocked http.Client's Get method.
 	client.SetCtxHttpClient(r.Context())
 	resp, err := client.Get("https://example.com")
 	if err!=nil{
@@ -444,10 +444,10 @@ func ExampleHttpClient_Get(){
 }
 
 func ExampleHttpClient_Do(){
-	r := &http.Request{} // Here, r is for demo. You should use your handler's request as r 
+	r := &http.Request{} // Here, r is for demo. You should use your handler's request as r. 
 	client := integrations.NewHttpClient(&http.Client{}) 
 
-	// SetCtxHttpClient is called before mocked http.Client's Get method
+	// SetCtxHttpClient is called before mocked http.Client's Do method.
 	client.SetCtxHttpClient(r.Context())
 	req,err := http.NewRequestWithContext(r.Context(), "GET", "http://localhost:6060/getdocs?name=name&value=Ash", nil)
 	if err!=nil{
@@ -463,10 +463,10 @@ func ExampleHttpClient_Do(){
 }
 
 func ExampleHttpClient_Post(){
-	r := &http.Request{} // Here, r is for demo. You should use your handler's request as r 
+	r := &http.Request{} // Here, r is for demo. You should use your handler's request as r. 
 	client := integrations.NewHttpClient(&http.Client{}) 
 
-	// SetCtxHttpClient is called before mocked http.Client's Get method
+	// SetCtxHttpClient is called before mocked http.Client's Post method.
 	client.SetCtxHttpClient(r.Context())
 	postBody, _ := json.Marshal(map[string]interface{}{
 		"name":  "Toby",

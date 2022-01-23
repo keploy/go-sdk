@@ -7,7 +7,6 @@ import (
 	"encoding/gob"
 	"errors"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"os"
@@ -137,19 +136,7 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 	return false, nil
 }
 
-func CaptureTestcase (app *App, r *http.Request, resp HttpResp, params map[string]string) {
-
-	// Request
-	var reqBody []byte
-	var err error
-	if r.Body != nil { // Read
-		reqBody, err = ioutil.ReadAll(r.Body)
-		if err != nil {
-			// TODO right way to log errors
-			return
-		}
-	}
-	r.Body = ioutil.NopCloser(bytes.NewBuffer(reqBody)) // Reset
+func CaptureTestcase (app *App, r *http.Request, reqBody []byte, resp HttpResp, params map[string]string) {
 
 	d := r.Context().Value(KCTX)
 	if d == nil {
