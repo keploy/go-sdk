@@ -5,17 +5,19 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"github.com/keploy/go-sdk/keploy"
 	"github.com/labstack/echo/v4"
+	"go.uber.org/zap"
 )
 
-// EchoV4 method should be used for integrarting echo router version 4. It should be called just before 
-// starting the routes handling. This method adds middlewares for API tesing according to environment 
+// EchoV4 method should be used for integrarting echo router version 4. It should be called just before
+// starting the routes handling. This method adds middlewares for API tesing according to environment
 // variable "KEPLOY_SDK_MODE".
 //
-// app parameter is the Keploy App instance created by keploy.NewApp method. If app is nil then, 
+// app parameter is the Keploy App instance created by keploy.NewApp method. If app is nil then,
 // logic for capture or test middleware won't be added.
 //
 // w parameter is the Echo version 4 router of your API.
@@ -105,10 +107,22 @@ func captureMWEchoV4(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 				app.Resp[id] = resp
 				return
 			}
+			
+			// Request
+			var reqBody []byte
+			if c.Request().Body != nil { // Read
+				reqBody, err = ioutil.ReadAll(c.Request().Body)
+				if err != nil {
+					// TODO right way to log errors
+					app.Log.Error("Unable to read request body", zap.Error( err))
+					return
+				}
+			}
+			c.Request().Body = ioutil.NopCloser(bytes.NewBuffer(reqBody)) // Reset
 
 			resp := captureResp(c, next)
 			params := pathParamsEcho(c)
-			keploy.CaptureTestcase(app, c.Request(), resp, params)
+			keploy.CaptureTestcase(app, c.Request(), reqBody, resp, params)
 			return
 		}
 	}

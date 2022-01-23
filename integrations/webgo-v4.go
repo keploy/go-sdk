@@ -3,18 +3,21 @@ package integrations
 import (
 	"bytes"
 	"context"
-	"github.com/bnkamalesh/webgo/v4"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
+
+	"github.com/bnkamalesh/webgo/v4"
 	"github.com/keploy/go-sdk/keploy"
+	"go.uber.org/zap"
 )
 
-// WebGoV4 method should be used for integrarting webgo router version 4. It should be called just before 
-// starting the router. This method adds middlewares for API tesing according to environment 
+// WebGoV4 method should be used for integrarting webgo router version 4. It should be called just before
+// starting the router. This method adds middlewares for API tesing according to environment
 // variable "KEPLOY_SDK_MODE".
 //
-// app parameter is the Keploy App instance created by keploy.NewApp method. If app is nil then, 
+// app parameter is the Keploy App instance created by keploy.NewApp method. If app is nil then,
 // raise a warning to provide non-empty app instance.
 //
 // w parameter is the WebGo version 4 router of your API.
@@ -110,9 +113,23 @@ func captureMWWebGoV4(app *keploy.App) func(http.ResponseWriter, *http.Request, 
 			app.Resp[id] = resp
 			return
 		}
+
+		// Request
+		var reqBody []byte
+		var err error
+		if r.Body != nil { // Read
+			reqBody, err = ioutil.ReadAll(r.Body)
+			if err != nil {
+				// TODO right way to log errors
+				app.Log.Error("Unable to read request body", zap.Error( err))
+				return
+			}
+		}
+		r.Body = ioutil.NopCloser(bytes.NewBuffer(reqBody)) // Reset
+		
 		resp := captureRespWebGo(w, r, next)
 		params := webgo.Context(r).Params()
-		keploy.CaptureTestcase(app, r, resp, params)
+		keploy.CaptureTestcase(app, r, reqBody, resp, params)
 
 	}
 }
