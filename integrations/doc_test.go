@@ -384,6 +384,7 @@ func ExampleWithClientUnaryInterceptor(){
 
 func ExampleWithClientStreamInterceptor(){
 	app := keploy.NewApp("CheckNoisyBody", "81f83aeeedddf453966347dc13677", "", "0.0.0.0", "8080")
+
 	conn, err := grpc.Dial("localhost:50051", grpc.WithInsecure(), integrations.WithClientStreamInterceptor(app))
 	if err != nil {
 		log.Fatalf("Did not connect : %v", err)
