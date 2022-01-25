@@ -116,9 +116,11 @@ Following operations are supported:<br>
 ## Supported Clients
 ### net/http
 ```go
-client := integrations.NewHttpClient(&http.Client{}) 
-client.SetCtxHttpClient(r.Context())
-resp, err := client.Get("https://example.com")
+func(w http.ResponseWriter, r *http.Request){
+    client := integrations.NewHttpClient(&http.Client{}) 
+    client.SetCtxHttpClient(r.Context())
+    resp, err := client.Get("https://example.com")
+}
 ```
 
 ### gRPC
