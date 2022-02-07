@@ -1,4 +1,4 @@
-package integrations
+package Kdb
 
 import (
 	"errors"
