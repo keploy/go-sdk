@@ -1,4 +1,4 @@
-package Khttp
+package integrations
 
 import (
 	"bytes"
