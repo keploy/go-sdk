@@ -6,6 +6,7 @@ require (
 	github.com/aws/aws-sdk-go v1.42.23
 	github.com/bnkamalesh/webgo/v4 v4.1.11
 	github.com/bnkamalesh/webgo/v6 v6.2.2
+	github.com/creasty/defaults v1.5.2
 	github.com/gin-gonic/gin v1.7.7
 	github.com/labstack/echo/v4 v4.6.1
 	go.mongodb.org/mongo-driver v1.8.1

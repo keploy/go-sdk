@@ -6,70 +6,32 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	"os"
 
 	"github.com/bnkamalesh/webgo/v4"
 	"github.com/keploy/go-sdk/keploy"
 	"go.uber.org/zap"
 )
 
-// WebGoV4 method should be used for integrarting webgo router version 4. It should be called just before
-// starting the router. This method adds middlewares for API tesing according to environment
-// variable "KEPLOY_SDK_MODE".
+// WebGoV4 adds keploy instrumentation for WebGo V4 router.
+// It should be ideally used after other instrumentation libraries like APMs.
 //
-// app parameter is the Keploy App instance created by keploy.NewApp method. If app is nil then,
-// raise a warning to provide non-empty app instance.
+// k is the Keploy instance
 //
-// w parameter is the WebGo version 4 router of your API.
-func WebGoV4(app *keploy.App, w *webgo.Router) {
-	mode := os.Getenv("KEPLOY_SDK_MODE")
-	switch mode {
-	case "test":
-		w.Use(testMWWebGo(app))
-		go app.Test()
-	case "off":
-		// dont run the SDK
-	case "capture":
-		w.Use(captureMWWebGoV4(app))
+// w is the webgo v4 router instance
+func WebGoV4(k *keploy.Keploy, w *webgo.Router) {
+	if keploy.GetMode() == keploy.MODE_OFF {
+		return
 	}
-}
-
-func testMWWebGo(app *keploy.App) func(http.ResponseWriter, *http.Request, http.HandlerFunc) {
-	if nil == app {
-		return func(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
-			app.Log.Warn("keploy app is nil.")
-			next(w, r)
-		}
-	}
-	return func(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
-		id := r.Header.Get("KEPLOY_TEST_ID")
-		if id == "" {
-			next(w, r)
-		}
-		tc := app.Get(id)
-		if tc == nil {
-			next(w, r)
-			return
-		}
-		ctx := context.WithValue(r.Context(), keploy.KCTX, &keploy.Context{
-			Mode:   "test",
-			TestID: id,
-			Deps:   tc.Deps,
-		})
-		r = r.WithContext(ctx)
-		resp := captureRespWebGo(w, r, next)
-		app.Resp[id] = resp
-
-	}
+	w.Use(mWWebGoV4(k))
 }
 
 func captureRespWebGo(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) keploy.HttpResp {
 	resBody := new(bytes.Buffer)
 	mw := io.MultiWriter(w, resBody)
 	writer := &keploy.BodyDumpResponseWriter{
-		Writer: mw, 
-		ResponseWriter: w, 
-		Status: http.StatusOK,
+		Writer:         mw,
+		ResponseWriter: w,
+		Status:         http.StatusOK,
 	}
 	w = writer
 
@@ -83,21 +45,14 @@ func captureRespWebGo(w http.ResponseWriter, r *http.Request, next http.HandlerF
 	}
 }
 
-func captureMWWebGoV4(app *keploy.App) func(http.ResponseWriter, *http.Request, http.HandlerFunc) {
-	if nil == app {
+func mWWebGoV4(k *keploy.Keploy) func(http.ResponseWriter, *http.Request, http.HandlerFunc) {
+	if k == nil {
 		return func(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
-			app.Log.Warn("keploy app is nil.")
+			k.Log.Warn("keploy is nil.")
 			next(w, r)
 		}
 	}
 	return func(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
-
-		ctx := context.WithValue(r.Context(), keploy.KCTX, &keploy.Context{
-			Mode: "capture",
-		})
-
-		r = r.WithContext(ctx)
-
 		id := r.Header.Get("KEPLOY_TEST_ID")
 		if id != "" {
 			// id is only present during simulation
@@ -105,14 +60,19 @@ func captureMWWebGoV4(app *keploy.App) func(http.ResponseWriter, *http.Request, 
 			ctx := context.WithValue(r.Context(), keploy.KCTX, &keploy.Context{
 				Mode:   "test",
 				TestID: id,
-				Deps:   app.Deps[id],
+				Deps:   k.Deps[id],
 			})
 
 			r = r.WithContext(ctx)
 			resp := captureRespWebGo(w, r, next)
-			app.Resp[id] = resp
+			k.Resp[id] = resp
 			return
 		}
+		ctx := context.WithValue(r.Context(), keploy.KCTX, &keploy.Context{
+			Mode: "capture",
+		})
+
+		r = r.WithContext(ctx)
 
 		// Request
 		var reqBody []byte
@@ -121,15 +81,15 @@ func captureMWWebGoV4(app *keploy.App) func(http.ResponseWriter, *http.Request, 
 			reqBody, err = ioutil.ReadAll(r.Body)
 			if err != nil {
 				// TODO right way to log errors
-				app.Log.Error("Unable to read request body", zap.Error( err))
+				k.Log.Error("Unable to read request body", zap.Error(err))
 				return
 			}
 		}
 		r.Body = ioutil.NopCloser(bytes.NewBuffer(reqBody)) // Reset
-		
+
 		resp := captureRespWebGo(w, r, next)
 		params := webgo.Context(r).Params()
-		keploy.CaptureTestcase(app, r, reqBody, resp, params)
+		keploy.CaptureTestcase(k, r, reqBody, resp, params)
 
 	}
 }

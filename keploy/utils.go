@@ -9,23 +9,16 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"reflect"
 	"strings"
 	"time"
+
 	"go.uber.org/zap"
 )
 
-const SDKMode = "KeploySDKMode"
-const Deps = "KeployDeps"
-const TestID = "KeployTestID"
 type KctxType string
-const KCTX KctxType = "KeployContext"
 
-// GetMode returns the mode on which SDK is configured by accessing environment variable.
-func GetMode() string {
-	return os.Getenv("KEPLOY_SDK_MODE")
-}
+const KCTX KctxType = "KeployContext"
 
 // Decode returns the decoded data by using gob decoder on bin parameter.
 func Decode(bin []byte, obj interface{}) (interface{}, error) {
@@ -42,7 +35,7 @@ func Decode(bin []byte, obj interface{}) (interface{}, error) {
 	return obj, nil
 }
 
-// Encode takes obj parameter and encodes its contents into arr parameter. If obj have no 
+// Encode takes obj parameter and encodes its contents into arr parameter. If obj have no
 // exported field then, it returns an error.
 func Encode(obj interface{}, arr [][]byte, pos int) error {
 	if obj == nil {
@@ -69,31 +62,31 @@ func GetState(ctx context.Context) (*Context, error) {
 	return kctx.(*Context), nil
 }
 
-// ProcessDep is a generic method to encode and decode the outputs of external dependecies.  
-// If request is on "test" mode, it returns (true, decoded outputs of stored binaries in keploy context). 
+// ProcessDep is a generic method to encode and decode the outputs of external dependecies.
+// If request is on "test" mode, it returns (true, decoded outputs of stored binaries in keploy context).
 // Else in "capture" mode, it encodes the outputs of external dependencies and stores in keploy context. Returns (false, nil).
 func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, outputs ...interface{}) (bool, []interface{}) {
 	kctx, err := GetState(ctx)
 	if err != nil {
-		log.Error("failed to get state from context", zap.Error(err))
+		log.Error("dependency mocking failed: failed to get Keploy state from context", zap.Error(err))
 		return false, nil
 	}
 	// capture the object
 	switch kctx.Mode {
 	case "test":
 		if kctx.Deps == nil || len(kctx.Deps) == 0 {
-			log.Error("incorrect number of dependencies in keploy context", zap.String("test id", kctx.TestID))
+			log.Error("dependency mocking failed: incorrect number of dependencies in keploy context", zap.String("test id", kctx.TestID))
 			return false, nil
 		}
 		if len(kctx.Deps[0].Data) != len(outputs) {
-			log.Error("incorrect number of dependencies in keploy context", zap.String("test id", kctx.TestID))
+			log.Error("dependency mocking failed: incorrect number of dependencies in keploy context", zap.String("test id", kctx.TestID))
 			return false, nil
 		}
 		var res []interface{}
 		for i, t := range outputs {
 			r, err := Decode(kctx.Deps[0].Data[i], t)
 			if err != nil {
-				log.Error("failed to decode object", zap.String("type", reflect.TypeOf(r).String()), zap.String("test id", kctx.TestID))
+				log.Error("dependency mocking failed: failed to decode object", zap.String("type", reflect.TypeOf(r).String()), zap.String("test id", kctx.TestID))
 				return false, nil
 			}
 			res = append(res, r)
@@ -117,11 +110,11 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 		for i, t := range outputs {
 			err = Encode(t, res, i)
 			if err != nil {
-				log.Error("failed to encode object", zap.String("type", reflect.TypeOf(t).String()), zap.String("test id", kctx.TestID), zap.Error(err))
+				log.Error("dependency capture failed: failed to encode object", zap.String("type", reflect.TypeOf(t).String()), zap.String("test id", kctx.TestID), zap.Error(err))
 				return false, nil
 			}
 		}
-    
+
 		//err = keploy.Encode(err1,res, 1)
 		//if err != nil {
 		//	c.log.Error("failed to encode ddb resp", zap.String("test id", id))
@@ -136,11 +129,11 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 	return false, nil
 }
 
-func CaptureTestcase (app *App, r *http.Request, reqBody []byte, resp HttpResp, params map[string]string) {
+func CaptureTestcase(k *Keploy, r *http.Request, reqBody []byte, resp HttpResp, params map[string]string) {
 
 	d := r.Context().Value(KCTX)
 	if d == nil {
-		app.Log.Error("failed to get keploy context")
+		k.Log.Error("failed to get keploy context")
 		return
 	}
 	deps := d.(*Context)
@@ -152,9 +145,9 @@ func CaptureTestcase (app *App, r *http.Request, reqBody []byte, resp HttpResp, 
 	// 	Path:     r.URL.Path,
 	// 	RawQuery: r.URL.RawQuery,
 	// }
-	app.Capture(TestCaseReq{
+	k.Capture(TestCaseReq{
 		Captured: time.Now().Unix(),
-		AppID:    app.Name,
+		AppID:    k.cfg.App.Name,
 		URI:      urlPath(r.URL.Path, params),
 		HttpReq: HttpReq{
 			Method:     Method(r.Method),
@@ -166,9 +159,9 @@ func CaptureTestcase (app *App, r *http.Request, reqBody []byte, resp HttpResp, 
 			Body:       string(reqBody),
 		},
 		HttpResp: resp,
-		Deps: deps.Deps,
+		Deps:     deps.Deps,
 	})
-	
+
 }
 
 func urlParams(r *http.Request, params map[string]string) map[string]string {
@@ -191,13 +184,12 @@ func urlParams(r *http.Request, params map[string]string) map[string]string {
 	return result
 }
 
-
 func urlPath(url string, params map[string]string) string {
 	res := url
 	for i, j := range params {
 		res = strings.Replace(res, "/"+j+"/", "/:"+i+"/", -1)
-		if strings.HasSuffix(res,"/"+j){
-			res = strings.TrimSuffix(res, "/"+j) + "/:"+i
+		if strings.HasSuffix(res, "/"+j) {
+			res = strings.TrimSuffix(res, "/"+j) + "/:" + i
 		}
 	}
 	return res
