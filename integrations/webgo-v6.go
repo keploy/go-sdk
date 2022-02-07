@@ -1,4 +1,4 @@
-package Kwebgo
+package integrations
 
 import (
 	"bytes"
