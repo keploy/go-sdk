@@ -1,4 +1,4 @@
-package Kwebgo
+package kwebgo
 
 import (
 	"bytes"

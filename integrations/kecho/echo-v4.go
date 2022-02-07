@@ -1,4 +1,4 @@
-package Kecho
+package kecho
 
 import (
 	"bytes"

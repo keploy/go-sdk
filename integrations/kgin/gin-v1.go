@@ -1,4 +1,4 @@
-package Kgin
+package kgin
 
 import (
 	"bufio"

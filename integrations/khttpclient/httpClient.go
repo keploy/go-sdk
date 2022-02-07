@@ -1,4 +1,4 @@
-package Khttp
+package khttpclient
 
 import (
 	"bytes"

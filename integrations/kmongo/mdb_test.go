@@ -1,4 +1,4 @@
-package Kmongo
+package kmongo
 
 import (
 	"context"

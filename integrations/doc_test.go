@@ -13,12 +13,12 @@ import (
 	"github.com/bnkamalesh/webgo/v4"
 	"github.com/gin-gonic/gin"
 
-	"github.com/keploy/go-sdk/integrations/echo"
-	"github.com/keploy/go-sdk/integrations/gin"
-	"github.com/keploy/go-sdk/integrations/grpc"
-	"github.com/keploy/go-sdk/integrations/http-client"
-	"github.com/keploy/go-sdk/integrations/mongo"
-	"github.com/keploy/go-sdk/integrations/webgo"
+	"github.com/keploy/go-sdk/integrations/kecho"
+	"github.com/keploy/go-sdk/integrations/kgin"
+	"github.com/keploy/go-sdk/integrations/kgrpc"
+	"github.com/keploy/go-sdk/integrations/khttpclient"
+	"github.com/keploy/go-sdk/integrations/kmongo"
+	"github.com/keploy/go-sdk/integrations/kwebgo"
 
 	"github.com/keploy/go-sdk/keploy"
 	"github.com/labstack/echo/v4"
@@ -41,7 +41,7 @@ func ExampleNewMongoCollection() {
 		log.Fatal(err)
 	}
 	fmt.Println("Connected to MongoDB!")
-	var collection *Kmongo.MongoCollection
+	var collection *kmongo.MongoCollection
 	result, err := collection.InsertOne(context.TODO(), bson.D{{"x", 1}})
 	if err != nil {
 		log.Fatal(err)
@@ -51,8 +51,8 @@ func ExampleNewMongoCollection() {
 
 func ExampleMongoSingleResult_Err() {
 	var (
-		sr         *Kmongo.MongoSingleResult
-		collection *Kmongo.MongoCollection
+		sr         *kmongo.MongoSingleResult
+		collection *kmongo.MongoCollection
 	)
 	filter := bson.M{"name": "Ash"}
 	findOneOpts := options.FindOne()
@@ -67,8 +67,8 @@ func ExampleMongoSingleResult_Err() {
 
 func ExampleMongoSingleResult_Decode() {
 	var (
-		sr         *Kmongo.MongoSingleResult
-		collection *Kmongo.MongoCollection
+		sr         *kmongo.MongoSingleResult
+		collection *kmongo.MongoCollection
 	)
 	filter := bson.M{"name": "Ash"}
 	var result bson.D
@@ -85,8 +85,8 @@ func ExampleMongoSingleResult_Decode() {
 
 func ExampleMongoCursor_Err() {
 	var (
-		collection *Kmongo.MongoCollection
-		cur        *Kmongo.MongoCursor
+		collection *kmongo.MongoCollection
+		cur        *kmongo.MongoCursor
 		err        error
 	)
 	filter := bson.M{"name": "Misty"}
@@ -101,8 +101,8 @@ func ExampleMongoCursor_Err() {
 
 func ExampleMongoCursor_Next() {
 	var (
-		collection *Kmongo.MongoCollection
-		cur        *Kmongo.MongoCursor
+		collection *kmongo.MongoCollection
+		cur        *kmongo.MongoCursor
 		err        error
 	)
 	filter := bson.M{"name": "Misty"}
@@ -119,8 +119,8 @@ func ExampleMongoCursor_Next() {
 
 func ExampleMongoCursor_TryNext() {
 	var (
-		collection *Kmongo.MongoCollection
-		cur        *Kmongo.MongoCursor
+		collection *kmongo.MongoCollection
+		cur        *kmongo.MongoCursor
 		err        error
 	)
 	filter := bson.M{"name": "Misty"}
@@ -137,8 +137,8 @@ func ExampleMongoCursor_TryNext() {
 
 func ExampleMongoCursor_Close() {
 	var (
-		collection *Kmongo.MongoCollection
-		cur        *Kmongo.MongoCursor
+		collection *kmongo.MongoCollection
+		cur        *kmongo.MongoCursor
 		err        error
 	)
 	filter := bson.M{"name": "Misty"}
@@ -153,8 +153,8 @@ func ExampleMongoCursor_Close() {
 
 func ExampleMongoCursor_All() {
 	var (
-		collection *Kmongo.MongoCollection
-		cur        *Kmongo.MongoCursor
+		collection *kmongo.MongoCollection
+		cur        *kmongo.MongoCursor
 		err        error
 	)
 	filter := bson.M{"name": "Misty"}
@@ -170,8 +170,8 @@ func ExampleMongoCursor_All() {
 
 func ExampleMongoCursor_Decode() {
 	var (
-		collection *Kmongo.MongoCollection
-		cur        *Kmongo.MongoCursor
+		collection *kmongo.MongoCollection
+		cur        *kmongo.MongoCursor
 		err        error
 	)
 	filter := bson.M{"name": "Misty"}
@@ -194,7 +194,7 @@ func ExampleMongoCursor_Decode() {
 
 func ExampleMongoCollection_InsertOne() {
 	var (
-		collection      *Kmongo.MongoCollection
+		collection      *kmongo.MongoCollection
 		err             error
 		insertOneResult *mongo.InsertOneResult
 	)
@@ -210,8 +210,8 @@ func ExampleMongoCollection_InsertOne() {
 
 func ExampleMongoCollection_FindOne() {
 	var (
-		sr         *Kmongo.MongoSingleResult
-		collection *Kmongo.MongoCollection
+		sr         *kmongo.MongoSingleResult
+		collection *kmongo.MongoCollection
 		err        error
 	)
 	filter := bson.M{"name": "Ash"}
@@ -230,7 +230,7 @@ func ExampleMongoCollection_FindOne() {
 func ExampleMongoCollection_InsertMany() {
 	var (
 		insertManyResult *mongo.InsertManyResult
-		collection       *Kmongo.MongoCollection
+		collection       *kmongo.MongoCollection
 		err              error
 	)
 	docs := []interface{}{
@@ -248,8 +248,8 @@ func ExampleMongoCollection_InsertMany() {
 
 func ExampleMongoCollection_Find() {
 	var (
-		collection *Kmongo.MongoCollection
-		cur        *Kmongo.MongoCursor
+		collection *kmongo.MongoCollection
+		cur        *kmongo.MongoCursor
 		err        error
 	)
 	filter := bson.M{"name": "Misty"}
@@ -273,7 +273,7 @@ func ExampleMongoCollection_Find() {
 func ExampleMongoCollection_UpdateOne() {
 	var (
 		result     *mongo.UpdateResult
-		collection *Kmongo.MongoCollection
+		collection *kmongo.MongoCollection
 		err        error
 	)
 	filter := bson.M{"name": "Brock"}
@@ -296,7 +296,7 @@ func ExampleMongoCollection_UpdateOne() {
 func ExampleMongoCollection_UpdateMany() {
 	var (
 		result     *mongo.UpdateResult
-		collection *Kmongo.MongoCollection
+		collection *kmongo.MongoCollection
 		err        error
 	)
 	filter := bson.M{"name": "Brock"}
@@ -316,7 +316,7 @@ func ExampleMongoCollection_UpdateMany() {
 func ExampleMongoCollection_DeleteOne() {
 	var (
 		result     *mongo.DeleteResult
-		collection *Kmongo.MongoCollection
+		collection *kmongo.MongoCollection
 		err        error
 	)
 	filter := bson.M{"name": "Brock"}
@@ -332,7 +332,7 @@ func ExampleMongoCollection_DeleteOne() {
 func ExampleMongoCollection_DeleteMany() {
 	var (
 		result     *mongo.DeleteResult
-		collection *Kmongo.MongoCollection
+		collection *kmongo.MongoCollection
 		err        error
 	)
 	filter := bson.M{"name": "Brock"}
@@ -362,7 +362,7 @@ func ExampleWebGoV4() {
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 60 * time.Second,
 	}, []*webgo.Route{})
-	Kwebgo.WebGoV4(k, router)
+	kwebgo.WebGoV4(k, router)
 	router.Start()
 }
 
@@ -379,7 +379,7 @@ func ExampleEchoV4() {
 		},
 	})
 	// Remember to call integrations.EchoV4 before route handling
-	Kecho.EchoV4(k, e)
+	kecho.EchoV4(k, e)
 	e.GET("/echo", func(c echo.Context) error {
 		return nil
 	})
@@ -399,7 +399,7 @@ func ExampleGinV1() {
 		},
 	})
 	//Call integration.GinV1 before routes handling
-	Kgin.GinV1(k, r)
+	kgin.GinV1(k, r)
 	r.GET("/gin/:color/*type", func(c *gin.Context) {
 		c.JSON(200, gin.H{
 			"message": "pong",
@@ -418,7 +418,7 @@ func ExampleWithClientUnaryInterceptor() {
 			URL: "http://localhost:8081/api",
 		},
 	})
-	conn, err := grpc.Dial("localhost:50051", grpc.WithInsecure(), Kgrpc.WithClientUnaryInterceptor(k))
+	conn, err := grpc.Dial("localhost:50051", grpc.WithInsecure(), kgrpc.WithClientUnaryInterceptor(k))
 	if err != nil {
 		log.Fatalf("Did not connect : %v", err)
 	}
@@ -436,7 +436,7 @@ func ExampleWithClientStreamInterceptor() {
 		},
 	})
 
-	conn, err := grpc.Dial("localhost:50051", grpc.WithInsecure(), Kgrpc.WithClientStreamInterceptor(k))
+	conn, err := grpc.Dial("localhost:50051", grpc.WithInsecure(), kgrpc.WithClientStreamInterceptor(k))
 	if err != nil {
 		log.Fatalf("Did not connect : %v", err)
 	}
@@ -450,7 +450,7 @@ func ExampleNewHttpClient() {
 		IdleConnTimeout:    30 * time.Second,
 		DisableCompression: true,
 	}
-	client := Khttp.NewHttpClient(&http.Client{
+	client := khttpclient.NewHttpClient(&http.Client{
 		Transport: tr,
 	})
 
@@ -467,7 +467,7 @@ func ExampleNewHttpClient() {
 
 func ExampleHttpClient_SetCtxHttpClient() {
 	r := &http.Request{} // Here, r is for demo. You should use your handler's request as r.
-	client := Khttp.NewHttpClient(&http.Client{})
+	client := khttpclient.NewHttpClient(&http.Client{})
 
 	// SetCtxHttpClient is called before mocked http.Client's Get method.
 	client.SetCtxHttpClient(r.Context())
@@ -482,7 +482,7 @@ func ExampleHttpClient_SetCtxHttpClient() {
 
 func ExampleHttpClient_Get() {
 	r := &http.Request{} // Here, r is for demo. You should use your handler's request as r.
-	client := Khttp.NewHttpClient(&http.Client{})
+	client := khttpclient.NewHttpClient(&http.Client{})
 
 	// SetCtxHttpClient is called before mocked http.Client's Get method.
 	client.SetCtxHttpClient(r.Context())
@@ -497,7 +497,7 @@ func ExampleHttpClient_Get() {
 
 func ExampleHttpClient_Do() {
 	r := &http.Request{} // Here, r is for demo. You should use your handler's request as r.
-	client := Khttp.NewHttpClient(&http.Client{})
+	client := khttpclient.NewHttpClient(&http.Client{})
 
 	// SetCtxHttpClient is called before mocked http.Client's Do method.
 	client.SetCtxHttpClient(r.Context())
@@ -516,7 +516,7 @@ func ExampleHttpClient_Do() {
 
 func ExampleHttpClient_Post() {
 	r := &http.Request{} // Here, r is for demo. You should use your handler's request as r.
-	client := Khttp.NewHttpClient(&http.Client{})
+	client := khttpclient.NewHttpClient(&http.Client{})
 
 	// SetCtxHttpClient is called before mocked http.Client's Post method.
 	client.SetCtxHttpClient(r.Context())
