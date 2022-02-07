@@ -7,76 +7,33 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	"os"
+
 	"github.com/keploy/go-sdk/keploy"
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
 )
 
-// EchoV4 method should be used for integrarting echo router version 4. It should be called just before
-// starting the routes handling. This method adds middlewares for API tesing according to environment
-// variable "KEPLOY_SDK_MODE".
+// EchoV4 adds keploy instrumentation for Echo V4 router.
+// It should be ideally used after other instrumentation libraries like APMs.
 //
-// app parameter is the Keploy App instance created by keploy.NewApp method. If app is nil then,
-// logic for capture or test middleware won't be added.
+// k is the Keploy instance
 //
-// w parameter is the Echo version 4 router of your API.
-func EchoV4(app *keploy.App, e *echo.Echo) {
-	mode := os.Getenv("KEPLOY_SDK_MODE")
-	switch mode {
-	case "test":
-		// e.Use(EchoContext)
-		e.Use(testMWEchoV4(app))
-		go app.Test()
-	case "off":
-		// dont run the SDK
-	case "capture":
-		// e.Use(EchoContext)
-		e.Use(captureMWEchoV4(app))
+// e is the echo v4 router instance
+func EchoV4(k *keploy.Keploy, e *echo.Echo) {
+	if keploy.GetMode() == keploy.MODE_OFF {
+		return
 	}
+	e.Use(echoV4MW(k))
 }
 
 // Similar to gin.Context. Visit https://stackoverflow.com/questions/67267065/how-to-propagate-context-values-from-gin-middleware-to-gqlgen-resolvers
-func setContextValEchoV4(c echo.Context,  val interface{}){
-	ctx := context.WithValue(c.Request().Context() , keploy.KCTX, val)
-	c.SetRequest( c.Request().WithContext(ctx) ) 
+func setContextValEchoV4(c echo.Context, val interface{}) {
+	ctx := context.WithValue(c.Request().Context(), keploy.KCTX, val)
+	c.SetRequest(c.Request().WithContext(ctx))
 }
 
-func testMWEchoV4(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
-	if nil == app {
-		return func(next echo.HandlerFunc) echo.HandlerFunc {
-			return next
-		}
-	}
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) (err error) {
-			id := c.Request().Header.Get("KEPLOY_TEST_ID")
-			if id == "" {
-				return next(c)
-			}
-			tc := app.Get(id)
-			if tc == nil {
-				return next(c)
-			}
-			// c.Set(string(keploy.KCTX), &keploy.Context{
-			// 	Mode:   "test",
-			// 	TestID: id,
-			// 	Deps:   tc.Deps,
-			// })
-			setContextValEchoV4(c, &keploy.Context{
-				Mode:   "test",
-				TestID: id,
-				Deps:   tc.Deps,
-			})
-			resp := captureResp(c, next)
-			app.Resp[id] = resp
-			return
-		}
-	}
-}
-
-func captureMWEchoV4(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
-	if nil == app {
+func echoV4MW(k *keploy.Keploy) func(echo.HandlerFunc) echo.HandlerFunc {
+	if nil == k {
 		return func(next echo.HandlerFunc) echo.HandlerFunc {
 			return next
 		}
@@ -86,9 +43,7 @@ func captureMWEchoV4(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 			// c.Set(string(keploy.KCTX), &keploy.Context{
 			// 	Mode: "capture",
 			// })
-			setContextValEchoV4(c, &keploy.Context{
-				Mode: "capture",
-			})
+
 			id := c.Request().Header.Get("KEPLOY_TEST_ID")
 			if id != "" {
 				// id is only present during simulation
@@ -101,20 +56,23 @@ func captureMWEchoV4(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 				setContextValEchoV4(c, &keploy.Context{
 					Mode:   "test",
 					TestID: id,
-					Deps:   app.Deps[id],
+					Deps:   k.Deps[id],
 				})
 				resp := captureResp(c, next)
-				app.Resp[id] = resp
+				k.Resp[id] = resp
 				return
 			}
-			
+			setContextValEchoV4(c, &keploy.Context{
+				Mode: "capture",
+			})
+
 			// Request
 			var reqBody []byte
 			if c.Request().Body != nil { // Read
 				reqBody, err = ioutil.ReadAll(c.Request().Body)
 				if err != nil {
 					// TODO right way to log errors
-					app.Log.Error("Unable to read request body", zap.Error( err))
+					k.Log.Error("Unable to read request body", zap.Error(err))
 					return
 				}
 			}
@@ -122,7 +80,7 @@ func captureMWEchoV4(app *keploy.App) func(echo.HandlerFunc) echo.HandlerFunc {
 
 			resp := captureResp(c, next)
 			params := pathParamsEcho(c)
-			keploy.CaptureTestcase(app, c.Request(), reqBody, resp, params)
+			keploy.CaptureTestcase(k, c.Request(), reqBody, resp, params)
 			return
 		}
 	}
@@ -133,9 +91,9 @@ func captureResp(c echo.Context, next echo.HandlerFunc) keploy.HttpResp {
 	resBody := new(bytes.Buffer)
 	mw := io.MultiWriter(c.Response().Writer, resBody)
 	writer := &keploy.BodyDumpResponseWriter{
-		Writer: mw,
-		ResponseWriter: c.Response().Writer, 
-		Status: http.StatusOK,
+		Writer:         mw,
+		ResponseWriter: c.Response().Writer,
+		Status:         http.StatusOK,
 	}
 	c.Response().Writer = writer
 
@@ -150,11 +108,11 @@ func captureResp(c echo.Context, next echo.HandlerFunc) keploy.HttpResp {
 	}
 }
 
-func pathParamsEcho(c echo.Context) map[string]string{
+func pathParamsEcho(c echo.Context) map[string]string {
 	var result map[string]string = make(map[string]string)
 	paramNames := c.ParamNames()
-	paramValues:= c.ParamValues()
-	for i:= 0;i<len(paramNames);i++{
+	paramValues := c.ParamValues()
+	for i := 0; i < len(paramNames); i++ {
 		fmt.Printf("paramName : %v, paramValue : %v\n", paramNames[i], paramValues[i])
 		result[paramNames[i]] = paramValues[i]
 	}

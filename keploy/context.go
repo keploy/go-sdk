@@ -1,7 +1,7 @@
 package keploy
 
 type Context struct {
-	Mode string
+	Mode   Mode
 	TestID string
-	Deps []Dependency
+	Deps   []Dependency
 }

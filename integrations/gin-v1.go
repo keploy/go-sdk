@@ -12,67 +12,31 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 
 	"github.com/gin-gonic/gin"
 	"github.com/keploy/go-sdk/keploy"
 	"go.uber.org/zap"
 )
 
-// GinV1 method should be used for integrarting Gin router version 1. It should be called just before
-// routing for paths. This method adds middlewares for API tesing according to environment
-// variable "KEPLOY_SDK_MODE".
+// GinV1 adds keploy instrumentation for Gin V1 router.
+// It should be ideally used after other instrumentation libraries like APMs.
 //
-// app parameter is the Keploy App instance created by keploy.NewApp method. If app is nil then,
-// logic for capture or test middleware won't be added.
+// k is the Keploy instance
 //
-// r parameter is the Gin version 1 router of your API.
-func GinV1(app *keploy.App, r *gin.Engine){
-	mode := os.Getenv("KEPLOY_SDK_MODE")
-	switch mode {
-	case "test":
-		r.Use(testMWGin(app))
-		go app.Test()
-	case "off":
-		// dont run the SDK
-	case "capture":
-		r.Use(captureMWGin(app))
+// r is the gin v1 router instance
+func GinV1(k *keploy.Keploy, r *gin.Engine) {
+	if keploy.GetMode() == keploy.MODE_OFF {
+		return
 	}
-}
-
-func testMWGin(app *keploy.App) gin.HandlerFunc {
-	if app==nil{
-		return func (c *gin.Context)  {
-			c.Next()
-		}
-	}
-	return func(c *gin.Context){
-		id := c.Request.Header.Get("KEPLOY_TEST_ID")
-		if id == "" {
-			c.Next()
-			return
-		}
-		tc := app.Get(id)
-		if tc == nil {
-			c.Next()
-			return
-		}
-		setContextValGin(c, &keploy.Context{
-			Mode:   "test",
-			TestID: id,
-			Deps:   tc.Deps,
-		})
-		resp := captureRespGin(c)
-		app.Resp[id] = resp
-	}
+	r.Use(mWGin(k))
 }
 
 func captureRespGin(c *gin.Context) keploy.HttpResp {
 	resBody := new(bytes.Buffer)
 	mw := io.MultiWriter(c.Writer, resBody)
 	writer := &bodyDumpResponseWriterGin{
-		Writer: mw,
-		ResponseWriter: c.Writer, 
+		Writer:         mw,
+		ResponseWriter: c.Writer,
 	}
 	c.Writer = writer
 
@@ -86,20 +50,19 @@ func captureRespGin(c *gin.Context) keploy.HttpResp {
 }
 
 // from here https://stackoverflow.com/questions/67267065/how-to-propagate-context-values-from-gin-middleware-to-gqlgen-resolvers
-func setContextValGin(c *gin.Context,  val interface{}){
+func setContextValGin(c *gin.Context, val interface{}) {
 	ctx := context.WithValue(c.Request.Context(), keploy.KCTX, val)
 	c.Request = c.Request.WithContext(ctx)
 }
 
-func captureMWGin(app *keploy.App) gin.HandlerFunc {
-	if app==nil{
-		return func (c *gin.Context)  {
+func mWGin(k *keploy.Keploy) gin.HandlerFunc {
+	if k == nil {
+		return func(c *gin.Context) {
 			c.Next()
 		}
 	}
-	return func(c *gin.Context){
+	return func(c *gin.Context) {
 		fmt.Println("gin middleware")
-		setContextValGin(c, &keploy.Context{Mode: "capture",})
 		id := c.Request.Header.Get("KEPLOY_TEST_ID")
 		if id != "" {
 			// id is only present during simulation
@@ -107,12 +70,14 @@ func captureMWGin(app *keploy.App) gin.HandlerFunc {
 			setContextValGin(c, &keploy.Context{
 				Mode:   "test",
 				TestID: id,
-				Deps:   app.Deps[id],
+				Deps:   k.Deps[id],
 			})
 			resp := captureRespGin(c)
-			app.Resp[id] = resp
+			k.Resp[id] = resp
 			return
 		}
+
+		setContextValGin(c, &keploy.Context{Mode: "capture"})
 
 		// Request
 		var reqBody []byte
@@ -121,36 +86,36 @@ func captureMWGin(app *keploy.App) gin.HandlerFunc {
 			reqBody, err = ioutil.ReadAll(c.Request.Body)
 			if err != nil {
 				// TODO right way to log errors
-				app.Log.Error("Unable to read request body", zap.Error( err))
+				k.Log.Error("Unable to read request body", zap.Error(err))
 				return
 			}
 		}
 		c.Request.Body = ioutil.NopCloser(bytes.NewBuffer(reqBody)) // Reset
-		
+
 		resp := captureRespGin(c)
-		params := urlParamsGin(c, app)
-		keploy.CaptureTestcase(app, c.Request, reqBody, resp, params)
+		params := urlParamsGin(c, k)
+		keploy.CaptureTestcase(k, c.Request, reqBody, resp, params)
 	}
 }
 
-func urlParamsGin(c *gin.Context, app *keploy.App) map[string]string{
+func urlParamsGin(c *gin.Context, k *keploy.Keploy) map[string]string {
 	gp := c.Params
-	data,err := json.Marshal(gp)
-	if err!=nil{
-		app.Log.Error("", zap.Error(err))
+	data, err := json.Marshal(gp)
+	if err != nil {
+		k.Log.Error("", zap.Error(err))
 	}
 	var gi interface{}
 	err = json.Unmarshal(data, &gi)
-	if err!=nil{
-		app.Log.Error("", zap.Error(err))
+	if err != nil {
+		k.Log.Error("", zap.Error(err))
 	}
 	var params map[string]string = make(map[string]string)
 
-	for _,k := range gi.([]interface{}){
+	for _, k := range gi.([]interface{}) {
 		j := k.(map[string]interface{})
 		key := j["Key"].(string)
 		val := j["Value"].(string)
-		if val[0]!='/'{
+		if val[0] != '/' {
 			params[key] = val
 		} else {
 			params[key] = val[1:]
