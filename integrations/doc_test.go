@@ -13,13 +13,12 @@ import (
 	"github.com/bnkamalesh/webgo/v4"
 	"github.com/gin-gonic/gin"
 
-	"github.com/keploy/go-sdk/integrations/kecho"
-	"github.com/keploy/go-sdk/integrations/kgin"
+	"github.com/keploy/go-sdk/integrations/kecho/v4"
+	"github.com/keploy/go-sdk/integrations/kgin/v1"
 	"github.com/keploy/go-sdk/integrations/kgrpc"
 	"github.com/keploy/go-sdk/integrations/khttpclient"
 	"github.com/keploy/go-sdk/integrations/kmongo"
-	"github.com/keploy/go-sdk/integrations/kwebgo"
-
+	"github.com/keploy/go-sdk/integrations/kwebgo/v4"
 	"github.com/keploy/go-sdk/keploy"
 	"github.com/labstack/echo/v4"
 	"go.mongodb.org/mongo-driver/bson"
