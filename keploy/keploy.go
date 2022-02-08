@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"github.com/creasty/defaults"
 	"github.com/go-playground/validator/v10"
+	"go.keploy.io/server/http/regression"
+	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"io"
@@ -100,8 +102,8 @@ func New(cfg Config) *Keploy {
 		client: &http.Client{
 			Timeout: cfg.App.Timeout,
 		},
-		Deps: map[string][]Dependency{},
-		Resp: map[string]HttpResp{},
+		Deps: map[string][]models.Dependency{},
+		Resp: map[string]models.HttpResp{},
 	}
 	if mode == MODE_TEST {
 		go k.Test()
@@ -113,12 +115,12 @@ type Keploy struct {
 	cfg    Config
 	Log    *zap.Logger
 	client *http.Client
-	Deps   map[string][]Dependency
-	Resp   map[string]HttpResp
+	Deps   map[string][]models.Dependency
+	Resp   map[string]models.HttpResp
 }
 
 // Capture will capture request, response and output of external dependencies by making Call to keploy server.
-func (k *Keploy) Capture(req TestCaseReq) {
+func (k *Keploy) Capture(req regression.TestCaseReq) {
 	go k.put(req)
 }
 
@@ -184,7 +186,7 @@ func (k *Keploy) end(id string, status bool) error {
 	return nil
 }
 
-func (k *Keploy) simulate(tc TestCase) (*HttpResp, error) {
+func (k *Keploy) simulate(tc models.TestCase) (*models.HttpResp, error) {
 	// add dependencies to shared context
 	k.Deps[tc.ID] = tc.Deps
 	defer delete(k.Deps, tc.ID)
@@ -216,13 +218,13 @@ func (k *Keploy) simulate(tc TestCase) (*HttpResp, error) {
 	return &resp, nil
 }
 
-func (k *Keploy) check(runId string, tc TestCase) bool {
+func (k *Keploy) check(runId string, tc models.TestCase) bool {
 	resp, err := k.simulate(tc)
 	if err != nil {
 		k.Log.Error("failed to simulate request on local server", zap.Error(err))
 		return false
 	}
-	bin, err := json.Marshal(&TestReq{
+	bin, err := json.Marshal(&regression.TestReq{
 		ID:    tc.ID,
 		AppID: k.cfg.App.Name,
 		RunID: runId,
@@ -263,7 +265,7 @@ func (k *Keploy) check(runId string, tc TestCase) bool {
 	return false
 }
 
-func (k *Keploy) put(tcs TestCaseReq) {
+func (k *Keploy) put(tcs regression.TestCaseReq) {
 	bin, err := json.Marshal(tcs)
 	if err != nil {
 		k.Log.Error("failed to marshall testcase request", zap.String("url", tcs.URI), zap.Error(err))
@@ -304,7 +306,7 @@ func (k *Keploy) put(tcs TestCaseReq) {
 	if id != "" {
 		// run the request again to find noisy fields
 
-		resp2, err := k.simulate(TestCase{
+		resp2, err := k.simulate(models.TestCase{
 			ID:       id,
 			Captured: tcs.Captured,
 			URI:      tcs.URI,
@@ -316,7 +318,7 @@ func (k *Keploy) put(tcs TestCaseReq) {
 			return
 		}
 
-		bin2, err := json.Marshal(&TestReq{
+		bin2, err := json.Marshal(&regression.TestReq{
 			ID:    res["id"],
 			AppID: k.cfg.App.Name,
 			Resp:  *resp2,
@@ -344,14 +346,14 @@ func (k *Keploy) put(tcs TestCaseReq) {
 	}
 }
 
-func (k *Keploy) Get(id string) *TestCase {
+func (k *Keploy) Get(id string) *models.TestCase {
 	url := fmt.Sprintf("%s/regression/testcase/%s", k.cfg.Server.URL, id)
 	body, err := k.newGet(url)
 	if err != nil {
 		k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
 		return nil
 	}
-	var tcs TestCase
+	var tcs models.TestCase
 
 	err = json.Unmarshal(body, &tcs)
 	if err != nil {
@@ -383,14 +385,14 @@ func (k *Keploy) newGet(url string) ([]byte, error) {
 	return body, nil
 }
 
-func (k *Keploy) fetch() []TestCase {
+func (k *Keploy) fetch() []models.TestCase {
 	url := fmt.Sprintf("%s/regression/testcase?app=%s", k.cfg.Server.URL, k.cfg.App.Name)
 	body, err := k.newGet(url)
 	if err != nil {
 		k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
 		return nil
 	}
-	var tcs []TestCase
+	var tcs []models.TestCase
 
 	err = json.Unmarshal(body, &tcs)
 	if err != nil {

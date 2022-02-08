@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go.keploy.io/server/pkg/models"
 	"reflect"
 
 	"github.com/keploy/go-sdk/keploy"
@@ -56,7 +57,7 @@ func clientInterceptor(k *keploy.Keploy) func(
 
 		meta := map[string]string{
 			"name":            "gRPC",
-			"type":            string(keploy.RPC),
+			"type":            string(models.GRPC),
 			"operation":       method,
 			"request":         fmt.Sprint(req),
 			"grpc.CallOption": fmt.Sprint(opts),
@@ -160,7 +161,7 @@ func (s *tracedClientStream) CloseSend() error {
 	}
 	meta := map[string]string{
 		"name":            "gRPC",
-		"type":            string(keploy.RPC),
+		"type":            string(models.GRPC),
 		"operation":       s.method + "/grpc.ClientStream.CloseSend",
 		"grpc.StreamDesc": fmt.Sprint(s.desc),
 		"grpc.CallOption": fmt.Sprint(s.opts),
@@ -201,7 +202,7 @@ func (s *tracedClientStream) SendMsg(m interface{}) error {
 	}
 	meta := map[string]string{
 		"name":            "gRPC",
-		"type":            string(keploy.RPC),
+		"type":            string(models.GRPC),
 		"operation":       s.method + "/grpc.ClientStream.SendMsg",
 		"grpc.StreamDesc": fmt.Sprint(s.desc),
 		"grpc.CallOption": fmt.Sprint(s.opts),
@@ -237,7 +238,7 @@ func (s *tracedClientStream) Context() context.Context {
 	}
 	meta := map[string]string{
 		"name":            "gRPC",
-		"type":            string(keploy.RPC),
+		"type":            string(models.GRPC),
 		"operation":       s.method + "/grpc.ClientStream.Context",
 		"grpc.StreamDesc": fmt.Sprint(s.desc),
 		"grpc.CallOption": fmt.Sprint(s.opts),
@@ -277,7 +278,7 @@ func (s *tracedClientStream) RecvMsg(m interface{}) error {
 	}
 	meta := map[string]string{
 		"name":            "gRPC",
-		"type":            string(keploy.RPC),
+		"type":            string(models.GRPC),
 		"operation":       s.method + "/grpc.ClientStream.RecvMsg",
 		"grpc.StreamDesc": fmt.Sprint(s.desc),
 		"grpc.CallOption": fmt.Sprint(s.opts),

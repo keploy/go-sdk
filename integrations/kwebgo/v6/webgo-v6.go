@@ -3,12 +3,13 @@ package kwebgo
 import (
 	"bytes"
 	"context"
-	"io/ioutil"
-	"net/http"
-	"io"
 	"github.com/bnkamalesh/webgo/v6"
 	"github.com/keploy/go-sdk/keploy"
+	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
+	"io"
+	"io/ioutil"
+	"net/http"
 )
 
 // WebGoV6 adds keploy instrumentation for WebGo V6 router.
@@ -21,10 +22,10 @@ func WebGoV6(k *keploy.Keploy, w *webgo.Router) {
 	if keploy.GetMode() == keploy.MODE_OFF {
 		return
 	}
-	w.Use(mWWebGoV6(k))
+	w.Use(mw(k))
 }
 
-func captureRespWebGo(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) keploy.HttpResp {
+func captureRespWebGo(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) models.HttpResp {
 	resBody := new(bytes.Buffer)
 	mw := io.MultiWriter(w, resBody)
 	writer := &keploy.BodyDumpResponseWriter{
@@ -35,7 +36,7 @@ func captureRespWebGo(w http.ResponseWriter, r *http.Request, next http.HandlerF
 	w = writer
 
 	next(w, r)
-	return keploy.HttpResp{
+	return models.HttpResp{
 		//Status
 
 		StatusCode: writer.Status,
@@ -44,7 +45,7 @@ func captureRespWebGo(w http.ResponseWriter, r *http.Request, next http.HandlerF
 	}
 }
 
-func mWWebGoV6(k *keploy.Keploy) func(http.ResponseWriter, *http.Request, http.HandlerFunc) {
+func mw(k *keploy.Keploy) func(http.ResponseWriter, *http.Request, http.HandlerFunc) {
 	if k == nil {
 		return func(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
 			next(w, r)

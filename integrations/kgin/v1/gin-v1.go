@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go.keploy.io/server/pkg/models"
 	"io/ioutil"
 
 	// "fmt"
@@ -28,10 +29,10 @@ func GinV1(k *keploy.Keploy, r *gin.Engine) {
 	if keploy.GetMode() == keploy.MODE_OFF {
 		return
 	}
-	r.Use(mWGin(k))
+	r.Use(mw(k))
 }
 
-func captureRespGin(c *gin.Context) keploy.HttpResp {
+func captureRespGin(c *gin.Context) models.HttpResp {
 	resBody := new(bytes.Buffer)
 	mw := io.MultiWriter(c.Writer, resBody)
 	writer := &bodyDumpResponseWriterGin{
@@ -41,7 +42,7 @@ func captureRespGin(c *gin.Context) keploy.HttpResp {
 	c.Writer = writer
 
 	c.Next()
-	return keploy.HttpResp{
+	return models.HttpResp{
 		//Status
 		StatusCode: c.Writer.Status(),
 		Header:     c.Writer.Header(),
@@ -55,7 +56,7 @@ func setContextValGin(c *gin.Context, val interface{}) {
 	c.Request = c.Request.WithContext(ctx)
 }
 
-func mWGin(k *keploy.Keploy) gin.HandlerFunc {
+func mw(k *keploy.Keploy) gin.HandlerFunc {
 	if k == nil {
 		return func(c *gin.Context) {
 			c.Next()
