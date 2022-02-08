@@ -8,6 +8,7 @@ import (
 	"github.com/creasty/defaults"
 	"github.com/go-playground/validator/v10"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -70,7 +71,12 @@ type ServerConfig struct {
 }
 
 func New(cfg Config) *Keploy {
-	logger, err := zap.NewProduction()
+	zcfg := zap.NewProductionConfig()
+	zcfg.EncoderConfig.CallerKey = zapcore.OmitKey
+	zcfg.EncoderConfig.LevelKey = zapcore.OmitKey
+	zcfg.EncoderConfig.TimeKey = zapcore.OmitKey
+
+	logger, err := zcfg.Build()
 	defer func() {
 		_ = logger.Sync() // flushes buffer, if any
 	}()

@@ -42,7 +42,7 @@ type Dependency struct {
 
 type DependencyType string
 
-const(
+const (
 	NoSqlDB    DependencyType = "DB"
 	SqlDB      DependencyType = "SQL_DB"
 	RPC        DependencyType = "RPC"
