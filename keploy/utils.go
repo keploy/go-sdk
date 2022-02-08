@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/gob"
 	"errors"
+	"go.keploy.io/server/http/regression"
+	"go.keploy.io/server/pkg/models"
 	"io"
 	"net"
 	"net/http"
@@ -119,9 +121,9 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 		//if err != nil {
 		//	c.log.Error("failed to encode ddb resp", zap.String("test id", id))
 		//}
-		kctx.Deps = append(kctx.Deps, Dependency{
+		kctx.Deps = append(kctx.Deps, models.Dependency{
 			Name: meta["name"],
-			Type: DependencyType(meta["type"]),
+			Type: models.DependencyType(meta["type"]),
 			Data: res,
 			Meta: meta,
 		})
@@ -129,7 +131,7 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 	return false, nil
 }
 
-func CaptureTestcase(k *Keploy, r *http.Request, reqBody []byte, resp HttpResp, params map[string]string) {
+func CaptureTestcase(k *Keploy, r *http.Request, reqBody []byte, resp models.HttpResp, params map[string]string) {
 
 	d := r.Context().Value(KCTX)
 	if d == nil {
@@ -145,12 +147,12 @@ func CaptureTestcase(k *Keploy, r *http.Request, reqBody []byte, resp HttpResp, 
 	// 	Path:     r.URL.Path,
 	// 	RawQuery: r.URL.RawQuery,
 	// }
-	k.Capture(TestCaseReq{
+	k.Capture(regression.TestCaseReq{
 		Captured: time.Now().Unix(),
 		AppID:    k.cfg.App.Name,
 		URI:      urlPath(r.URL.Path, params),
-		HttpReq: HttpReq{
-			Method:     Method(r.Method),
+		HttpReq: models.HttpReq{
+			Method:     models.Method(r.Method),
 			ProtoMajor: r.ProtoMajor,
 			ProtoMinor: r.ProtoMinor,
 			URL:        r.URL.String(),

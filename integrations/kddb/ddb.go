@@ -2,6 +2,7 @@ package kddb
 
 import (
 	"errors"
+	"go.keploy.io/server/pkg/models"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/request"
@@ -39,7 +40,7 @@ func (c *DynamoDB) QueryWithContext(ctx aws.Context, input *dynamodb.QueryInput,
 
 	meta := map[string]string{
 		"name":      "dynamodb",
-		"type":      string(keploy.NoSqlDB),
+		"type":      string(models.NoSqlDB),
 		"operation": "QueryWithContext",
 		"query":     input.String(),
 	}
@@ -77,7 +78,7 @@ func (c *DynamoDB) GetItemWithContext(ctx aws.Context, input *dynamodb.GetItemIn
 
 	meta := map[string]string{
 		"name":      "dynamodb",
-		"type":      string(keploy.NoSqlDB),
+		"type":      string(models.NoSqlDB),
 		"operation": "GetItemWithContext",
 		"query":     input.String(),
 	}
@@ -117,7 +118,7 @@ func (c *DynamoDB) PutItemWithContext(ctx aws.Context, input *dynamodb.PutItemIn
 
 	meta := map[string]string{
 		"name":      "dynamodb",
-		"type":      string(keploy.NoSqlDB),
+		"type":      string(models.NoSqlDB),
 		"operation": "PutItemWithContext",
 		"query":     input.String(),
 	}

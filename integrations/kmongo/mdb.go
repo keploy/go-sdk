@@ -5,6 +5,7 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
+	"go.keploy.io/server/pkg/models"
 
 	"github.com/keploy/go-sdk/keploy"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -79,7 +80,7 @@ func (msr *MongoSingleResult) Err() error {
 
 	meta := map[string]string{
 		"name":           "mongodb",
-		"type":           string(keploy.NoSqlDB),
+		"type":           string(models.NoSqlDB),
 		"operation":      "FindOne.Err",
 		"filter":         fmt.Sprint(msr.filter),
 		"FindOneOptions": fmt.Sprint(msr.opts),
@@ -127,7 +128,7 @@ func (msr *MongoSingleResult) Decode(v interface{}) error {
 
 	meta := map[string]string{
 		"name":           "mongodb",
-		"type":           string(keploy.NoSqlDB),
+		"type":           string(models.NoSqlDB),
 		"operation":      "FindOne.Decode",
 		"filter":         fmt.Sprint(msr.filter),
 		"FindOneOptions": fmt.Sprint(msr.opts),
@@ -238,7 +239,7 @@ func (c *MongoCollection) InsertOne(ctx context.Context, document interface{},
 	}
 	meta := map[string]string{
 		"name":             "mongodb",
-		"type":             string(keploy.NoSqlDB),
+		"type":             string(models.NoSqlDB),
 		"operation":        "InsertOne",
 		"document":         fmt.Sprint(document),
 		"InsertOneOptions": fmt.Sprint(derivedOpts),
@@ -301,7 +302,7 @@ func (cr *MongoCursor) Err() error {
 
 	meta := map[string]string{
 		"name":        "mongodb",
-		"type":        string(keploy.NoSqlDB),
+		"type":        string(models.NoSqlDB),
 		"operation":   "Find.Err",
 		"filter":      fmt.Sprint(cr.filter),
 		"FindOptions": fmt.Sprint(cr.opts),
@@ -350,7 +351,7 @@ func (cr *MongoCursor) Close(ctx context.Context) error {
 
 	meta := map[string]string{
 		"name":        "mongodb",
-		"type":        string(keploy.NoSqlDB),
+		"type":        string(models.NoSqlDB),
 		"operation":   "Find.Close",
 		"filter":      fmt.Sprint(cr.filter),
 		"FindOptions": fmt.Sprint(cr.opts),
@@ -399,7 +400,7 @@ func (cr *MongoCursor) TryNext(ctx context.Context) bool {
 
 	meta := map[string]string{
 		"name":        "mongodb",
-		"type":        string(keploy.NoSqlDB),
+		"type":        string(models.NoSqlDB),
 		"operation":   "Find.TryNext",
 		"filter":      fmt.Sprint(cr.filter),
 		"FindOptions": fmt.Sprint(cr.opts),
@@ -442,7 +443,7 @@ func (cr *MongoCursor) All(ctx context.Context, results interface{}) error {
 
 	meta := map[string]string{
 		"name":        "mongodb",
-		"type":        string(keploy.NoSqlDB),
+		"type":        string(models.NoSqlDB),
 		"operation":   "Find.All",
 		"filter":      fmt.Sprint(cr.filter),
 		"FindOptions": fmt.Sprint(cr.opts),
@@ -491,7 +492,7 @@ func (cr *MongoCursor) Next(ctx context.Context) bool {
 
 	meta := map[string]string{
 		"name":        "mongodb",
-		"type":        string(keploy.NoSqlDB),
+		"type":        string(models.NoSqlDB),
 		"operation":   "Find.Next",
 		"filter":      fmt.Sprint(cr.filter),
 		"FindOptions": fmt.Sprint(cr.opts),
@@ -534,7 +535,7 @@ func (cr *MongoCursor) Decode(v interface{}) error {
 
 	meta := map[string]string{
 		"name":        "mongodb",
-		"type":        string(keploy.NoSqlDB),
+		"type":        string(models.NoSqlDB),
 		"operation":   "Find.Decode",
 		"filter":      fmt.Sprint(cr.filter),
 		"FindOptions": fmt.Sprint(cr.opts),
@@ -649,7 +650,7 @@ func (c *MongoCollection) InsertMany(ctx context.Context, documents []interface{
 	}
 	meta := map[string]string{
 		"name":              "mongodb",
-		"type":              string(keploy.NoSqlDB),
+		"type":              string(models.NoSqlDB),
 		"operation":         "InsertMany",
 		"documents":         fmt.Sprint(documents),
 		"InsertManyOptions": fmt.Sprint(derivedOpts),
@@ -706,7 +707,7 @@ func (c *MongoCollection) UpdateOne(ctx context.Context, filter interface{}, upd
 	}
 	meta := map[string]string{
 		"name":          "mongodb",
-		"type":          string(keploy.NoSqlDB),
+		"type":          string(models.NoSqlDB),
 		"operation":     "UpdateOne",
 		"filter":        fmt.Sprint(filter),
 		"update":        fmt.Sprint(update),
@@ -765,7 +766,7 @@ func (c *MongoCollection) UpdateMany(ctx context.Context, filter interface{}, up
 	}
 	meta := map[string]string{
 		"name":          "mongodb",
-		"type":          string(keploy.NoSqlDB),
+		"type":          string(models.NoSqlDB),
 		"operation":     "UpdateMany",
 		"filter":        fmt.Sprint(filter),
 		"update":        fmt.Sprint(update),
@@ -824,7 +825,7 @@ func (c *MongoCollection) DeleteOne(ctx context.Context, filter interface{},
 	}
 	meta := map[string]string{
 		"name":          "mongodb",
-		"type":          string(keploy.NoSqlDB),
+		"type":          string(models.NoSqlDB),
 		"operation":     "DeleteOne",
 		"filter":        fmt.Sprint(filter),
 		"DeleteOptions": fmt.Sprint(derivedOpts),
@@ -881,7 +882,7 @@ func (c *MongoCollection) DeleteMany(ctx context.Context, filter interface{},
 	}
 	meta := map[string]string{
 		"name":          "mongodb",
-		"type":          string(keploy.NoSqlDB),
+		"type":          string(models.NoSqlDB),
 		"operation":     "DeleteMany",
 		"filter":        fmt.Sprint(filter),
 		"DeleteOptions": fmt.Sprint(derivedOpts),

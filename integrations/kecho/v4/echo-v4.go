@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"go.keploy.io/server/pkg/models"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -23,7 +24,7 @@ func EchoV4(k *keploy.Keploy, e *echo.Echo) {
 	if keploy.GetMode() == keploy.MODE_OFF {
 		return
 	}
-	e.Use(echoV4MW(k))
+	e.Use(mw(k))
 }
 
 // Similar to gin.Context. Visit https://stackoverflow.com/questions/67267065/how-to-propagate-context-values-from-gin-middleware-to-gqlgen-resolvers
@@ -32,7 +33,7 @@ func setContextValEchoV4(c echo.Context, val interface{}) {
 	c.SetRequest(c.Request().WithContext(ctx))
 }
 
-func echoV4MW(k *keploy.Keploy) func(echo.HandlerFunc) echo.HandlerFunc {
+func mw(k *keploy.Keploy) func(echo.HandlerFunc) echo.HandlerFunc {
 	if nil == k {
 		return func(next echo.HandlerFunc) echo.HandlerFunc {
 			return next
@@ -87,7 +88,7 @@ func echoV4MW(k *keploy.Keploy) func(echo.HandlerFunc) echo.HandlerFunc {
 
 }
 
-func captureResp(c echo.Context, next echo.HandlerFunc) keploy.HttpResp {
+func captureResp(c echo.Context, next echo.HandlerFunc) models.HttpResp {
 	resBody := new(bytes.Buffer)
 	mw := io.MultiWriter(c.Response().Writer, resBody)
 	writer := &keploy.BodyDumpResponseWriter{
@@ -100,7 +101,7 @@ func captureResp(c echo.Context, next echo.HandlerFunc) keploy.HttpResp {
 	if err := next(c); err != nil {
 		c.Error(err)
 	}
-	return keploy.HttpResp{
+	return models.HttpResp{
 		//Status
 		StatusCode: writer.Status,
 		Header:     c.Response().Header(),

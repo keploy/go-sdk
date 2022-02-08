@@ -3,6 +3,7 @@ package kwebgo
 import (
 	"bytes"
 	"context"
+	"go.keploy.io/server/pkg/models"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -22,10 +23,10 @@ func WebGoV4(k *keploy.Keploy, w *webgo.Router) {
 	if keploy.GetMode() == keploy.MODE_OFF {
 		return
 	}
-	w.Use(mWWebGoV4(k))
+	w.Use(mw(k))
 }
 
-func captureRespWebGo(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) keploy.HttpResp {
+func captureRespWebGo(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) models.HttpResp {
 	resBody := new(bytes.Buffer)
 	mw := io.MultiWriter(w, resBody)
 	writer := &keploy.BodyDumpResponseWriter{
@@ -36,7 +37,7 @@ func captureRespWebGo(w http.ResponseWriter, r *http.Request, next http.HandlerF
 	w = writer
 
 	next(w, r)
-	return keploy.HttpResp{
+	return models.HttpResp{
 		//Status
 
 		StatusCode: writer.Status,
@@ -45,7 +46,7 @@ func captureRespWebGo(w http.ResponseWriter, r *http.Request, next http.HandlerF
 	}
 }
 
-func mWWebGoV4(k *keploy.Keploy) func(http.ResponseWriter, *http.Request, http.HandlerFunc) {
+func mw(k *keploy.Keploy) func(http.ResponseWriter, *http.Request, http.HandlerFunc) {
 	if k == nil {
 		return func(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
 			k.Log.Warn("keploy is nil.")

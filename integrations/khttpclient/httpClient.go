@@ -3,6 +3,7 @@ package khttpclient
 import (
 	"bytes"
 	"context"
+	"go.keploy.io/server/pkg/models"
 
 	// "crypto/tls"
 	"encoding/gob"
@@ -102,7 +103,7 @@ func (cl *HttpClient) Do(req *http.Request) (*http.Response, error) {
 	body := requestString(req)
 	meta := map[string]string{
 		"name":      "http-client",
-		"type":      string(keploy.HttpClient),
+		"type":      string(models.HttpClient),
 		"operation": "Do",
 		"Request":   body,
 	}
@@ -154,7 +155,7 @@ func (cl *HttpClient) Get(url string) (*http.Response, error) {
 	mode := kctx.Mode
 	meta := map[string]string{
 		"name":      "http-client",
-		"type":      string(keploy.HttpClient),
+		"type":      string(models.HttpClient),
 		"operation": "Get",
 		"URL":       url,
 	}
@@ -206,7 +207,7 @@ func (cl *HttpClient) Post(url, contentType string, body io.Reader) (*http.Respo
 	mode := kctx.Mode
 	meta := map[string]string{
 		"name":        "http-client",
-		"type":        string(keploy.HttpClient),
+		"type":        string(models.HttpClient),
 		"operation":   "Post",
 		"URL":         url,
 		"ContentType": contentType,
@@ -260,7 +261,7 @@ func (cl *HttpClient) Head(url string) (*http.Response, error) {
 	mode := kctx.Mode
 	meta := map[string]string{
 		"name":      "http-client",
-		"type":      string(keploy.HttpClient),
+		"type":      string(models.HttpClient),
 		"operation": "Head",
 		"URL":       url,
 	}
@@ -312,7 +313,7 @@ func (cl *HttpClient) PostForm(url string, data url.Values) (*http.Response, err
 	mode := kctx.Mode
 	meta := map[string]string{
 		"name":      "http-client",
-		"type":      string(keploy.HttpClient),
+		"type":      string(models.HttpClient),
 		"operation": "PostForm",
 		"URL":       url,
 		"Data":      fmt.Sprint(data),
