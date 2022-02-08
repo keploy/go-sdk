@@ -1,4 +1,4 @@
-package integrations
+package kgin
 
 import (
 	"bufio"

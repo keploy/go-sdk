@@ -1,4 +1,4 @@
-package integrations
+package kgrpc
 
 import (
 	"context"

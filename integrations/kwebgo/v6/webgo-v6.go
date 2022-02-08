@@ -1,11 +1,11 @@
-package integrations
+package kwebgo
 
 import (
 	"bytes"
 	"context"
 	"io/ioutil"
 	"net/http"
-
+	"io"
 	"github.com/bnkamalesh/webgo/v6"
 	"github.com/keploy/go-sdk/keploy"
 	"go.uber.org/zap"
@@ -22,6 +22,26 @@ func WebGoV6(k *keploy.Keploy, w *webgo.Router) {
 		return
 	}
 	w.Use(mWWebGoV6(k))
+}
+
+func captureRespWebGo(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) keploy.HttpResp {
+	resBody := new(bytes.Buffer)
+	mw := io.MultiWriter(w, resBody)
+	writer := &keploy.BodyDumpResponseWriter{
+		Writer:         mw,
+		ResponseWriter: w,
+		Status:         http.StatusOK,
+	}
+	w = writer
+
+	next(w, r)
+	return keploy.HttpResp{
+		//Status
+
+		StatusCode: writer.Status,
+		Header:     w.Header(),
+		Body:       resBody.String(),
+	}
 }
 
 func mWWebGoV6(k *keploy.Keploy) func(http.ResponseWriter, *http.Request, http.HandlerFunc) {
