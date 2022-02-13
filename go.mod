@@ -15,13 +15,15 @@ require (
 	google.golang.org/grpc v1.43.0
 )
 
-require go.keploy.io/server v0.1.8
+require (
+	github.com/go-chi/chi v1.5.4
+	go.keploy.io/server v0.1.8
+)
 
 require (
 	github.com/99designs/gqlgen v0.15.1 // indirect
 	github.com/agnivade/levenshtein v1.1.0 // indirect
 	github.com/gin-contrib/sse v0.1.0 // indirect
-	github.com/go-chi/chi v1.5.4 // indirect
 	github.com/go-chi/render v1.0.1 // indirect
 	github.com/go-playground/locales v0.13.0 // indirect
 	github.com/go-playground/universal-translator v0.17.0 // indirect
