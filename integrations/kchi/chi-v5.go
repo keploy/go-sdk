@@ -100,10 +100,7 @@ func urlParamsChi(c *chi.Context, k *keploy.Keploy) map[string]string{
 	paramsMap := make(map[string]string)
 	for i,j := range params.Keys{
 		val := params.Values[i]
-		// if len(val)==0 {
-		// 	val = ""
-		// }
-		if val[0] == '/'{
+		if len(val)>0 && val[0] == '/'{
 			val = val[1:]
 		}
 		paramsMap[j] = val
