@@ -15,6 +15,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"sync"
 	"testing"
 	"time"
 )
@@ -142,13 +143,24 @@ func (k *Keploy) Test() {
 	k.Log.Info("starting test execution", zap.String("id", id), zap.Int("total tests", total))
 	passed := true
 	// call the service for each test case
+	var wg sync.WaitGroup
+	maxGoroutines := 10
+	guard := make(chan struct{}, maxGoroutines)
 	for i, tc := range tcs {
 		k.Log.Info(fmt.Sprintf("testing %d of %d", i+1, total), zap.String("testcase id", tc.ID))
-		ok := k.check(id, tc)
-		if !ok {
-			passed = false
-		}
-		k.Log.Info("result", zap.Bool("passed", ok))
+		guard <- struct{}{}
+		wg.Add(1)
+		go func() {
+			ok := k.check(id, tc)
+			if !ok {
+				passed = false
+			}
+			k.Log.Info("result", zap.Bool("passed", ok))
+			<-guard
+			wg.Done()
+		}()
+		wg.Wait()
+
 	}
 
 	// end the test run
