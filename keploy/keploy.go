@@ -65,7 +65,7 @@ type AppConfig struct {
 	Host    string        `default:"0.0.0.0"`
 	Port    string        `validate:"required"`
 	Delay   time.Duration `default:"5s"`
-	Timeout time.Duration `default:"10s"`
+	Timeout time.Duration `default:"60s"`
 }
 
 type ServerConfig struct {
@@ -398,20 +398,28 @@ func (k *Keploy) newGet(url string) ([]byte, error) {
 }
 
 func (k *Keploy) fetch() []models.TestCase {
-	url := fmt.Sprintf("%s/regression/testcase?app=%s", k.cfg.Server.URL, k.cfg.App.Name)
-	body, err := k.newGet(url)
-	if err != nil {
-		k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
-		return nil
-	}
-	var tcs []models.TestCase
-
-	err = json.Unmarshal(body, &tcs)
-	if err != nil {
-		k.Log.Error("failed to reading testcases from keploy cloud", zap.Error(err))
-		return nil
-	}
-	return tcs
+    var tcs []models.TestCase = []models.TestCase{}
+    
+    for i:=0 ; ; i+=25{
+        url := fmt.Sprintf("%s/regression/testcase?app=%s&offset=%d&limit=%d", k.cfg.Server.URL, k.cfg.App.Name, i, 25)
+        body, err := k.newGet(url)
+        if err != nil {
+            k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
+            return nil
+        }
+        
+        var res []models.TestCase
+        err = json.Unmarshal(body, &res)
+        if err != nil {
+            k.Log.Error("failed to reading testcases from keploy cloud", zap.Error(err))
+            return nil
+        }
+        if len(res)==0{
+            break
+        }
+        tcs = append(tcs, res...)
+    }
+    return tcs
 }
 
 func (k *Keploy) setKey(req *http.Request) {
