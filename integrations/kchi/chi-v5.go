@@ -41,17 +41,17 @@ func captureRespChi(w http.ResponseWriter, r *http.Request, next http.Handler) m
 	}
 }
 
-func mw(k *keploy.Keploy) func(http.Handler) http.Handler{
+func mw(k *keploy.Keploy) func(http.Handler) http.Handler {
 	if k == nil {
 		return func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func (w http.ResponseWriter, r *http.Request)  {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				k.Log.Warn("keploy is nil.")
 				next.ServeHTTP(w, r)
 			})
 		}
 	}
 	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func (w http.ResponseWriter, r *http.Request)  {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			id := r.Header.Get("KEPLOY_TEST_ID")
 			if id != "" {
 				// id is only present during simulation
@@ -59,7 +59,7 @@ func mw(k *keploy.Keploy) func(http.Handler) http.Handler{
 				ctx := context.WithValue(r.Context(), keploy.KCTX, &keploy.Context{
 					Mode:   "test",
 					TestID: id,
-					Deps:   k.Deps[id],
+					Deps:   k.GetDependencies(id),
 				})
 
 				r = r.WithContext(ctx)
@@ -95,12 +95,12 @@ func mw(k *keploy.Keploy) func(http.Handler) http.Handler{
 	}
 }
 
-func urlParamsChi(c *chi.Context, k *keploy.Keploy) map[string]string{
+func urlParamsChi(c *chi.Context, k *keploy.Keploy) map[string]string {
 	params := c.URLParams
 	paramsMap := make(map[string]string)
-	for i,j := range params.Keys{
+	for i, j := range params.Keys {
 		val := params.Values[i]
-		if len(val)>0 && val[0] == '/'{
+		if len(val) > 0 && val[0] == '/' {
 			val = val[1:]
 		}
 		paramsMap[j] = val

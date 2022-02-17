@@ -59,7 +59,7 @@ func mw(k *keploy.Keploy) func(http.ResponseWriter, *http.Request, http.HandlerF
 			ctx := context.WithValue(r.Context(), keploy.KCTX, &keploy.Context{
 				Mode:   "test",
 				TestID: id,
-				Deps:   k.Deps[id],
+				Deps:   k.GetDependencies(id),
 			})
 
 			r = r.WithContext(ctx)

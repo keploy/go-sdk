@@ -103,7 +103,7 @@ func New(cfg Config) *Keploy {
 		client: &http.Client{
 			Timeout: cfg.App.Timeout,
 		},
-		Deps: map[string][]models.Dependency{},
+		deps: sync.Map{},
 		Resp: map[string]models.HttpResp{},
 	}
 	if mode == MODE_TEST {
@@ -116,8 +116,22 @@ type Keploy struct {
 	cfg    Config
 	Log    *zap.Logger
 	client *http.Client
-	Deps   map[string][]models.Dependency
-	Resp   map[string]models.HttpResp
+	deps   sync.Map
+	//Deps   map[string][]models.Dependency
+	Resp map[string]models.HttpResp
+}
+
+func (k *Keploy) GetDependencies(id string) []models.Dependency {
+	val, ok := k.deps.Load(id)
+	if !ok {
+		return nil
+	}
+	deps, ok := val.([]models.Dependency)
+	if !ok {
+		k.Log.Error("failed fetching dependencies for testcases", zap.String("test case id", id))
+		return nil
+	}
+	return deps
 }
 
 // Capture will capture request, response and output of external dependencies by making Call to keploy server.
@@ -159,9 +173,8 @@ func (k *Keploy) Test() {
 			<-guard
 			wg.Done()
 		}()
-		wg.Wait()
-
 	}
+	wg.Wait()
 
 	// end the test run
 	err = k.end(id, passed)
@@ -200,8 +213,10 @@ func (k *Keploy) end(id string, status bool) error {
 
 func (k *Keploy) simulate(tc models.TestCase) (*models.HttpResp, error) {
 	// add dependencies to shared context
-	k.Deps[tc.ID] = tc.Deps
-	defer delete(k.Deps, tc.ID)
+	k.deps.Store(tc.ID, tc.Deps)
+	defer k.deps.Delete(tc.ID)
+	//k.Deps[tc.ID] = tc.Deps
+	//defer delete(k.Deps, tc.ID)
 	req, err := http.NewRequest(string(tc.HttpReq.Method), "http://"+k.cfg.App.Host+":"+k.cfg.App.Port+tc.HttpReq.URL, bytes.NewBufferString(tc.HttpReq.Body))
 	if err != nil {
 		panic(err)
@@ -398,28 +413,28 @@ func (k *Keploy) newGet(url string) ([]byte, error) {
 }
 
 func (k *Keploy) fetch() []models.TestCase {
-    var tcs []models.TestCase = []models.TestCase{}
-    
-    for i:=0 ; ; i+=25{
-        url := fmt.Sprintf("%s/regression/testcase?app=%s&offset=%d&limit=%d", k.cfg.Server.URL, k.cfg.App.Name, i, 25)
-        body, err := k.newGet(url)
-        if err != nil {
-            k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
-            return nil
-        }
-        
-        var res []models.TestCase
-        err = json.Unmarshal(body, &res)
-        if err != nil {
-            k.Log.Error("failed to reading testcases from keploy cloud", zap.Error(err))
-            return nil
-        }
-        if len(res)==0{
-            break
-        }
-        tcs = append(tcs, res...)
-    }
-    return tcs
+	var tcs []models.TestCase = []models.TestCase{}
+
+	for i := 0; ; i += 25 {
+		url := fmt.Sprintf("%s/regression/testcase?app=%s&offset=%d&limit=%d", k.cfg.Server.URL, k.cfg.App.Name, i, 25)
+		body, err := k.newGet(url)
+		if err != nil {
+			k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
+			return nil
+		}
+
+		var res []models.TestCase
+		err = json.Unmarshal(body, &res)
+		if err != nil {
+			k.Log.Error("failed to reading testcases from keploy cloud", zap.Error(err))
+			return nil
+		}
+		if len(res) == 0 {
+			break
+		}
+		tcs = append(tcs, res...)
+	}
+	return tcs
 }
 
 func (k *Keploy) setKey(req *http.Request) {
