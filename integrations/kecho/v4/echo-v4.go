@@ -57,10 +57,10 @@ func mw(k *keploy.Keploy) func(echo.HandlerFunc) echo.HandlerFunc {
 				setContextValEchoV4(c, &keploy.Context{
 					Mode:   "test",
 					TestID: id,
-					Deps:   k.Deps[id],
+					Deps:   k.GetDependencies(id),
 				})
 				resp := captureResp(c, next)
-				k.Resp[id] = resp
+				k.PutResp(id, resp)
 				return
 			}
 			setContextValEchoV4(c, &keploy.Context{

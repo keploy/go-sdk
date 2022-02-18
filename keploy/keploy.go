@@ -65,7 +65,7 @@ type AppConfig struct {
 	Host    string        `default:"0.0.0.0"`
 	Port    string        `validate:"required"`
 	Delay   time.Duration `default:"5s"`
-	Timeout time.Duration `default:"10s"`
+	Timeout time.Duration `default:"60s"`
 }
 
 type ServerConfig struct {
@@ -103,8 +103,8 @@ func New(cfg Config) *Keploy {
 		client: &http.Client{
 			Timeout: cfg.App.Timeout,
 		},
-		Deps: map[string][]models.Dependency{},
-		Resp: map[string]models.HttpResp{},
+		deps: sync.Map{},
+		resp: sync.Map{},
 	}
 	if mode == MODE_TEST {
 		go k.Test()
@@ -116,8 +116,40 @@ type Keploy struct {
 	cfg    Config
 	Log    *zap.Logger
 	client *http.Client
-	Deps   map[string][]models.Dependency
-	Resp   map[string]models.HttpResp
+	deps   sync.Map
+	//Deps   map[string][]models.Dependency
+	resp sync.Map
+	//Resp map[string]models.HttpResp
+}
+
+func (k *Keploy) GetDependencies(id string) []models.Dependency {
+	val, ok := k.deps.Load(id)
+	if !ok {
+		return nil
+	}
+	deps, ok := val.([]models.Dependency)
+	if !ok {
+		k.Log.Error("failed fetching dependencies for testcases", zap.String("test case id", id))
+		return nil
+	}
+	return deps
+}
+
+func (k *Keploy) GetResp(id string) models.HttpResp {
+	val, ok := k.resp.Load(id)
+	if !ok {
+		return models.HttpResp{}
+	}
+	resp, ok := val.(models.HttpResp)
+	if !ok {
+		k.Log.Error("failed getting response for http request", zap.String("test case id", id))
+		return models.HttpResp{}
+	}
+	return resp
+}
+
+func (k *Keploy) PutResp(id string, resp models.HttpResp) {
+	k.resp.Store(id, resp)
 }
 
 // Capture will capture request, response and output of external dependencies by making Call to keploy server.
@@ -150,18 +182,18 @@ func (k *Keploy) Test() {
 		k.Log.Info(fmt.Sprintf("testing %d of %d", i+1, total), zap.String("testcase id", tc.ID))
 		guard <- struct{}{}
 		wg.Add(1)
+		tcCopy := tc
 		go func() {
-			ok := k.check(id, tc)
+			ok := k.check(id, tcCopy)
 			if !ok {
 				passed = false
 			}
-			k.Log.Info("result", zap.Bool("passed", ok))
+			k.Log.Info("result", zap.String("testcase id", tcCopy.ID), zap.Bool("passed", ok))
 			<-guard
 			wg.Done()
 		}()
-		wg.Wait()
-
 	}
+	wg.Wait()
 
 	// end the test run
 	err = k.end(id, passed)
@@ -200,8 +232,10 @@ func (k *Keploy) end(id string, status bool) error {
 
 func (k *Keploy) simulate(tc models.TestCase) (*models.HttpResp, error) {
 	// add dependencies to shared context
-	k.Deps[tc.ID] = tc.Deps
-	defer delete(k.Deps, tc.ID)
+	k.deps.Store(tc.ID, tc.Deps)
+	defer k.deps.Delete(tc.ID)
+	//k.Deps[tc.ID] = tc.Deps
+	//defer delete(k.Deps, tc.ID)
 	req, err := http.NewRequest(string(tc.HttpReq.Method), "http://"+k.cfg.App.Host+":"+k.cfg.App.Port+tc.HttpReq.URL, bytes.NewBufferString(tc.HttpReq.Body))
 	if err != nil {
 		panic(err)
@@ -218,9 +252,8 @@ func (k *Keploy) simulate(tc models.TestCase) (*models.HttpResp, error) {
 	}
 
 	//defer resp.Body.Close()
-
-	resp := k.Resp[tc.ID]
-	delete(k.Resp, tc.ID)
+	resp := k.GetResp(tc.ID)
+	k.resp.Delete(tc.ID)
 
 	//body, err := ioutil.ReadAll(resp.Body)
 	//if err != nil {
@@ -398,18 +431,26 @@ func (k *Keploy) newGet(url string) ([]byte, error) {
 }
 
 func (k *Keploy) fetch() []models.TestCase {
-	url := fmt.Sprintf("%s/regression/testcase?app=%s", k.cfg.Server.URL, k.cfg.App.Name)
-	body, err := k.newGet(url)
-	if err != nil {
-		k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
-		return nil
-	}
-	var tcs []models.TestCase
+	var tcs []models.TestCase = []models.TestCase{}
 
-	err = json.Unmarshal(body, &tcs)
-	if err != nil {
-		k.Log.Error("failed to reading testcases from keploy cloud", zap.Error(err))
-		return nil
+	for i := 0; ; i += 25 {
+		url := fmt.Sprintf("%s/regression/testcase?app=%s&offset=%d&limit=%d", k.cfg.Server.URL, k.cfg.App.Name, i, 25)
+		body, err := k.newGet(url)
+		if err != nil {
+			k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
+			return nil
+		}
+
+		var res []models.TestCase
+		err = json.Unmarshal(body, &res)
+		if err != nil {
+			k.Log.Error("failed to reading testcases from keploy cloud", zap.Error(err))
+			return nil
+		}
+		if len(res) == 0 {
+			break
+		}
+		tcs = append(tcs, res...)
 	}
 	return tcs
 }

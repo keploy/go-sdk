@@ -71,10 +71,10 @@ func mw(k *keploy.Keploy) gin.HandlerFunc {
 			setContextValGin(c, &keploy.Context{
 				Mode:   "test",
 				TestID: id,
-				Deps:   k.Deps[id],
+				Deps:   k.GetDependencies(id),
 			})
 			resp := captureRespGin(c)
-			k.Resp[id] = resp
+			k.PutResp(id, resp)
 			return
 		}
 
