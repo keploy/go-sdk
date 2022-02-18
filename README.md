@@ -29,38 +29,38 @@ go get -u github.com/keploy/go-sdk
 
 ```go
 import(
-    "github.com/keploy/go-sdk/integrations/<package_name>" 
-	"github.com/keploy/go-sdk/keploy"
+    "github.com/keploy/go-sdk/keploy"
+    "github.com/keploy/go-sdk/integrations/<package_name>"
 )
 ```
 
 Create your app instance
 ```go
-kApp := keploy.New(keploy.Config{
-		App: keploy.AppConfig{
-			Name: "<app_name>",
-			Port: "<app_port>",
-		},
-		Server: keploy.ServerConfig{
-			URL: "<keploy_host>",
-            LicenseKey: "<license_key>", //optional for managed services
-		},
-	})
+k := keploy.New(keploy.Config{
+     App: keploy.AppConfig{
+         Name: "<app_name>",
+         Port: "<app_port>",
+     },
+     Server: keploy.ServerConfig{
+         URL: "<keploy_host>", 
+         LicenseKey: "<license_key>", //optional for managed services
+     },
+    })
 ```
 For example: 
 ```go
 port := "8080"
-	kApp := keploy.New(keploy.Config{
-		App: keploy.AppConfig{
-			Name: "my-app",
-			Port: port,
-		},
-		Server: keploy.ServerConfig{
-			URL: "http://localhost:8081/api",
-		},
-	})
+ k := keploy.New(keploy.Config{
+     App: keploy.AppConfig{
+         Name: "my-app",
+         Port: port,
+     },
+     Server: keploy.ServerConfig{
+         URL: "http://localhost:8081/api",
+     },
+ })
+ 
 ```
-    
 ## Configure
 ```
 export KEPLOY_MODE="test"
@@ -76,99 +76,109 @@ There are 3 modes:
 ## Supported Routers
 ### 1. Chi
 ```go
-import("github.com/keploy/go-sdk/integrations/kchi")
+r := chi.NewRouter()
+kchi.ChiV5(k,r)
 ```
+#### Example
 ```go
+import("github.com/keploy/go-sdk/integrations/kchi")
+
 r := chi.NewRouter()
 port := "8080"
-	kApp := keploy.New(keploy.Config{
-		App: keploy.AppConfig{
-			Name: "my_app",
-			Port: port,
-		},
-		Server: keploy.ServerConfig{
-			URL: "http://localhost:8081/api",
-		},
-	})
-	kchi.ChiV5(kApp,r)
+k := keploy.New(keploy.Config{
+           App: keploy.AppConfig{
+               Name: "my_app",
+               Port: port,
+           },
+           Server: keploy.ServerConfig{
+               URL: "http://localhost:8081/api",
+           },
+         })
+kchi.ChiV5(k,r)
+http.ListenAndServe(":" + port, r)
 ```
 ### 2. Gin
 ```go
-import("github.com/keploy/go-sdk/integrations/kgin")
+r:=gin.New()
+kgin.GinV1(k, r)
 ```
+#### Example
 ```go
+import("github.com/keploy/go-sdk/integrations/kgin")
 
 r:=gin.New()
 port := "8080"
-	kApp := keploy.New(keploy.Config{
-		App: keploy.AppConfig{
-			Name: "my_app",
-			Port: port,
-		},
-		Server: keploy.ServerConfig{
-			URL: "http://localhost:8081/api",
-		},
-	})
-kgin.GinV1(kApp, r)
-r.GET("/url", func(c *gin.Context) {
-    c.JSON(200, gin.H{
-        "message": "pong",
-    })
-}
-r.Run(":8080")
+k := keploy.New(keploy.Config{
+  App: keploy.AppConfig{
+      Name: "my_app",
+      Port: port,
+  },
+  Server: keploy.ServerConfig{
+      URL: "http://localhost:8081/api",
+  },
+})
+kgin.GinV1(k, r)
+r.Run(":" + port)
 ```
 ### 3. Echo
 ```go
-import("github.com/keploy/go-sdk/integrations/kecho")
+e := echo.New()
+kecho.EchoV4(k, e)
 ```
+#### Example
 ```go
+import("github.com/keploy/go-sdk/integrations/kecho")
+
 e := echo.New()
 port := "8080"
-	kApp := keploy.New(keploy.Config{
-		App: keploy.AppConfig{
-			Name: "my-app",
-			Port: port,
-		},
-		Server: keploy.ServerConfig{
-			URL: "http://localhost:8081/api",
-		},
-	})
-kecho.EchoV4(kApp, e)
-e.Start(":8080")
+k := keploy.New(keploy.Config{
+  App: keploy.AppConfig{
+      Name: "my-app",
+      Port: port,
+  },
+  Server: keploy.ServerConfig{
+      URL: "http://localhost:8081/api",
+  },
+})
+kecho.EchoV4(k, e)
+e.Start(":" + port)
 ```
 ### 4. WebGo
 #### WebGoV4
 ```go
-import("github.com/keploy/go-sdk/integrations/kwebgo/v4")
-```
-```go
-port := "8080"
-	kApp := keploy.New(keploy.Config{
-		App: keploy.AppConfig{
-			Name: "my-app",
-			Port: port,
-		},
-		Server: keploy.ServerConfig{
-			URL: "http://localhost:8081/api",
-		},
-	})
-kwebgo.WebGoV4(kApp, router)
-router.Start()
+router := webgo.NewRouter(cfg, getRoutes())
+kwebgo.WebGoV4(k, router)
 ```
 #### WebGoV6
 ```go
-import("github.com/keploy/go-sdk/integrations/kwebgo/v6")
+kwebgo.WebGoV6(k, router)
+router.Start()
 ```
+#### Example
 ```go
-kwebgo.WebGoV6(kApp, router)
+import("github.com/keploy/go-sdk/integrations/kwebgo/v4")
+
+port := "8080"
+k := keploy.New(keploy.Config{
+  App: keploy.AppConfig{
+      Name: "my-app",
+      Port: port,
+  },
+  Server: keploy.ServerConfig{
+      URL: "http://localhost:8081/api",
+  },
+})
+
+kwebgo.WebGoV4(k
+
+, router)
 router.Start()
 ```
 ## Supported Databases
 ### 1. MongoDB
 ```go
 import("github.com/keploy/go-sdk/integrations/kmongo")
-```
-```go
+
 db  := client.Database("testDB")
 col := kmongo.NewMongoDB(db.Collection("Demo-Collection"))
 ```
@@ -184,8 +194,7 @@ Following operations are supported:<br>
 ### 2. DynamoDB
 ```go
 import("github.com/keploy/go-sdk/integrations/kddb")
-```
-```go
+
 client := kddb.NewDynamoDB(dynamodb.New(sess))
 ```
 Following operations are supported:<br>
@@ -195,31 +204,40 @@ Following operations are supported:<br>
 ## Supported Clients
 ### net/http
 ```go
-import("github.com/keploy/go-sdk/integrations/khttpclient")
+khttpclient.NewHttpClient(&http.Client{})
 ```
+#### Example
 ```go
+import("github.com/keploy/go-sdk/integrations/khttpclient")
+
 func(w http.ResponseWriter, r *http.Request){
-    client := khttpclient.NewHttpClient(&http.Client{}) 
+    client := khttpclient.NewHttpClient(&http.Client{})
+// ensure to add request context to all outgoing http requests	
     client.SetCtxHttpClient(r.Context())
     resp, err := client.Get("https://example.com")
 }
 ```
+**Note**: ensure to add pass request context to all external requests like http requests, db calls, etc. 
 
 ### gRPC
 ```go
-import("github.com/keploy/go-sdk/integrations/kgrpc")
+conn, err := grpc.Dial(address, grpc.WithInsecure(), kgrpc.WithClientUnaryInterceptor(k))
 ```
+#### Example
 ```go
+import("github.com/keploy/go-sdk/integrations/kgrpc")
+
 port := "8080"
-	kApp := keploy.New(keploy.Config{
-		App: keploy.AppConfig{
-			Name: "my-app",
-			Port: port,
-		},
-		Server: keploy.ServerConfig{
-			URL: "http://localhost:8081/api",
-		},
-	})
-conn, err := grpc.Dial(address, grpc.WithInsecure(), kgrpc.WithClientUnaryInterceptor(kApp))
+k := keploy.New(keploy.Config{
+  App: keploy.AppConfig{
+      Name: "my-app",
+      Port: port,
+  },
+  Server: keploy.ServerConfig{
+      URL: "http://localhost:8081/api",
+  },
+})
+
+conn, err := grpc.Dial(address, grpc.WithInsecure(), kgrpc.WithClientUnaryInterceptor(k))
 ```
-Note: Currently streaming is not yet supported. 
+**Note**: Currently streaming is not yet supported. 
