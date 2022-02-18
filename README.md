@@ -180,7 +180,7 @@ router.Start()
 import("github.com/keploy/go-sdk/integrations/kmongo")
 
 db  := client.Database("testDB")
-col := kmongo.NewMongoDB(db.Collection("Demo-Collection"))
+col := kmongo.NewCollection(db.Collection("Demo-Collection"))
 ```
 Following operations are supported:<br>
 - FindOne - Err and Decode method of mongo.SingleResult<br>
