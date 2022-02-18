@@ -1,8 +1,8 @@
 # Keploy Go-SDK
 
 This is the client SDK for Keploy API testing platform. There are 2 modes:
-1. **Capture mode**
-    1. Captures requests, response and all external calls and sends to Keploy server.
+1. **Record mode**
+    1. Record requests, response and all external calls and sends to Keploy server.
     2. After keploy server removes duplicates, it then runs the request on the API again to identify noisy fields.
     3. Sends the noisy fields to the keploy server to be saved along with the testcase. 
 2. **Test mode**
@@ -29,59 +29,87 @@ go get -u github.com/keploy/go-sdk
 
 ```go
 import(
-        "github.com/keploy/go-sdk/integrations"
+    "github.com/keploy/go-sdk/integrations/<package_name>" 
 	"github.com/keploy/go-sdk/keploy"
 )
 ```
 
 Create your app instance
 ```go
-app := keploy.NewApp("<app_name>", "<license_key>", "<keploy_host>", "app_ip_addr", "app_port")
+kApp := keploy.New(keploy.Config{
+		App: keploy.AppConfig{
+			Name: "<app_name>",
+			Port: "<app_port>",
+		},
+		Server: keploy.ServerConfig{
+			URL: "<keploy_host>",
+            LicenseKey: "<license_key>", //optional for managed services
+		},
+	})
 ```
 For example: 
 ```go
-app := keploy.NewApp("my_app", "adkjhf9adf9adf", "", "0.0.0.0", "8080")
+port := "8080"
+	kApp := keploy.New(keploy.Config{
+		App: keploy.AppConfig{
+			Name: "my-app",
+			Port: port,
+		},
+		Server: keploy.ServerConfig{
+			URL: "http://localhost:8081/api",
+		},
+	})
 ```
     
 ## Configure
 ```
-export KEPLOY_SDK_MODE="test"
+export KEPLOY_MODE="test"
 ```
-### KEPLOY_SDK_MODE
+### KEPLOY_MODE
 There are 3 modes:
- - **Capture**: Sets to capture mode.
+ - **Record**: Sets to record mode.
  - **Test**: Sets to test mode. 
  - **Off**: Turns off all the functionality provided by the API
 
-**Note:** `KEPLOY_SDK_MODE` value is case sensitive. 
+**Note:** `KEPLOY_MODE` value is case sensitive. 
 
 ## Supported Routers
-### 1. WebGo
-#### WebGoV4
+### 1. Chi
 ```go
-app := keploy.NewApp("my_app", "adkjhf9adf9adf", "", "0.0.0.0", "8080")
-integrations.WebGoV4(app, router)
-router.Start()
+import("github.com/keploy/go-sdk/integrations/kchi")
 ```
-#### WebGoV6
 ```go
-app := keploy.NewApp("my_app", "adkjhf9adf9adf", "", "0.0.0.0", "8080")
-integrations.WebGoV6(app, router)
-router.Start()
+r := chi.NewRouter()
+port := "8080"
+	kApp := keploy.New(keploy.Config{
+		App: keploy.AppConfig{
+			Name: "my_app",
+			Port: port,
+		},
+		Server: keploy.ServerConfig{
+			URL: "http://localhost:8081/api",
+		},
+	})
+	kchi.ChiV5(kApp,r)
 ```
+### 2. Gin
+```go
+import("github.com/keploy/go-sdk/integrations/kgin")
+```
+```go
 
-### 2. Echo
-```go
-e := echo.New()
-app := keploy.NewApp("my_app", "adkjhf9adf9adf", "", "0.0.0.0", "8080")
-integrations.EchoV4(app, e)
-e.Start(":8080")
-```
-
-### 3. Gin
-```go
 r:=gin.New()
-integrations.GinV1(kApp, r)
+port := "8080"
+	kApp := keploy.New(keploy.Config{
+		App: keploy.AppConfig{
+			Name: "my_app",
+			Port: port,
+		},
+		Server: keploy.ServerConfig{
+			URL: "http://localhost:8081/api",
+		},
+	})
+kgin.GinV1(kApp, r)
 r.GET("/url", func(c *gin.Context) {
     c.JSON(200, gin.H{
         "message": "pong",
@@ -89,12 +117,60 @@ r.GET("/url", func(c *gin.Context) {
 }
 r.Run(":8080")
 ```
-
+### 3. Echo
+```go
+import("github.com/keploy/go-sdk/integrations/kecho")
+```
+```go
+e := echo.New()
+port := "8080"
+	kApp := keploy.New(keploy.Config{
+		App: keploy.AppConfig{
+			Name: "my-app",
+			Port: port,
+		},
+		Server: keploy.ServerConfig{
+			URL: "http://localhost:8081/api",
+		},
+	})
+kecho.EchoV4(kApp, e)
+e.Start(":8080")
+```
+### 4. WebGo
+#### WebGoV4
+```go
+import("github.com/keploy/go-sdk/integrations/kwebgo/v4")
+```
+```go
+port := "8080"
+	kApp := keploy.New(keploy.Config{
+		App: keploy.AppConfig{
+			Name: "my-app",
+			Port: port,
+		},
+		Server: keploy.ServerConfig{
+			URL: "http://localhost:8081/api",
+		},
+	})
+kwebgo.WebGoV4(kApp, router)
+router.Start()
+```
+#### WebGoV6
+```go
+import("github.com/keploy/go-sdk/integrations/kwebgo/v6")
+```
+```go
+kwebgo.WebGoV6(kApp, router)
+router.Start()
+```
 ## Supported Databases
 ### 1. MongoDB
 ```go
+import("github.com/keploy/go-sdk/integrations/kmongo")
+```
+```go
 db  := client.Database("testDB")
-col := integrations.NewMongoDB(db.Collection("Demo-Collection"))
+col := kmongo.NewMongoDB(db.Collection("Demo-Collection"))
 ```
 Following operations are supported:<br>
 - FindOne - Err and Decode method of mongo.SingleResult<br>
@@ -107,7 +183,10 @@ Following operations are supported:<br>
 - DeleteMany
 ### 2. DynamoDB
 ```go
-client := integrations.NewDynamoDB(dynamodb.New(sess))
+import("github.com/keploy/go-sdk/integrations/kddb")
+```
+```go
+client := kddb.NewDynamoDB(dynamodb.New(sess))
 ```
 Following operations are supported:<br>
 - QueryWithContext
@@ -116,8 +195,11 @@ Following operations are supported:<br>
 ## Supported Clients
 ### net/http
 ```go
+import("github.com/keploy/go-sdk/integrations/khttpclient")
+```
+```go
 func(w http.ResponseWriter, r *http.Request){
-    client := integrations.NewHttpClient(&http.Client{}) 
+    client := khttpclient.NewHttpClient(&http.Client{}) 
     client.SetCtxHttpClient(r.Context())
     resp, err := client.Get("https://example.com")
 }
@@ -125,7 +207,19 @@ func(w http.ResponseWriter, r *http.Request){
 
 ### gRPC
 ```go
-app := keploy.NewApp("my_app", "adkjhf9adf9adf", "", "0.0.0.0", "8080")
-conn, err := grpc.Dial(address, grpc.WithInsecure(), integrations.WithClientUnaryInterceptor(app))
+import("github.com/keploy/go-sdk/integrations/kgrpc")
+```
+```go
+port := "8080"
+	kApp := keploy.New(keploy.Config{
+		App: keploy.AppConfig{
+			Name: "my-app",
+			Port: port,
+		},
+		Server: keploy.ServerConfig{
+			URL: "http://localhost:8081/api",
+		},
+	})
+conn, err := grpc.Dial(address, grpc.WithInsecure(), kgrpc.WithClientUnaryInterceptor(kApp))
 ```
 Note: Currently streaming is not yet supported. 
