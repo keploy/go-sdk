@@ -20,7 +20,7 @@ type Trainer struct {
 	City string
 }
 
-func connect() *MongoCollection {
+func connect() *Collection {
 	clientOptions := options.Client().ApplyURI("mongodb://localhost:27017")
 	client, err := mongo.Connect(context.TODO(), clientOptions)
 	if err != nil {
@@ -31,7 +31,7 @@ func connect() *MongoCollection {
 	if err != nil {
 		log.Fatal(err)
 	}
-	return NewMongoCollection(client.Database("test").Collection("client"))
+	return NewCollection(client.Database("test").Collection("client"))
 }
 
 func TestFindOne(t *testing.T) {
