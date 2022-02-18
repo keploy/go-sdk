@@ -104,7 +104,7 @@ func New(cfg Config) *Keploy {
 			Timeout: cfg.App.Timeout,
 		},
 		deps: sync.Map{},
-		Resp: map[string]models.HttpResp{},
+		resp: sync.Map{},
 	}
 	if mode == MODE_TEST {
 		go k.Test()
@@ -118,7 +118,8 @@ type Keploy struct {
 	client *http.Client
 	deps   sync.Map
 	//Deps   map[string][]models.Dependency
-	Resp map[string]models.HttpResp
+	resp sync.Map
+	//Resp map[string]models.HttpResp
 }
 
 func (k *Keploy) GetDependencies(id string) []models.Dependency {
@@ -132,6 +133,23 @@ func (k *Keploy) GetDependencies(id string) []models.Dependency {
 		return nil
 	}
 	return deps
+}
+
+func (k *Keploy) GetResp(id string) models.HttpResp {
+	val, ok := k.resp.Load(id)
+	if !ok {
+		return models.HttpResp{}
+	}
+	resp, ok := val.(models.HttpResp)
+	if !ok {
+		k.Log.Error("failed getting response for http request", zap.String("test case id", id))
+		return models.HttpResp{}
+	}
+	return resp
+}
+
+func (k *Keploy) PutResp(id string, resp models.HttpResp) {
+	k.resp.Store(id, resp)
 }
 
 // Capture will capture request, response and output of external dependencies by making Call to keploy server.
@@ -164,12 +182,13 @@ func (k *Keploy) Test() {
 		k.Log.Info(fmt.Sprintf("testing %d of %d", i+1, total), zap.String("testcase id", tc.ID))
 		guard <- struct{}{}
 		wg.Add(1)
+		tcCopy := tc
 		go func() {
-			ok := k.check(id, tc)
+			ok := k.check(id, tcCopy)
 			if !ok {
 				passed = false
 			}
-			k.Log.Info("result", zap.Bool("passed", ok))
+			k.Log.Info("result", zap.String("testcase id", tcCopy.ID), zap.Bool("passed", ok))
 			<-guard
 			wg.Done()
 		}()
@@ -233,9 +252,8 @@ func (k *Keploy) simulate(tc models.TestCase) (*models.HttpResp, error) {
 	}
 
 	//defer resp.Body.Close()
-
-	resp := k.Resp[tc.ID]
-	delete(k.Resp, tc.ID)
+	resp := k.GetResp(tc.ID)
+	k.resp.Delete(tc.ID)
 
 	//body, err := ioutil.ReadAll(resp.Body)
 	//if err != nil {

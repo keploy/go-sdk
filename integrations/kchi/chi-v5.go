@@ -64,7 +64,7 @@ func mw(k *keploy.Keploy) func(http.Handler) http.Handler {
 
 				r = r.WithContext(ctx)
 				resp := captureRespChi(w, r, next)
-				k.Resp[id] = resp
+				k.PutResp(id, resp)
 				return
 			}
 			ctx := context.WithValue(r.Context(), keploy.KCTX, &keploy.Context{

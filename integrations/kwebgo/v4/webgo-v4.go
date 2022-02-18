@@ -66,7 +66,7 @@ func mw(k *keploy.Keploy) func(http.ResponseWriter, *http.Request, http.HandlerF
 
 			r = r.WithContext(ctx)
 			resp := captureRespWebGo(w, r, next)
-			k.Resp[id] = resp
+			k.PutResp(id, resp)
 			return
 		}
 		ctx := context.WithValue(r.Context(), keploy.KCTX, &keploy.Context{

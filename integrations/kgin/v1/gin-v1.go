@@ -74,7 +74,7 @@ func mw(k *keploy.Keploy) gin.HandlerFunc {
 				Deps:   k.GetDependencies(id),
 			})
 			resp := captureRespGin(c)
-			k.Resp[id] = resp
+			k.PutResp(id, resp)
 			return
 		}
 
