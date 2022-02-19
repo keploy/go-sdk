@@ -110,7 +110,11 @@ func urlParamsGin(c *gin.Context, k *keploy.Keploy) map[string]string {
 	if err != nil {
 		k.Log.Error("", zap.Error(err))
 	}
-	var params map[string]string = make(map[string]string)
+	var params = make(map[string]string)
+
+	if gi == nil {
+		return params
+	}
 
 	for _, k := range gi.([]interface{}) {
 		j := k.(map[string]interface{})
