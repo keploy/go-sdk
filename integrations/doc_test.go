@@ -40,7 +40,7 @@ func ExampleNewMongoCollection() {
 		log.Fatal(err)
 	}
 	fmt.Println("Connected to MongoDB!")
-	var collection *kmongo.MongoCollection
+	var collection *kmongo.Collection
 	result, err := collection.InsertOne(context.TODO(), bson.D{{"x", 1}})
 	if err != nil {
 		log.Fatal(err)
@@ -50,8 +50,8 @@ func ExampleNewMongoCollection() {
 
 func ExampleMongoSingleResult_Err() {
 	var (
-		sr         *kmongo.MongoSingleResult
-		collection *kmongo.MongoCollection
+		sr         *kmongo.SingleResult
+		collection *kmongo.Collection
 	)
 	filter := bson.M{"name": "Ash"}
 	findOneOpts := options.FindOne()
@@ -66,8 +66,8 @@ func ExampleMongoSingleResult_Err() {
 
 func ExampleMongoSingleResult_Decode() {
 	var (
-		sr         *kmongo.MongoSingleResult
-		collection *kmongo.MongoCollection
+		sr         *kmongo.SingleResult
+		collection *kmongo.Collection
 	)
 	filter := bson.M{"name": "Ash"}
 	var result bson.D
@@ -84,8 +84,8 @@ func ExampleMongoSingleResult_Decode() {
 
 func ExampleMongoCursor_Err() {
 	var (
-		collection *kmongo.MongoCollection
-		cur        *kmongo.MongoCursor
+		collection *kmongo.Collection
+		cur        *kmongo.Cursor
 		err        error
 	)
 	filter := bson.M{"name": "Misty"}
@@ -100,8 +100,8 @@ func ExampleMongoCursor_Err() {
 
 func ExampleMongoCursor_Next() {
 	var (
-		collection *kmongo.MongoCollection
-		cur        *kmongo.MongoCursor
+		collection *kmongo.Collection
+		cur        *kmongo.Cursor
 		err        error
 	)
 	filter := bson.M{"name": "Misty"}
@@ -118,8 +118,8 @@ func ExampleMongoCursor_Next() {
 
 func ExampleMongoCursor_TryNext() {
 	var (
-		collection *kmongo.MongoCollection
-		cur        *kmongo.MongoCursor
+		collection *kmongo.Collection
+		cur        *kmongo.Cursor
 		err        error
 	)
 	filter := bson.M{"name": "Misty"}
@@ -136,8 +136,8 @@ func ExampleMongoCursor_TryNext() {
 
 func ExampleMongoCursor_Close() {
 	var (
-		collection *kmongo.MongoCollection
-		cur        *kmongo.MongoCursor
+		collection *kmongo.Collection
+		cur        *kmongo.Cursor
 		err        error
 	)
 	filter := bson.M{"name": "Misty"}
@@ -152,8 +152,8 @@ func ExampleMongoCursor_Close() {
 
 func ExampleMongoCursor_All() {
 	var (
-		collection *kmongo.MongoCollection
-		cur        *kmongo.MongoCursor
+		collection *kmongo.Collection
+		cur        *kmongo.Cursor
 		err        error
 	)
 	filter := bson.M{"name": "Misty"}
@@ -169,8 +169,8 @@ func ExampleMongoCursor_All() {
 
 func ExampleMongoCursor_Decode() {
 	var (
-		collection *kmongo.MongoCollection
-		cur        *kmongo.MongoCursor
+		collection *kmongo.Collection
+		cur        *kmongo.Cursor
 		err        error
 	)
 	filter := bson.M{"name": "Misty"}
@@ -193,7 +193,7 @@ func ExampleMongoCursor_Decode() {
 
 func ExampleMongoCollection_InsertOne() {
 	var (
-		collection      *kmongo.MongoCollection
+		collection      *kmongo.Collection
 		err             error
 		insertOneResult *mongo.InsertOneResult
 	)
@@ -209,8 +209,8 @@ func ExampleMongoCollection_InsertOne() {
 
 func ExampleMongoCollection_FindOne() {
 	var (
-		sr         *kmongo.MongoSingleResult
-		collection *kmongo.MongoCollection
+		sr         *kmongo.SingleResult
+		collection *kmongo.Collection
 		err        error
 	)
 	filter := bson.M{"name": "Ash"}
@@ -229,7 +229,7 @@ func ExampleMongoCollection_FindOne() {
 func ExampleMongoCollection_InsertMany() {
 	var (
 		insertManyResult *mongo.InsertManyResult
-		collection       *kmongo.MongoCollection
+		collection       *kmongo.Collection
 		err              error
 	)
 	docs := []interface{}{
@@ -247,8 +247,8 @@ func ExampleMongoCollection_InsertMany() {
 
 func ExampleMongoCollection_Find() {
 	var (
-		collection *kmongo.MongoCollection
-		cur        *kmongo.MongoCursor
+		collection *kmongo.Collection
+		cur        *kmongo.Cursor
 		err        error
 	)
 	filter := bson.M{"name": "Misty"}
@@ -272,7 +272,7 @@ func ExampleMongoCollection_Find() {
 func ExampleMongoCollection_UpdateOne() {
 	var (
 		result     *mongo.UpdateResult
-		collection *kmongo.MongoCollection
+		collection *kmongo.Collection
 		err        error
 	)
 	filter := bson.M{"name": "Brock"}
@@ -295,7 +295,7 @@ func ExampleMongoCollection_UpdateOne() {
 func ExampleMongoCollection_UpdateMany() {
 	var (
 		result     *mongo.UpdateResult
-		collection *kmongo.MongoCollection
+		collection *kmongo.Collection
 		err        error
 	)
 	filter := bson.M{"name": "Brock"}
@@ -315,7 +315,7 @@ func ExampleMongoCollection_UpdateMany() {
 func ExampleMongoCollection_DeleteOne() {
 	var (
 		result     *mongo.DeleteResult
-		collection *kmongo.MongoCollection
+		collection *kmongo.Collection
 		err        error
 	)
 	filter := bson.M{"name": "Brock"}
@@ -331,7 +331,7 @@ func ExampleMongoCollection_DeleteOne() {
 func ExampleMongoCollection_DeleteMany() {
 	var (
 		result     *mongo.DeleteResult
-		collection *kmongo.MongoCollection
+		collection *kmongo.Collection
 		err        error
 	)
 	filter := bson.M{"name": "Brock"}
