@@ -120,10 +120,10 @@ func urlParamsGin(c *gin.Context, k *keploy.Keploy) map[string]string {
 		j := k.(map[string]interface{})
 		key := j["Key"].(string)
 		val := j["Value"].(string)
-		if len(val)>0 || val[0] != '/' {
-			params[key] = val
-		} else {
+		if len(val)>0 || val[0] == '/' {
 			params[key] = val[1:]
+		} else {
+			params[key] = val
 		}
 	}
 	return params
