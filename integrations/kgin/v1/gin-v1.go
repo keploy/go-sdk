@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"go.keploy.io/server/pkg/models"
 	"io/ioutil"
 
@@ -63,7 +62,6 @@ func mw(k *keploy.Keploy) gin.HandlerFunc {
 		}
 	}
 	return func(c *gin.Context) {
-		fmt.Println("gin middleware")
 		id := c.Request.Header.Get("KEPLOY_TEST_ID")
 		if id != "" {
 			// id is only present during simulation
@@ -111,7 +109,6 @@ func urlParamsGin(c *gin.Context, k *keploy.Keploy) map[string]string {
 		k.Log.Error("", zap.Error(err))
 	}
 	var params = make(map[string]string)
-
 	if gi == nil {
 		return params
 	}
@@ -120,10 +117,10 @@ func urlParamsGin(c *gin.Context, k *keploy.Keploy) map[string]string {
 		j := k.(map[string]interface{})
 		key := j["Key"].(string)
 		val := j["Value"].(string)
-		if val[0] != '/' {
-			params[key] = val
-		} else {
+		if len(val)>0 && val[0] == '/' {
 			params[key] = val[1:]
+		} else {
+			params[key] = val
 		}
 	}
 	return params
