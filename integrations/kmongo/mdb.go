@@ -270,7 +270,9 @@ func (c *Collection) InsertOne(ctx context.Context, document interface{},
 type Cursor struct {
 	mongo.Cursor
 	filter interface{}
-	opts   []options.FindOptions
+	pipeline interface{}
+	findOpts   []options.FindOptions
+	aggregateOpts []options.AggregateOptions
 	ctx    context.Context
 	log    *zap.Logger
 }
@@ -303,9 +305,16 @@ func (cr *Cursor) Err() error {
 	meta := map[string]string{
 		"name":        "mongodb",
 		"type":        string(models.NoSqlDB),
-		"operation":   "Find.Err",
-		"filter":      fmt.Sprint(cr.filter),
-		"FindOptions": fmt.Sprint(cr.opts),
+	}
+	if cr.filter!=nil{
+		meta["filter"] = fmt.Sprint(cr.filter)
+		meta["FindOptions"] = fmt.Sprint(cr.findOpts)
+		meta["operation"] = "Find.Err"
+	} else {
+		meta["pipeline"] = fmt.Sprint(cr.pipeline)
+		meta["AggregateOptions"] = fmt.Sprint(cr.aggregateOpts)
+		meta["operation"] = "Aggregate.Err"
+
 	}
 
 	if err != nil {
@@ -352,9 +361,16 @@ func (cr *Cursor) Close(ctx context.Context) error {
 	meta := map[string]string{
 		"name":        "mongodb",
 		"type":        string(models.NoSqlDB),
-		"operation":   "Find.Close",
-		"filter":      fmt.Sprint(cr.filter),
-		"FindOptions": fmt.Sprint(cr.opts),
+	}
+	if cr.filter!=nil{
+		meta["filter"] = fmt.Sprint(cr.filter)
+		meta["FindOptions"] = fmt.Sprint(cr.findOpts)
+		meta["operation"] = "Find.Err"
+	} else {
+		meta["pipeline"] = fmt.Sprint(cr.pipeline)
+		meta["AggregateOptions"] = fmt.Sprint(cr.aggregateOpts)
+		meta["operation"] = "Aggregate.Err"
+
 	}
 
 	if err != nil {
@@ -401,9 +417,16 @@ func (cr *Cursor) TryNext(ctx context.Context) bool {
 	meta := map[string]string{
 		"name":        "mongodb",
 		"type":        string(models.NoSqlDB),
-		"operation":   "Find.TryNext",
-		"filter":      fmt.Sprint(cr.filter),
-		"FindOptions": fmt.Sprint(cr.opts),
+	}
+	if cr.filter!=nil{
+		meta["filter"] = fmt.Sprint(cr.filter)
+		meta["FindOptions"] = fmt.Sprint(cr.findOpts)
+		meta["operation"] = "Find.Err"
+	} else {
+		meta["pipeline"] = fmt.Sprint(cr.pipeline)
+		meta["AggregateOptions"] = fmt.Sprint(cr.aggregateOpts)
+		meta["operation"] = "Aggregate.Err"
+
 	}
 
 	mock, res := keploy.ProcessDep(cr.ctx, cr.log, meta, output)
@@ -444,9 +467,16 @@ func (cr *Cursor) All(ctx context.Context, results interface{}) error {
 	meta := map[string]string{
 		"name":        "mongodb",
 		"type":        string(models.NoSqlDB),
-		"operation":   "Find.All",
-		"filter":      fmt.Sprint(cr.filter),
-		"FindOptions": fmt.Sprint(cr.opts),
+	}
+	if cr.filter!=nil{
+		meta["filter"] = fmt.Sprint(cr.filter)
+		meta["FindOptions"] = fmt.Sprint(cr.findOpts)
+		meta["operation"] = "Find.Err"
+	} else {
+		meta["pipeline"] = fmt.Sprint(cr.pipeline)
+		meta["AggregateOptions"] = fmt.Sprint(cr.aggregateOpts)
+		meta["operation"] = "Aggregate.Err"
+
 	}
 
 	if err != nil {
@@ -493,9 +523,16 @@ func (cr *Cursor) Next(ctx context.Context) bool {
 	meta := map[string]string{
 		"name":        "mongodb",
 		"type":        string(models.NoSqlDB),
-		"operation":   "Find.Next",
-		"filter":      fmt.Sprint(cr.filter),
-		"FindOptions": fmt.Sprint(cr.opts),
+	}
+	if cr.filter!=nil{
+		meta["filter"] = fmt.Sprint(cr.filter)
+		meta["FindOptions"] = fmt.Sprint(cr.findOpts)
+		meta["operation"] = "Find.Err"
+	} else {
+		meta["pipeline"] = fmt.Sprint(cr.pipeline)
+		meta["AggregateOptions"] = fmt.Sprint(cr.aggregateOpts)
+		meta["operation"] = "Aggregate.Err"
+
 	}
 
 	mock, res := keploy.ProcessDep(cr.ctx, cr.log, meta, output)
@@ -536,9 +573,16 @@ func (cr *Cursor) Decode(v interface{}) error {
 	meta := map[string]string{
 		"name":        "mongodb",
 		"type":        string(models.NoSqlDB),
-		"operation":   "Find.Decode",
-		"filter":      fmt.Sprint(cr.filter),
-		"FindOptions": fmt.Sprint(cr.opts),
+	}
+	if cr.filter!=nil{
+		meta["filter"] = fmt.Sprint(cr.filter)
+		meta["FindOptions"] = fmt.Sprint(cr.findOpts)
+		meta["operation"] = "Find.Err"
+	} else {
+		meta["pipeline"] = fmt.Sprint(cr.pipeline)
+		meta["AggregateOptions"] = fmt.Sprint(cr.aggregateOpts)
+		meta["operation"] = "Aggregate.Err"
+
 	}
 
 	if err != nil {
@@ -581,7 +625,7 @@ func (c *Collection) Find(ctx context.Context, filter interface{},
 	if er != nil {
 		return &Cursor{
 			filter: filter,
-			opts:   derivedOpts,
+			findOpts:   derivedOpts,
 			log:    c.log,
 			ctx:    ctx,
 		}, er
@@ -596,7 +640,7 @@ func (c *Collection) Find(ctx context.Context, filter interface{},
 		//don't call method in test mode
 		return &Cursor{
 			filter: filter,
-			opts:   derivedOpts,
+			findOpts:   derivedOpts,
 			log:    c.log,
 			ctx:    ctx,
 		}, err
@@ -605,7 +649,7 @@ func (c *Collection) Find(ctx context.Context, filter interface{},
 		return &Cursor{
 			Cursor: *cursor,
 			filter: filter,
-			opts:   derivedOpts,
+			findOpts:   derivedOpts,
 			log:    c.log,
 			ctx:    ctx,
 		}, err
@@ -613,7 +657,7 @@ func (c *Collection) Find(ctx context.Context, filter interface{},
 		c.log.Error("integrations: Not in a valid sdk mode")
 		return &Cursor{
 			filter: filter,
-			opts:   derivedOpts,
+			findOpts:   derivedOpts,
 			log:    c.log,
 			ctx:    ctx,
 		}, errors.New("integrations: Not in a valid sdk mode")
@@ -716,7 +760,6 @@ func (c *Collection) UpdateOne(ctx context.Context, filter interface{}, update i
 
 	if err != nil {
 		kerr = &keploy.KError{Err: err}
-		c.log.Error(err.Error())
 		output = &mongo.UpdateResult{}
 	}
 	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, kerr)
@@ -775,7 +818,6 @@ func (c *Collection) UpdateMany(ctx context.Context, filter interface{}, update 
 
 	if err != nil {
 		kerr = &keploy.KError{Err: err}
-		c.log.Error(err.Error())
 		output = &mongo.UpdateResult{}
 	}
 	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, kerr)
@@ -833,7 +875,6 @@ func (c *Collection) DeleteOne(ctx context.Context, filter interface{},
 
 	if err != nil {
 		kerr = &keploy.KError{Err: err}
-		c.log.Error(err.Error())
 		output = &mongo.DeleteResult{}
 	}
 	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, kerr)
@@ -890,7 +931,6 @@ func (c *Collection) DeleteMany(ctx context.Context, filter interface{},
 
 	if err != nil {
 		kerr = &keploy.KError{Err: err}
-		c.log.Error(err.Error())
 		output = &mongo.DeleteResult{}
 	}
 	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, kerr)
@@ -908,6 +948,170 @@ func (c *Collection) DeleteMany(ctx context.Context, filter interface{},
 		return mockOutput, mockErr
 	}
 	return output, err
+}
+
+// Distinct method mocks Collection.Distinct of mongo inorder to call it only in "capture" or "off" mode.
+//
+// See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Collection.Distinct for more info about Distinct.
+func (c *Collection) Distinct(ctx context.Context, fieldName string, filter interface{}, opts ...*options.DistinctOptions) ([]interface{}, error){
+	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+		output, err := c.Collection.Distinct(ctx, fieldName, filter, opts...)
+		return output, err
+	}
+	var (
+		output *[]interface{} = &[]interface{}{}
+		err error
+		kerr = &keploy.KError{}
+		data []interface{}
+	)
+	data = append(data, fieldName)
+	data = append(data, filter)
+	for _, j := range opts {
+		data = append(data, j)
+	}
+	o, e := c.getOutput(ctx, "Distinct", data)
+	if o != nil {
+		dis := o.([]interface{})
+		output = &dis
+	}
+	err = e
+	derivedOpts := []options.DistinctOptions{}
+	for _, j := range opts {
+		derivedOpts = append(derivedOpts, *j)
+	}
+	meta := map[string]string{
+		"name":            "mongodb",
+		"type":            string(models.NoSqlDB),
+		"operation":       "Distinct",
+		"fieldName":       fieldName,
+		"filter":          fmt.Sprint(filter),
+		"DistinctOptions": fmt.Sprint(derivedOpts),
+	}
+	kerr.Err = err
+	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, kerr)
+	if mock {
+		var mockErr error
+		x := res[1].(*keploy.KError)
+		if x.Err != nil {
+			mockErr = x.Err
+		}
+		return *output, mockErr
+	}
+	return *output, err
+}
+
+// CountDocuments method mocks Collection.CountDocuments of mongo inorder to call it only in "capture" or "off" mode.
+//
+// See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Collection.CountDocuments for more info about CountDocuments.
+func (c *Collection) CountDocuments(ctx context.Context, filter interface{}, opts ...*options.CountOptions) (int64, error){
+	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+		output, err := c.Collection.CountDocuments(ctx, filter, opts...)
+		return output, err
+	}
+	var (
+		output *int64
+		err error
+		kerr *keploy.KError = &keploy.KError{}
+		data []interface{}
+	)
+	data = append(data, filter)
+	for _, j := range opts {
+		data = append(data, j)
+	}
+	o, e := c.getOutput(ctx, "CountDocuments", data)
+	if o != nil {
+		count := o.(int64)
+		output = &count
+	}
+	err = e
+	derivedOpts := []options.CountOptions{}
+	for _, j := range opts {
+		derivedOpts = append(derivedOpts, *j)
+	}
+	meta := map[string]string{
+		"name":            "mongodb",
+		"type":            string(models.NoSqlDB),
+		"operation":       "CountDocuments",
+		"filter":          fmt.Sprint(filter),
+		"CountOptions":    fmt.Sprint(derivedOpts),
+	}
+	kerr.Err = err
+	if output==nil{
+		var count int64 = 0
+		output = &count
+	}
+	mock, res := keploy.ProcessDep(ctx, c.log, meta, output, kerr)
+	if mock {
+		var mockErr error
+		x := res[1].(*keploy.KError)
+		if x.Err != nil {
+			mockErr = x.Err
+		}
+		return *output, mockErr
+	}
+	return *output, err
+}
+
+// Aggregate method mocks Collection.Aggregate of mongo inorder to call it only in "capture" or "off" mode.
+//
+// See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Collection.Aggregate for more info about Aggregate.
+func (c *Collection) Aggregate(ctx context.Context, pipeline interface{}, opts ...*options.AggregateOptions) (*Cursor, error) {
+	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+		cursor, err := c.Collection.Aggregate(ctx, pipeline, opts...)
+		return &Cursor{
+			Cursor: *cursor,
+			pipeline: pipeline,
+			ctx:    ctx,
+			log:    c.log,
+		}, err
+	}
+
+	derivedOpts := []options.AggregateOptions{}
+	for _, j := range opts {
+		derivedOpts = append(derivedOpts, *j)
+	}
+	kctx, er := keploy.GetState(ctx)
+	if er != nil {
+		return &Cursor{
+			pipeline: pipeline,
+			aggregateOpts:   derivedOpts,
+			log:    c.log,
+			ctx:    ctx,
+		}, er
+	}
+	mode := kctx.Mode
+	var (
+		cursor *mongo.Cursor
+		err    error
+	)
+	switch mode {
+	case "test":
+		//don't call method in test mode
+		return &Cursor{
+			pipeline: pipeline,
+			aggregateOpts:   derivedOpts,
+			log:    c.log,
+			ctx:    ctx,
+		}, err
+	case "capture":
+		cursor, err = c.Collection.Aggregate(ctx, pipeline, opts...)
+		return &Cursor{
+			Cursor: *cursor,
+			pipeline: pipeline,
+			aggregateOpts:   derivedOpts,
+			log:    c.log,
+			ctx:    ctx,
+		}, err
+	default:
+		c.log.Error("integrations: Not in a valid sdk mode")
+		return &Cursor{
+			pipeline: pipeline,
+			aggregateOpts:   derivedOpts,
+			log:    c.log,
+			ctx:    ctx,
+		}, errors.New("integrations: Not in a valid sdk mode")
+	}
+
 }
 
 func (c *Collection) getOutput(ctx context.Context, str string, data []interface{}) (interface{}, error) {
@@ -989,6 +1193,23 @@ func (c *Collection) callMethod(ctx context.Context, str string, data []interfac
 			opts = append(opts, d.(*options.DeleteOptions))
 		}
 		output, err = c.Collection.DeleteMany(ctx, filter, opts...)
+	case "Distinct":
+		fieldName := data[0]
+		filter := data[1]
+		data = data[2:]
+		var opts []*options.DistinctOptions
+		for _, d := range data {
+			opts = append(opts, d.(*options.DistinctOptions))
+		}
+		output, err = c.Collection.Distinct(ctx, fieldName.(string), filter, opts...)
+	case "CountDocuments": 
+		filter := data[0]
+		data = data[1:]
+		var opts []*options.CountOptions
+		for _, d := range data {
+			opts = append(opts, d.(*options.CountOptions))
+		}
+		output, err = c.Collection.CountDocuments(ctx, filter, opts...)
 	default:
 		return nil, errors.New("integerations: SDK Not supported for this method")
 	}
