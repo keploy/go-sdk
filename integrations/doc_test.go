@@ -27,7 +27,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-func ExampleNewMongoCollection() {
+func ExampleNewCollection() {
 	clientOptions := options.Client().ApplyURI("mongodb://localhost:27017")
 	client, err := mongo.Connect(context.TODO(), clientOptions)
 	if err != nil {
@@ -40,7 +40,7 @@ func ExampleNewMongoCollection() {
 		log.Fatal(err)
 	}
 	fmt.Println("Connected to MongoDB!")
-	var collection *kmongo.MongoCollection
+	var collection *kmongo.Collection
 	result, err := collection.InsertOne(context.TODO(), bson.D{{"x", 1}})
 	if err != nil {
 		log.Fatal(err)
@@ -48,10 +48,10 @@ func ExampleNewMongoCollection() {
 	fmt.Printf("inserted ID: %v\n", result.InsertedID)
 }
 
-func ExampleMongoSingleResult_Err() {
+func ExampleSingleResult_Err() {
 	var (
-		sr         *kmongo.MongoSingleResult
-		collection *kmongo.MongoCollection
+		sr         *kmongo.SingleResult
+		collection *kmongo.Collection
 	)
 	filter := bson.M{"name": "Ash"}
 	findOneOpts := options.FindOne()
@@ -64,10 +64,10 @@ func ExampleMongoSingleResult_Err() {
 	}
 }
 
-func ExampleMongoSingleResult_Decode() {
+func ExampleSingleResult_Decode() {
 	var (
-		sr         *kmongo.MongoSingleResult
-		collection *kmongo.MongoCollection
+		sr         *kmongo.SingleResult
+		collection *kmongo.Collection
 	)
 	filter := bson.M{"name": "Ash"}
 	var result bson.D
@@ -82,10 +82,10 @@ func ExampleMongoSingleResult_Decode() {
 	fmt.Printf("found document: %v", fmt.Sprint(result))
 }
 
-func ExampleMongoCursor_Err() {
+func ExampleCursor_Err() {
 	var (
-		collection *kmongo.MongoCollection
-		cur        *kmongo.MongoCursor
+		collection *kmongo.Collection
+		cur        *kmongo.Cursor
 		err        error
 	)
 	filter := bson.M{"name": "Misty"}
@@ -98,10 +98,10 @@ func ExampleMongoCursor_Err() {
 	}
 }
 
-func ExampleMongoCursor_Next() {
+func ExampleCursor_Next() {
 	var (
-		collection *kmongo.MongoCollection
-		cur        *kmongo.MongoCursor
+		collection *kmongo.Collection
+		cur        *kmongo.Cursor
 		err        error
 	)
 	filter := bson.M{"name": "Misty"}
@@ -116,10 +116,10 @@ func ExampleMongoCursor_Next() {
 	fmt.Printf("More Docs: %v", moreDocs)
 }
 
-func ExampleMongoCursor_TryNext() {
+func ExampleCursor_TryNext() {
 	var (
-		collection *kmongo.MongoCollection
-		cur        *kmongo.MongoCursor
+		collection *kmongo.Collection
+		cur        *kmongo.Cursor
 		err        error
 	)
 	filter := bson.M{"name": "Misty"}
@@ -134,10 +134,10 @@ func ExampleMongoCursor_TryNext() {
 	fmt.Printf("More Docs: %v", moreDocs)
 }
 
-func ExampleMongoCursor_Close() {
+func ExampleCursor_Close() {
 	var (
-		collection *kmongo.MongoCollection
-		cur        *kmongo.MongoCursor
+		collection *kmongo.Collection
+		cur        *kmongo.Cursor
 		err        error
 	)
 	filter := bson.M{"name": "Misty"}
@@ -150,10 +150,10 @@ func ExampleMongoCursor_Close() {
 	cur.Close(context.TODO())
 }
 
-func ExampleMongoCursor_All() {
+func ExampleCursor_All() {
 	var (
-		collection *kmongo.MongoCollection
-		cur        *kmongo.MongoCursor
+		collection *kmongo.Collection
+		cur        *kmongo.Cursor
 		err        error
 	)
 	filter := bson.M{"name": "Misty"}
@@ -167,10 +167,10 @@ func ExampleMongoCursor_All() {
 	cur.All(context.TODO(), &results)
 }
 
-func ExampleMongoCursor_Decode() {
+func ExampleCursor_Decode() {
 	var (
-		collection *kmongo.MongoCollection
-		cur        *kmongo.MongoCursor
+		collection *kmongo.Collection
+		cur        *kmongo.Cursor
 		err        error
 	)
 	filter := bson.M{"name": "Misty"}
@@ -191,9 +191,9 @@ func ExampleMongoCursor_Decode() {
 	}
 }
 
-func ExampleMongoCollection_InsertOne() {
+func ExampleCollection_InsertOne() {
 	var (
-		collection      *kmongo.MongoCollection
+		collection      *kmongo.Collection
 		err             error
 		insertOneResult *mongo.InsertOneResult
 	)
@@ -207,10 +207,10 @@ func ExampleMongoCollection_InsertOne() {
 	fmt.Printf("inserted document with ID %v\n", insertOneResult.InsertedID)
 }
 
-func ExampleMongoCollection_FindOne() {
+func ExampleCollection_FindOne() {
 	var (
-		sr         *kmongo.MongoSingleResult
-		collection *kmongo.MongoCollection
+		sr         *kmongo.SingleResult
+		collection *kmongo.Collection
 		err        error
 	)
 	filter := bson.M{"name": "Ash"}
@@ -226,10 +226,10 @@ func ExampleMongoCollection_FindOne() {
 	}
 }
 
-func ExampleMongoCollection_InsertMany() {
+func ExampleCollection_InsertMany() {
 	var (
 		insertManyResult *mongo.InsertManyResult
-		collection       *kmongo.MongoCollection
+		collection       *kmongo.Collection
 		err              error
 	)
 	docs := []interface{}{
@@ -245,10 +245,10 @@ func ExampleMongoCollection_InsertMany() {
 	fmt.Printf("inserted documents with IDs %v\n", insertManyResult.InsertedIDs...)
 }
 
-func ExampleMongoCollection_Find() {
+func ExampleCollection_Find() {
 	var (
-		collection *kmongo.MongoCollection
-		cur        *kmongo.MongoCursor
+		collection *kmongo.Collection
+		cur        *kmongo.Cursor
 		err        error
 	)
 	filter := bson.M{"name": "Misty"}
@@ -269,10 +269,10 @@ func ExampleMongoCollection_Find() {
 	}
 }
 
-func ExampleMongoCollection_UpdateOne() {
+func ExampleCollection_UpdateOne() {
 	var (
 		result     *mongo.UpdateResult
-		collection *kmongo.MongoCollection
+		collection *kmongo.Collection
 		err        error
 	)
 	filter := bson.M{"name": "Brock"}
@@ -292,10 +292,10 @@ func ExampleMongoCollection_UpdateOne() {
 	}
 }
 
-func ExampleMongoCollection_UpdateMany() {
+func ExampleCollection_UpdateMany() {
 	var (
 		result     *mongo.UpdateResult
-		collection *kmongo.MongoCollection
+		collection *kmongo.Collection
 		err        error
 	)
 	filter := bson.M{"name": "Brock"}
@@ -312,10 +312,10 @@ func ExampleMongoCollection_UpdateMany() {
 	}
 }
 
-func ExampleMongoCollection_DeleteOne() {
+func ExampleCollection_DeleteOne() {
 	var (
 		result     *mongo.DeleteResult
-		collection *kmongo.MongoCollection
+		collection *kmongo.Collection
 		err        error
 	)
 	filter := bson.M{"name": "Brock"}
@@ -328,10 +328,10 @@ func ExampleMongoCollection_DeleteOne() {
 	fmt.Printf("deleted %v document\n", result.DeletedCount)
 }
 
-func ExampleMongoCollection_DeleteMany() {
+func ExampleCollection_DeleteMany() {
 	var (
 		result     *mongo.DeleteResult
-		collection *kmongo.MongoCollection
+		collection *kmongo.Collection
 		err        error
 	)
 	filter := bson.M{"name": "Brock"}
@@ -343,6 +343,7 @@ func ExampleMongoCollection_DeleteMany() {
 	}
 	fmt.Printf("deleted %v documents\n", result.DeletedCount)
 }
+
 
 func ExampleWebGoV4() {
 	port := "6060"
