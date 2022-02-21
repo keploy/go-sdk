@@ -74,7 +74,7 @@ type ServerConfig struct {
 }
 
 func New(cfg Config) *Keploy {
-	zcfg := zap.NewProductionConfig()
+	zcfg := zap.NewDevelopmentConfig()
 	zcfg.EncoderConfig.CallerKey = zapcore.OmitKey
 	zcfg.EncoderConfig.LevelKey = zapcore.OmitKey
 	zcfg.EncoderConfig.TimeKey = zapcore.OmitKey
@@ -348,46 +348,52 @@ func (k *Keploy) put(tcs regression.TestCaseReq) {
 		return
 	}
 	id := res["id"]
-	if id != "" {
-		// run the request again to find noisy fields
+	if id == "" {
+		return 
+	}
+	k.denoise(id, tcs)
+}
 
-		resp2, err := k.simulate(models.TestCase{
-			ID:       id,
-			Captured: tcs.Captured,
-			URI:      tcs.URI,
-			HttpReq:  tcs.HttpReq,
-			Deps:     tcs.Deps,
-		})
-		if err != nil {
-			k.Log.Error("failed to simulate request on local server", zap.Error(err))
-			return
-		}
+func (k *Keploy) denoise (id string, tcs regression.TestCaseReq){
+	// run the request again to find noisy fields
 
-		bin2, err := json.Marshal(&regression.TestReq{
-			ID:    res["id"],
-			AppID: k.cfg.App.Name,
-			Resp:  *resp2,
-		})
+	resp2, err := k.simulate(models.TestCase{
+		ID:       id,
+		Captured: tcs.Captured,
+		URI:      tcs.URI,
+		HttpReq:  tcs.HttpReq,
+		Deps:     tcs.Deps,
+	})
+	if err != nil {
+		k.Log.Error("failed to simulate request on local server", zap.Error(err))
+		return
+	}
 
-		if err != nil {
-			k.Log.Error("failed to marshall testcase request", zap.String("url", tcs.URI), zap.Error(err))
-			return
-		}
+	bin2, err := json.Marshal(&regression.TestReq{
+		ID:    id,
+		AppID: k.cfg.App.Name,
+		Resp:  *resp2,
+	})
 
-		// send de-noise request to server
-		r, err := http.NewRequest("POST", k.cfg.Server.URL+"/regression/denoise", bytes.NewBuffer(bin2))
-		if err != nil {
-			k.Log.Error("failed to create de-noise request", zap.String("url", tcs.URI), zap.Error(err))
-			return
-		}
-		k.setKey(req)
-		r.Header.Set("Content-Type", "application/json")
+	if err != nil {
+		k.Log.Error("failed to marshall testcase request", zap.String("url", tcs.URI), zap.Error(err))
+		return
+	}
 
-		_, err = k.client.Do(r)
-		if err != nil {
-			k.Log.Error("failed to send de-noise request to backend", zap.String("url", tcs.URI), zap.Error(err))
-			return
-		}
+	// send de-noise request to server
+	r, err := http.NewRequest("POST", k.cfg.Server.URL+"/regression/denoise", bytes.NewBuffer(bin2))
+	if err != nil {
+		k.Log.Error("failed to create de-noise request", zap.String("url", tcs.URI), zap.Error(err))
+		return
+	}
+	k.setKey(r)
+	k.Log.Debug("header before denoise: ", zap.Any("", r.Header))
+	r.Header.Set("Content-Type", "application/json")
+
+	_, err = k.client.Do(r)
+	if err != nil {
+		k.Log.Error("failed to send de-noise request to backend", zap.String("url", tcs.URI), zap.Error(err))
+		return
 	}
 }
 
