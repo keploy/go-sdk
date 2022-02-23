@@ -184,13 +184,16 @@ col := kmongo.NewCollection(db.Collection("Demo-Collection"))
 ```
 Following operations are supported:<br>
 - FindOne - Err and Decode method of mongo.SingleResult<br>
-- Find - Next and Decode methods of mongo.cursor<br>
+- Find - Next, TryNext, Err, Close, All and Decode methods of mongo.cursor<br>
 - InsertOne<br>
 - InsertMany<br>
 - UpdateOne<br>
 - UpdateMany<br>
 - DeleteOne<br>
-- DeleteMany
+- DeleteMany<br>
+- CountDocuments<br>
+- Distinct<br>
+- Aggregate - Next, TryNext, Err, Close, All and Decode methods of mongo.cursor
 ### 2. DynamoDB
 ```go
 import("github.com/keploy/go-sdk/integrations/kddb")
