@@ -219,7 +219,7 @@ func init(){
 Its compatible with gORM. Here is an example -
 ```go
     pSQL_URI := fmt.Sprintf("host=%s user=%s dbname=%s sslmode=disable password=%s port=%s", "localhost", "postgres", "Book_Keeper", "8789", "5432")
-    // set DisableAutomaticPing to true for not capturing and replaying the outputs of querries stored in requests context.
+    // set DisableAutomaticPing to true for capturing and replaying the outputs of querries stored in requests context.
     pSQL_DB, err :=  gorm.Open(postgres.New(postgres.Config{DriverName: "keploy", DSN: pSQL_URI}), &gorm.Config{ DisableAutomaticPing: true })
     if err!=nil{
         log.Fatal(err)
