@@ -219,23 +219,24 @@ func init(){
 Its compatible with gORM. Here is an example -
 ```go
     pSQL_URI := fmt.Sprintf("host=%s user=%s dbname=%s sslmode=disable password=%s port=%s", "localhost", "postgres", "Book_Keeper", "8789", "5432")
-	pSQL_DB, err :=  gorm.Open(postgres.New(postgres.Config{DriverName: "keploy", DSN: pSQL_URI}), &gorm.Config{ DisableAutomaticPing: true })
-	if err!=nil{
-		log.Fatal(err)
-	} else {
-		fmt.Println("Successfully connected to postgres")
-	}
+    // set DisableAutomaticPing to true for not capturing and replaying the outputs of querries stored in requests context.
+    pSQL_DB, err :=  gorm.Open(postgres.New(postgres.Config{DriverName: "keploy", DSN: pSQL_URI}), &gorm.Config{ DisableAutomaticPing: true })
+    if err!=nil{
+        log.Fatal(err)
+    } else {
+	fmt.Println("Successfully connected to postgres")
+    }
     r:=gin.New()
-	kgin.GinV1(kApp, r)
-	r.GET("/gin/:color/*type", func(c *gin.Context) {
+    kgin.GinV1(kApp, r)
+    r.GET("/gin/:color/*type", func(c *gin.Context) {
         // set the context of *gorm.DB with request's context of http Handler function before queries.
         pSQL_DB = pSQL_DB.WithContext(r.Context())
-    }))
 	// Find
 	var (
 		people []Book
 	)
 	x := pSQL_DB.Find(&people)
+    }))
 ```
 ## Supported Clients
 ### net/http
