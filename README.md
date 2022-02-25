@@ -104,7 +104,7 @@ kgin.GinV1(k, r)
 ```
 #### Example
 ```go
-import("github.com/keploy/go-sdk/integrations/kgin")
+import("github.com/keploy/go-sdk/integrations/kgin/v1")
 
 r:=gin.New()
 port := "8080"
@@ -127,7 +127,7 @@ kecho.EchoV4(k, e)
 ```
 #### Example
 ```go
-import("github.com/keploy/go-sdk/integrations/kecho")
+import("github.com/keploy/go-sdk/integrations/kecho/v4")
 
 e := echo.New()
 port := "8080"
