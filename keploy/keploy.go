@@ -356,7 +356,7 @@ func (k *Keploy) put(tcs regression.TestCaseReq) {
 
 func (k *Keploy) denoise (id string, tcs regression.TestCaseReq){
 	// run the request again to find noisy fields
-
+	time.Sleep(2*time.Second)
 	resp2, err := k.simulate(models.TestCase{
 		ID:       id,
 		Captured: tcs.Captured,
