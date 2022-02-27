@@ -104,7 +104,7 @@ kgin.GinV1(k, r)
 ```
 #### Example
 ```go
-import("github.com/keploy/go-sdk/integrations/kgin")
+import("github.com/keploy/go-sdk/integrations/kgin/v1")
 
 r:=gin.New()
 port := "8080"
@@ -127,7 +127,7 @@ kecho.EchoV4(k, e)
 ```
 #### Example
 ```go
-import("github.com/keploy/go-sdk/integrations/kecho")
+import("github.com/keploy/go-sdk/integrations/kecho/v4")
 
 e := echo.New()
 port := "8080"
@@ -204,6 +204,40 @@ Following operations are supported:<br>
 - QueryWithContext
 - GetItemWithContext
 - PutItemWithContext
+### 3. SQL Driver
+```go
+import(
+    "github.com/keploy/go-sdk/integrations/ksql"
+    "github.com/lib/pq"
+)
+
+func init(){
+	driver := ksql.Driver{Driver: pq.Driver{}}
+	sql.Register("keploy", &driver)
+}
+```
+Its compatible with gORM. Here is an example -
+```go
+    pSQL_URI := fmt.Sprintf("host=%s user=%s dbname=%s sslmode=disable password=%s port=%s", "localhost", "postgres", "Book_Keeper", "8789", "5432")
+    // set DisableAutomaticPing to true for capturing and replaying the outputs of querries stored in requests context.
+    pSQL_DB, err :=  gorm.Open(postgres.New(postgres.Config{DriverName: "keploy", DSN: pSQL_URI}), &gorm.Config{ DisableAutomaticPing: true })
+    if err!=nil{
+        log.Fatal(err)
+    } else {
+	fmt.Println("Successfully connected to postgres")
+    }
+    r:=gin.New()
+    kgin.GinV1(kApp, r)
+    r.GET("/gin/:color/*type", func(c *gin.Context) {
+        // set the context of *gorm.DB with request's context of http Handler function before queries.
+        pSQL_DB = pSQL_DB.WithContext(r.Context())
+	// Find
+	var (
+		people []Book
+	)
+	x := pSQL_DB.Find(&people)
+    }))
+```
 ## Supported Clients
 ### net/http
 ```go
