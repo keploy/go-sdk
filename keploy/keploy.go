@@ -15,6 +15,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"regexp"
 	"sync"
 	"testing"
 	"time"
@@ -66,6 +67,11 @@ type AppConfig struct {
 	Port    string        `validate:"required"`
 	Delay   time.Duration `default:"5s"`
 	Timeout time.Duration `default:"60s"`
+	Filter  Filter        
+}
+
+type Filter struct {
+	UrlRegex string
 }
 
 type ServerConfig struct {
@@ -257,8 +263,8 @@ func (k *Keploy) simulate(tc models.TestCase) (*models.HttpResp, error) {
 
 	//body, err := ioutil.ReadAll(resp.Body)
 	//if err != nil {
-	//	a.Log.Error("failed reading simulated response from app", zap.Error(err))
-	//	return nil, err
+	//  a.Log.Error("failed reading simulated response from app", zap.Error(err))
+	//  return nil, err
 	//}
 	return &resp, nil
 }
@@ -311,6 +317,13 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 }
 
 func (k *Keploy) put(tcs regression.TestCaseReq) {
+
+	var str = k.cfg.App.Filter
+	reg:= regexp.MustCompile(str.UrlRegex)
+	if reg.FindString(tcs.URI) == "" {
+		return
+	}
+
 	bin, err := json.Marshal(tcs)
 	if err != nil {
 		k.Log.Error("failed to marshall testcase request", zap.String("url", tcs.URI), zap.Error(err))
