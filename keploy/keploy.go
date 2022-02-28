@@ -67,7 +67,7 @@ type AppConfig struct {
 	Port    string        `validate:"required"`
 	Delay   time.Duration `default:"5s"`
 	Timeout time.Duration `default:"60s"`
-	Filter  Filter        `default:"/"`
+	Filter  Filter        
 }
 
 type Filter struct {
