@@ -387,7 +387,6 @@ func (k *Keploy) denoise (id string, tcs regression.TestCaseReq){
 		return
 	}
 	k.setKey(r)
-	k.Log.Debug("header before denoise: ", zap.Any("", r.Header))
 	r.Header.Set("Content-Type", "application/json")
 
 	_, err = k.client.Do(r)

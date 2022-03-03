@@ -3,7 +3,6 @@ package kecho
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"go.keploy.io/server/pkg/models"
 	"io"
 	"io/ioutil"
@@ -114,7 +113,6 @@ func pathParamsEcho(c echo.Context) map[string]string {
 	paramNames := c.ParamNames()
 	paramValues := c.ParamValues()
 	for i := 0; i < len(paramNames); i++ {
-		fmt.Printf("paramName : %v, paramValue : %v\n", paramNames[i], paramValues[i])
 		result[paramNames[i]] = paramValues[i]
 	}
 	return result
