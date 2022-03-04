@@ -117,8 +117,8 @@ type Keploy struct {
 	Log    *zap.Logger
 	client *http.Client
 	deps   sync.Map
-	//Deps   map[string][]models.Dependency
-	resp sync.Map
+	//Deps map[string][]models.Dependency
+	resp   sync.Map
 	//Resp map[string]models.HttpResp
 }
 
