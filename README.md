@@ -174,6 +174,33 @@ kwebgo.WebGoV4(k
 , router)
 router.Start()
 ```
+### 5. Gorilla/Mux 
+```go
+r := mux.NewRouter()
+kmux.Mux(k, r)
+```
+#### Example
+```go
+import(	
+    "github.com/keploy/go-sdk/integrations/kmux"
+    "net/http"
+)
+
+r := mux.NewRouter()
+port := "8080"
+k := keploy.New(keploy.Config{
+  App: keploy.AppConfig{
+      Name: "my-app",
+      Port: port,
+  },
+  Server: keploy.ServerConfig{
+      URL: "http://localhost:8081/api",
+  },
+})
+kmux.Mux(k, r)
+http.ListenAndServe(":"+port, r)
+```
+
 ## Supported Databases
 ### 1. MongoDB
 ```go
