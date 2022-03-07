@@ -320,7 +320,7 @@ func (k *Keploy) put(tcs regression.TestCaseReq) {
 
 	var str = k.cfg.App.Filter
 	reg:= regexp.MustCompile(str.UrlRegex)
-	if reg.FindString(tcs.URI) == "" {
+	if str.UrlRegex!="" && reg.FindString(tcs.URI) == ""{
 		return
 	}
 
