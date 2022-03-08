@@ -264,7 +264,7 @@ Here is an example -
                 log.Fatal(err)
             }
             id := 47
-            result, err := db.ExecContext(ctx, "UPDATE balances SET balance = balance + 10 WHERE user_id = ?", id)
+            result, err := db.ExecContext(r.Context(), "UPDATE balances SET balance = balance + 10 WHERE user_id = ?", id)
             if err != nil {
                 log.Fatal(err)
             }
