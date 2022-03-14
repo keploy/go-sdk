@@ -107,7 +107,7 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 	r.Body = ioutil.NopCloser(bytes.NewBuffer(reqBody)) // Reset
 
 	// adds the keploy context stored in Interceptor's ctx field into the http client request context.
-	if i.kctx != nil {
+	if _, err := keploy.GetState(r.Context()); err != nil && i.kctx != nil {
 		ctx := i.setRequestContext(r.Context())
 		r = r.WithContext(ctx)
 	}
