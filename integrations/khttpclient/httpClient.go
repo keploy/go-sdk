@@ -3,18 +3,19 @@ package khttpclient
 import (
 	"bytes"
 	"context"
-	"strconv"
-
-	"go.keploy.io/server/pkg/models"
-
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rsa"
 	"encoding/gob"
 	"errors"
 	"fmt"
+	"github.com/keploy/go-sdk/keploy"
+	"go.keploy.io/server/pkg/models"
+	"go.uber.org/zap"
 	"io"
 	"io/ioutil"
 	"net/http"
-	"github.com/keploy/go-sdk/keploy"
-	"go.uber.org/zap"
+	"strconv"
 )
 
 // ReadCloser is used so that gob could encode-decode http.Response.
@@ -28,7 +29,11 @@ func (rc ReadCloser) Close() error {
 }
 
 func (rc *ReadCloser) UnmarshalBinary(b []byte) error {
-	rc.Reader = bytes.NewReader(b)
+
+	// copy the byte array elements into copyByteArr. See https://www.reddit.com/r/golang/comments/tddjdd/gob_is_appending_gibberish_to_my_object/
+	copyByteArr := make([]byte, len(b))
+	copy(copyByteArr, b)
+	rc.Reader = bytes.NewReader(copyByteArr)
 	return nil
 }
 
@@ -42,28 +47,29 @@ func (rc *ReadCloser) MarshalBinary() ([]byte, error) {
 	return nil, nil
 }
 
-
-type Interceptor struct{
+type Interceptor struct {
 	core http.RoundTripper
-	log *zap.Logger
+	log  *zap.Logger
 	kctx *keploy.Context
 }
 
 // NewInterceptor constructs and returns the pointer to Interceptor. Interceptor is used
 // to intercept every http client calls and store their responses into keploy context.
-func NewInterceptor (core http.RoundTripper) *Interceptor{
+func NewInterceptor(core http.RoundTripper) *Interceptor {
 	// Initialize a logger
 	logger, _ := zap.NewProduction()
 	defer func() {
 		_ = logger.Sync() // flushes buffer, if any
 	}()
 
-	// Register the ReadCloser type to gob encoder
+	// Register types to gob encoder
 	gob.Register(ReadCloser{})
-
+	gob.Register(elliptic.P256())
+	gob.Register(ecdsa.PublicKey{})
+	gob.Register(rsa.PublicKey{})
 	return &Interceptor{
 		core: core,
-		log: logger,
+		log:  logger,
 	}
 }
 
@@ -71,15 +77,15 @@ func NewInterceptor (core http.RoundTripper) *Interceptor{
 // kctx field.
 func (i *Interceptor) SetContext(requestContext context.Context) {
 	// ctx := context.TODO()
-	if kctx,err := keploy.GetState(requestContext); err==nil{
+	if kctx, err := keploy.GetState(requestContext); err == nil {
 		i.kctx = kctx
 		i.log.Debug("http client keploy interceptor's context has been set to : ", zap.Any("keploy.Context ", i.kctx))
 	}
-} 
+}
 
-// setRequestContext returns the context with keploy context as value. It is called only 
-// when kctx field of Interceptor is not null. 
-func (i *Interceptor) setRequestContext(ctx context.Context) context.Context{
+// setRequestContext returns the context with keploy context as value. It is called only
+// when kctx field of Interceptor is not null.
+func (i *Interceptor) setRequestContext(ctx context.Context) context.Context {
 	rctx := context.WithValue(ctx, keploy.KCTX, i.kctx)
 	return rctx
 }
@@ -87,7 +93,7 @@ func (i *Interceptor) setRequestContext(ctx context.Context) context.Context{
 // RoundTrip is the custom method which is called before making http client calls to
 // capture or replay the outputs of external http service.
 func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
-	
+	// Read the request body to store in meta
 	var reqBody []byte
 	if r.Body != nil { // Read
 		var err error
@@ -95,17 +101,17 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 		if err != nil {
 			// TODO right way to log errors
 			i.log.Error("Unable to read request body", zap.Error(err))
-			return nil,err
+			return nil, err
 		}
 	}
 	r.Body = ioutil.NopCloser(bytes.NewBuffer(reqBody)) // Reset
 
 	// adds the keploy context stored in Interceptor's ctx field into the http client request context.
-	if i.kctx!=nil{
+	if i.kctx != nil {
 		ctx := i.setRequestContext(r.Context())
-		r  = r.WithContext(ctx)
+		r = r.WithContext(ctx)
 	}
-	
+
 	if keploy.GetModeFromContext(r.Context()) == keploy.MODE_OFF {
 		return i.core.RoundTrip(r)
 	}
@@ -120,21 +126,20 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 	mode := kctx.Mode
 	meta := map[string]string{
-		"name":      "http-client",
-		"type":      string(models.HttpClient),
-		"operation": r.Method,
-		"URL":       r.URL.String(),
-		"Header":    fmt.Sprint(r.Header),
-		"Body":      string(reqBody),
-		"Proto":     r.Proto,
-		"ProtoMajor":strconv.Itoa(r.ProtoMajor),
-		"ProtoMinor":strconv.Itoa(r.ProtoMinor),
+		"name":       "http-client",
+		"type":       string(models.HttpClient),
+		"operation":  r.Method,
+		"URL":        r.URL.String(),
+		"Header":     fmt.Sprint(r.Header),
+		"Body":       string(reqBody),
+		"Proto":      r.Proto,
+		"ProtoMajor": strconv.Itoa(r.ProtoMajor),
+		"ProtoMinor": strconv.Itoa(r.ProtoMinor),
 	}
 	switch mode {
 	case "test":
-		//don't call http.Client.PostForm method
+		//don't call i.core.RoundTrip method
 	case "capture":
-		// resp, err = cl.Client.PostForm(url, data)
 		resp, err = i.core.RoundTrip(r)
 	default:
 		return nil, errors.New("integrations: Not in a valid sdk mode")
@@ -160,4 +165,4 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 	return resp, err
 
-  }
+}
