@@ -6,7 +6,9 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"time"
 
+	// "github.com/benbjohnson/clock"
 	"github.com/go-chi/chi"
 	"github.com/keploy/go-sdk/keploy"
 	"go.keploy.io/server/pkg/models"
@@ -53,6 +55,7 @@ func mw(k *keploy.Keploy) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			id := r.Header.Get("KEPLOY_TEST_ID")
+			// mock := clock.NewMock()
 			if id != "" {
 				// id is only present during simulation
 				// run it similar to how testcases would run
@@ -60,15 +63,24 @@ func mw(k *keploy.Keploy) func(http.Handler) http.Handler {
 					Mode:   "test",
 					TestID: id,
 					Deps:   k.GetDependencies(id),
+					Capture: time.Unix(k.GetClock(id), 0),
 				})
-
+				
+				// auth middleware 
+				
+				// tokenAuth.WithValidateOptions(jwt.WithClock(mock))
 				r = r.WithContext(ctx)
+				
 				resp := captureRespChi(w, r, next)
 				k.PutResp(id, resp)
 				return
-			}
+			} 
+			// mock := clock.NewMock()
+			// t:=time.Now().UTC().Unix()
+			// mock.Add(time.Duration(t) * time.Second)
 			ctx := context.WithValue(r.Context(), keploy.KCTX, &keploy.Context{
 				Mode: "capture",
+				// Capture: mock.Now(),
 			})
 
 			r = r.WithContext(ctx)
