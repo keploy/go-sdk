@@ -18,13 +18,8 @@ type JWTAuth struct {
 	signKey   interface{} // private-key
 	verifyKey interface{} // public-key, only used by RSA and ECDSA algorithms
 	verifier  jwt.ParseOption
-	// validateOptions []jwt.ValidateOption
 }
 
-// func (j *JWTAuth) WithValidateOptions(validateOption jwt.ValidateOption) error {
-// 	j.validateOptions = append(j.validateOptions, validateOption)
-// 	return nil
-// }
 
 var (
 	TokenCtxKey          = &contextKey{"Token"}
@@ -134,6 +129,7 @@ func VerifyToken(ja *JWTAuth, tokenString string, validateOption jwt.ValidateOpt
 		if err := jwt.Validate(token); err != nil {
 			return token, ErrorReason(err)
 		}
+		return token, nil
 	}
 	if err := jwt.Validate(token, validateOption); err != nil {
 		return token, ErrorReason(err)
