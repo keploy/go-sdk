@@ -12,12 +12,14 @@ import (
 
 	"github.com/bnkamalesh/webgo/v4"
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/mux"
 
 	"github.com/keploy/go-sdk/integrations/kecho/v4"
 	"github.com/keploy/go-sdk/integrations/kgin/v1"
 	"github.com/keploy/go-sdk/integrations/kgrpc"
 	"github.com/keploy/go-sdk/integrations/khttpclient"
 	"github.com/keploy/go-sdk/integrations/kmongo"
+	"github.com/keploy/go-sdk/integrations/kmux"
 	"github.com/keploy/go-sdk/integrations/kwebgo/v4"
 	"github.com/keploy/go-sdk/keploy"
 	"github.com/labstack/echo/v4"
@@ -443,95 +445,182 @@ func ExampleWithClientStreamInterceptor() {
 	defer conn.Close()
 }
 
-func ExampleNewHttpClient() {
-	r := &http.Request{} // Here, r is for demo. You should use your handler's request as r.
-	tr := &http.Transport{
-		MaxIdleConns:       10,
-		IdleConnTimeout:    30 * time.Second,
-		DisableCompression: true,
-	}
-	client := khttpclient.NewHttpClient(&http.Client{
-		Transport: tr,
+func ExampleNewInterceptor() {
+	// initialize a gorilla mux
+	r := mux.NewRouter()
+	// keploy config
+	port := "8080"
+	kApp := keploy.New(keploy.Config{
+		App: keploy.AppConfig{
+			Name: "Mux-Demo-app",
+			Port: port,
+		},
+		Server: keploy.ServerConfig{
+			URL: "http://localhost:8081/api",
+		},
 	})
-
-	// SetCtxHttpClient is called before mocked http.Client's Get method.
-	client.SetCtxHttpClient(r.Context())
-	resp, err := client.Get("https://example.com")
-	if err != nil {
-		log.Fatal(err)
+	// configure mux for integeration with keploy
+	kmux.Mux(kApp, r)
+	// configure http client with keploy's interceptor
+	interceptor := khttpclient.NewInterceptor(http.DefaultTransport)
+	_ = http.Client{
+		Transport: interceptor,
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	fmt.Println("BODY : ", body)
+
 }
 
 func ExampleHttpClient_SetCtxHttpClient() {
-	r := &http.Request{} // Here, r is for demo. You should use your handler's request as r.
-	client := khttpclient.NewHttpClient(&http.Client{})
-
-	// SetCtxHttpClient is called before mocked http.Client's Get method.
-	client.SetCtxHttpClient(r.Context())
-	resp, err := client.Get("https://example.com")
-	if err != nil {
-		log.Fatal(err)
+	// initialize a gorilla mux
+	r := mux.NewRouter()
+	// keploy config
+	port := "8080"
+	kApp := keploy.New(keploy.Config{
+		App: keploy.AppConfig{
+			Name: "Mux-Demo-app",
+			Port: port,
+		},
+		Server: keploy.ServerConfig{
+			URL: "http://localhost:8081/api",
+		},
+	})
+	// configure mux for integeration with keploy
+	kmux.Mux(kApp, r)
+	// configure http client with keploy's interceptor
+	interceptor := khttpclient.NewInterceptor(http.DefaultTransport)
+	client := http.Client{
+		Transport: interceptor,
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	fmt.Println("BODY : ", body)
+	
+	r.HandleFunc("/mux/{category}/{params}",func (w http.ResponseWriter, r *http.Request)  {
+		// SetCtxHttpClient is called before mocked http.Client's Get method.
+		interceptor.SetContext(r.Context())
+		// make get request to external http service
+		resp, err := client.Get("https://example.com")
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		fmt.Println("BODY : ", body)
+	})
 }
 
 func ExampleHttpClient_Get() {
-	r := &http.Request{} // Here, r is for demo. You should use your handler's request as r.
-	client := khttpclient.NewHttpClient(&http.Client{})
-
-	// SetCtxHttpClient is called before mocked http.Client's Get method.
-	client.SetCtxHttpClient(r.Context())
-	resp, err := client.Get("https://example.com")
-	if err != nil {
-		log.Fatal(err)
+	// initialize a gorilla mux
+	r := mux.NewRouter()
+	// keploy config
+	port := "8080"
+	kApp := keploy.New(keploy.Config{
+		App: keploy.AppConfig{
+			Name: "Mux-Demo-app",
+			Port: port,
+		},
+		Server: keploy.ServerConfig{
+			URL: "http://localhost:8081/api",
+		},
+	})
+	// configure mux for integeration with keploy
+	kmux.Mux(kApp, r)
+	// configure http client with keploy's interceptor
+	interceptor := khttpclient.NewInterceptor(http.DefaultTransport)
+	client := http.Client{
+		Transport: interceptor,
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	fmt.Println("BODY : ", body)
+	
+	r.HandleFunc("/mux/{category}/{params}",func (w http.ResponseWriter, r *http.Request)  {
+		// SetCtxHttpClient is called before mocked http.Client's Get method.
+		interceptor.SetContext(r.Context())
+		// make get request to external http service
+		resp, err := client.Get("https://example.com")
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		fmt.Println("BODY : ", body)
+	})
+
 }
 
 func ExampleHttpClient_Do() {
-	r := &http.Request{} // Here, r is for demo. You should use your handler's request as r.
-	client := khttpclient.NewHttpClient(&http.Client{})
+	// initialize a gorilla mux
+	r := mux.NewRouter()
+	// keploy config
+	port := "8080"
+	kApp := keploy.New(keploy.Config{
+		App: keploy.AppConfig{
+			Name: "Mux-Demo-app",
+			Port: port,
+		},
+		Server: keploy.ServerConfig{
+			URL: "http://localhost:8081/api",
+		},
+	})
+	// configure mux for integeration with keploy
+	kmux.Mux(kApp, r)
+	// configure http client with keploy's interceptor
+	interceptor := khttpclient.NewInterceptor(http.DefaultTransport)
+	client := http.Client{
+		Transport: interceptor,
+	}
+	
+	r.HandleFunc("/mux/{category}/{params}",func (w http.ResponseWriter, r *http.Request)  {
+		// SetCtxHttpClient is called before mocked http.Client's Get method.
+		interceptor.SetContext(r.Context())
+		// make get request to external http service using http.Client.Do
+		req, err := http.NewRequestWithContext(r.Context(), "GET", "https://example.com", nil)
+		if err != nil {
+			log.Fatal(err)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		fmt.Println("BODY : ", body)
+	})
 
-	// SetCtxHttpClient is called before mocked http.Client's Do method.
-	client.SetCtxHttpClient(r.Context())
-	req, err := http.NewRequestWithContext(r.Context(), "GET", "http://localhost:6060/getdocs?name=name&value=Ash", nil)
-	if err != nil {
-		log.Fatal("http client in webgo-v4 main.go")
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	fmt.Println("BODY : ", body)
 }
 
 func ExampleHttpClient_Post() {
-	r := &http.Request{} // Here, r is for demo. You should use your handler's request as r.
-	client := khttpclient.NewHttpClient(&http.Client{})
-
-	// SetCtxHttpClient is called before mocked http.Client's Post method.
-	client.SetCtxHttpClient(r.Context())
-	postBody, _ := json.Marshal(map[string]interface{}{
-		"name": "Toby",
-		"age":  21,
-		"city": "New York",
+	// initialize a gorilla mux
+	r := mux.NewRouter()
+	// keploy config
+	port := "8080"
+	kApp := keploy.New(keploy.Config{
+		App: keploy.AppConfig{
+			Name: "Mux-Demo-app",
+			Port: port,
+		},
+		Server: keploy.ServerConfig{
+			URL: "http://localhost:8081/api",
+		},
 	})
-	responseBody := bytes.NewBuffer(postBody)
-	resp, err := http.Post("http://localhost:6060/createone", "application/json", responseBody)
-
-	if err != nil {
-		log.Fatal(err)
+	// configure mux for integeration with keploy
+	kmux.Mux(kApp, r)
+	// configure http client with keploy's interceptor
+	interceptor := khttpclient.NewInterceptor(http.DefaultTransport)
+	client := http.Client{
+		Transport: interceptor,
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	fmt.Println("BODY : ", body)
+	
+	r.HandleFunc("/mux/{category}/{params}",func (w http.ResponseWriter, r *http.Request)  {
+		// SetCtxHttpClient is called before mocked http.Client's Get method.
+		interceptor.SetContext(r.Context())
+		// make POST request to external http service using http.Client.POST method.
+		postBody, _ := json.Marshal(map[string]interface{}{
+			"name": "Toby",
+			"age":  21,
+			"city": "New York",
+		})
+		responseBody := bytes.NewBuffer(postBody)
+		resp, err := client.Post("https://example.com", "application/json", responseBody)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		fmt.Println("BODY : ", body)
+	})
 }
