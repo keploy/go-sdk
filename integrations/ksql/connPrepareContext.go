@@ -16,7 +16,7 @@ type Stmt struct {
 	driver.Stmt
 	ctx   context.Context
 	query string
-	log *zap.Logger
+	log   *zap.Logger
 }
 
 func (s Stmt) Exec(args []driver.Value) (driver.Result, error) {
@@ -67,6 +67,7 @@ func (s Stmt) Exec(args []driver.Value) (driver.Result, error) {
 		if x.Err != nil {
 			mockErr = x.Err
 		}
+		mockErr = convertKError(mockErr)
 		return drResult, mockErr
 	}
 	return result, err
@@ -78,7 +79,7 @@ func (s Stmt) Query(args []driver.Value) (driver.Rows, error) {
 	var (
 		err    error
 		kerr   *keploy.KError = &keploy.KError{}
-		drRows *Rows    = &Rows{
+		drRows *Rows          = &Rows{
 			ctx:   s.ctx,
 			query: s.query,
 		}
@@ -115,6 +116,7 @@ func (s Stmt) Query(args []driver.Value) (driver.Rows, error) {
 		if x.Err != nil {
 			mockErr = x.Err
 		}
+		mockErr = convertKError(mockErr)
 		return drRows, mockErr
 	}
 	return drRows, err
@@ -188,6 +190,7 @@ func (s Stmt) Close() error {
 		if x.Err != nil {
 			mockErr = x.Err
 		}
+		mockErr = convertKError(mockErr)
 		return mockErr
 	}
 	return err
@@ -205,7 +208,7 @@ func (c Conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, er
 	var (
 		err    error
 		kerr   *keploy.KError = &keploy.KError{}
-		drStmt *Stmt    = &Stmt{
+		drStmt *Stmt          = &Stmt{
 			log:   c.log,
 			ctx:   ctx,
 			query: query,
@@ -242,6 +245,7 @@ func (c Conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, er
 		if x.Err != nil {
 			mockErr = x.Err
 		}
+		mockErr = convertKError(mockErr)
 		return drStmt, mockErr
 	}
 	return drStmt, err

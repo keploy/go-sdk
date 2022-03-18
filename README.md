@@ -348,6 +348,7 @@ func main(){
 		body, err := io.ReadAll(resp.Body)
 		fmt.Println("BODY : ", body)
 	})
+
 	r.HandleFunc("/mux/httpDo", func(w http.ResponseWriter, r *http.Request){
 		putBody, _ := json.Marshal(map[string]interface{}{
 		    "name":  "Ash",
