@@ -17,9 +17,10 @@ import (
 // Driver wraps the sql driver to overrides Open method of driver.Driver.
 type Driver struct {
 	driver.Driver
+	// Mode string
 }
 
-// Open returns wrapped driver.Conn in order to mock outputs of sql Querries. 
+// Open returns wrapped driver.Conn in order to mock outputs of sql Querries.
 //
 // dsn is a string in driver specific format used as connection URI.
 func (ksql *Driver) Open(dsn string) (driver.Conn, error) {
@@ -28,6 +29,12 @@ func (ksql *Driver) Open(dsn string) (driver.Conn, error) {
 		err error
 	)
 	conn, err := ksql.Driver.Open(dsn)
+
+	// if ksql.Mode == "test" {
+	if keploy.GetMode() == keploy.MODE_TEST {
+		err = nil
+		conn = Conn{}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -35,25 +42,42 @@ func (ksql *Driver) Open(dsn string) (driver.Conn, error) {
 	defer func() {
 		_ = logger.Sync() // flushes buffer, if any
 	}()
-	res = Conn{conn: conn, log: logger}
+	res = Conn{conn: conn, log: logger} // mode: ksql.Mode
+
 	return res, err
 }
 
-// Conn is used to override driver.Conn interface methods to mock the outputs of the querries. 
+// Conn is used to override driver.Conn interface methods to mock the outputs of the querries.
 type Conn struct {
+	// mode string
 	conn driver.Conn
-	log *zap.Logger
+	log  *zap.Logger
 }
 
 func (c Conn) Begin() (driver.Tx, error) {
+	// if c.mode == "test" {
+	if keploy.GetMode() == keploy.MODE_TEST {
+
+		return Tx{}, nil
+	}
 	return c.conn.Begin()
 }
 
 func (c Conn) Close() error {
+	// if c.mode == "test" {
+	if keploy.GetMode() == keploy.MODE_TEST {
+
+		return nil
+	}
 	return c.conn.Close()
 }
 
 func (c Conn) Prepare(query string) (driver.Stmt, error) {
+	// if c.mode == "test" {
+	if keploy.GetMode() == keploy.MODE_TEST {
+
+		return Stmt{}, nil
+	}
 	return c.conn.Prepare(query)
 }
 
@@ -65,7 +89,7 @@ func (c Conn) OpenConnector(name string) (driver.Connector, error) {
 	return nil, errors.New("mocked Driver.Conn var not implements DriverContext interface")
 }
 
-// Ping is the mocked method of sql/driver's Ping. 
+// Ping is the mocked method of sql/driver's Ping.
 func (c Conn) Ping(ctx context.Context) error {
 	pc, ok := c.conn.(driver.Pinger)
 	if !ok {
@@ -107,6 +131,7 @@ func (c Conn) Ping(ctx context.Context) error {
 		if x.Err != nil {
 			mockErr = x.Err
 		}
+		mockErr = convertKError(mockErr)
 		return mockErr
 	}
 	return err

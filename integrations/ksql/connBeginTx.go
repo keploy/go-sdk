@@ -55,10 +55,12 @@ func (t Tx) Commit() error {
 		if x.Err != nil {
 			mockErr = x.Err
 		}
+		mockErr = convertKError(mockErr)
 		return mockErr
 	}
 	return err
 }
+
 // Rollback mocks the outputs of Rollback method present driver's Tx interface.
 func (t Tx) Rollback() error {
 	if keploy.GetModeFromContext(t.ctx) == keploy.MODE_OFF {
@@ -96,6 +98,7 @@ func (t Tx) Rollback() error {
 		if x.Err != nil {
 			mockErr = x.Err
 		}
+		mockErr = convertKError(mockErr)
 		return mockErr
 	}
 	return err
@@ -149,6 +152,7 @@ func (c Conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, er
 		if x.Err != nil {
 			mockErr = x.Err
 		}
+		mockErr = convertKError(mockErr)
 		return drTx, mockErr
 	}
 	return drTx, err
