@@ -232,56 +232,165 @@ Following operations are supported:<br>
 - GetItemWithContext
 - PutItemWithContext
 ### 3. SQL Driver
+Keploy inplements most of the sql driver's interface for mocking the outputs of sql queries. Its compatible with gORM. 
+**Note**: sql methods which have request context as parameter can be supported because outputs are replayed or captured to context.
+Here is an example -
 ```go
-import(
-    "github.com/keploy/go-sdk/integrations/ksql"
-    "github.com/lib/pq"
-)
+    import (
+        "github.com/keploy/go-sdk/integrations/ksql"
+        "github.com/lib/pq"
+    )
+    func main(){
+        // Register keploy sql driver to database/sql package.
+        driver := ksql.Driver{Driver: pq.Driver{}}
+	    sql.Register("keploy", &driver)
+        
+        pSQL_URI := fmt.Sprintf("host=%s user=%s dbname=%s sslmode=disable password=%s port=%s", "localhost", "postgres", "Book_Keeper", "8789", "5432")
+        // keploy driver will internally open the connection using dataSourceName string parameter
+        db, err := sql.Open("keploy", pSQL_URI)
+        if err!=nil{
+            log.Fatal(err)
+        } else {
+            fmt.Println("Successfully connected to postgres")
+        }
+        defer db.Close
 
-func init(){
-	driver := ksql.Driver{Driver: pq.Driver{}}
-	sql.Register("keploy", &driver)
-}
-```
-Its compatible with gORM. Here is an example -
-```go
-    pSQL_URI := fmt.Sprintf("host=%s user=%s dbname=%s sslmode=disable password=%s port=%s", "localhost", "postgres", "Book_Keeper", "8789", "5432")
-    // set DisableAutomaticPing to true for capturing and replaying the outputs of querries stored in requests context.
-    pSQL_DB, err :=  gorm.Open(postgres.New(postgres.Config{DriverName: "keploy", DSN: pSQL_URI}), &gorm.Config{ DisableAutomaticPing: true })
-    if err!=nil{
-        log.Fatal(err)
-    } else {
-	fmt.Println("Successfully connected to postgres")
+        r:=gin.New()
+        kgin.GinV1(kApp, r)
+        r.GET("/gin/:color/*type", func(c *gin.Context) {
+            // ctx parameter of PingContext should be request context.
+            err = db.PingContext(r.Context())
+            if err!=nil{
+                log.Fatal(err)
+            }
+            id := 47
+            result, err := db.ExecContext(r.Context(), "UPDATE balances SET balance = balance + 10 WHERE user_id = ?", id)
+            if err != nil {
+                log.Fatal(err)
+            }
+        }))
     }
-    r:=gin.New()
-    kgin.GinV1(kApp, r)
-    r.GET("/gin/:color/*type", func(c *gin.Context) {
-        // set the context of *gorm.DB with request's context of http Handler function before queries.
-        pSQL_DB = pSQL_DB.WithContext(r.Context())
-	// Find
-	var (
-		people []Book
-	)
-	x := pSQL_DB.Find(&people)
-    }))
+```
+**Note**: To integerate with gORM set DisableAutomaticPing of gorm.Config to true. Also pass request context to methods as params. 
+Example for gORM:
+```go
+    func main(){
+        // Register keploy sql driver to database/sql package.
+        driver := ksql.Driver{Driver: pq.Driver{}}
+        sql.Register("keploy", &driver)
+
+        pSQL_URI := fmt.Sprintf("host=%s user=%s dbname=%s sslmode=disable password=%s port=%s", "localhost", "postgres", "Book_Keeper", "8789", "5432")
+
+        // set DisableAutomaticPing to true so that .
+        pSQL_DB, err :=  gorm.Open( postgres.New(postgres.Config{
+                DriverName: "keploy", 
+                DSN: pSQL_URI
+            }), &gorm.Config{ 
+                DisableAutomaticPing: true 
+        })
+        r:=gin.New()
+        kgin.GinV1(kApp, r)
+        r.GET("/gin/:color/*type", func(c *gin.Context) {
+            // set the context of *gorm.DB with request's context of http Handler function before queries.
+            pSQL_DB = pSQL_DB.WithContext(r.Context())
+            // Find
+            var (
+                people []Book
+            )
+            x := pSQL_DB.Find(&people)
+        }))
+    }
 ```
 ## Supported Clients
 ### net/http
 ```go
-khttpclient.NewHttpClient(&http.Client{})
+interceptor := khttpclient.NewInterceptor(http.DefaultTransport)
+client := http.Client{
+    Transport: interceptor,
+}
 ```
 #### Example
 ```go
 import("github.com/keploy/go-sdk/integrations/khttpclient")
 
-func(w http.ResponseWriter, r *http.Request){
-    client := khttpclient.NewHttpClient(&http.Client{})
-// ensure to add request context to all outgoing http requests	
-    client.SetCtxHttpClient(r.Context())
-    resp, err := client.Get("https://example.com")
+func main(){
+	// initialize a gorilla mux
+	r := mux.NewRouter()
+	// keploy config
+	port := "8080"
+	kApp := keploy.New(keploy.Config{
+		App: keploy.AppConfig{
+			Name: "Mux-Demo-app",
+			Port: port,
+		},
+		Server: keploy.ServerConfig{
+			URL: "http://localhost:8081/api",
+		},
+	})
+	// configure mux for integeration with keploy
+	kmux.Mux(kApp, r)
+	// configure http client with keploy's interceptor
+	interceptor := khttpclient.NewInterceptor(http.DefaultTransport)
+	client := http.Client{
+		Transport: interceptor,
+	}
+	
+	r.HandleFunc("/mux/httpGet",func (w http.ResponseWriter, r *http.Request)  {
+		// SetContext should always be called once in a http handler before http.Client's Get or Post or Head or PostForm method.
+        // Passing requests context as parameter.
+		interceptor.SetContext(r.Context())
+		// make Get, Post, etc request to external http service
+		resp, err := client.Get("https://example.com/getDocs")
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		fmt.Println("BODY : ", body)
+	})
+	r.HandleFunc("/mux/httpDo", func(w http.ResponseWriter, r *http.Request){
+		putBody, _ := json.Marshal(map[string]interface{}{
+		    "name":  "Ash",
+		    "age": 21,
+		    "city": "Palet town",
+		})
+		PutBody := bytes.NewBuffer(putBody)
+		// Use handler request's context or SetContext before http.Client.Do method call
+		req,err := http.NewRequestWithContext(r.Context(), http.MethodPut, "https://example.com/updateDocs", PutBody)
+		req.Header.Set("Content-Type", "application/json; charset=utf-8")
+		if err!=nil{
+		    log.Fatal(err)
+		}
+		resp,err := cl.Do(req)
+		if err!=nil{
+		    log.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err!=nil{
+		    log.Fatal(err)
+		}
+		fmt.Println(" response Body: ", string(body))
+
+	})
+
+	// gcp compute API integeration
+	client, err := google.DefaultClient(context.TODO(), compute.ComputeScope)
+	if err != nil {
+		fmt.Println(err)
+	}
+	// add keploy interceptor to gcp httpClient
+	intercept := khttpclient.NewInterceptor(client.Transport)
+	client.Transport = intercept
+
+	r.HandleFunc("/mux/gcpDo", func(w http.ResponseWriter, r *http.Request){
+		computeService, err := compute.NewService(r.Context(), option.WithHTTPClient(client), option.WithCredentialsFile("/Users/abc/auth.json"))
+		zoneListCall := computeService.Zones.List(project)
+		zoneList, err := zoneListCall.Do()
+	})
 }
 ```
-**Note**: ensure to add pass request context to all external requests like http requests, db calls, etc. 
+**Note**: ensure to pass request context to all external requests like http requests, db calls, etc. 
 
 ### gRPC
 ```go
