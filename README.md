@@ -314,7 +314,7 @@ client := http.Client{
 import("github.com/keploy/go-sdk/integrations/khttpclient")
 
 func main(){
-    // initialize a gorilla mux
+	// initialize a gorilla mux
 	r := mux.NewRouter()
 	// keploy config
 	port := "8080"
@@ -348,46 +348,47 @@ func main(){
 		body, err := io.ReadAll(resp.Body)
 		fmt.Println("BODY : ", body)
 	})
-    r.HandleFunc("/mux/httpDo", func(w http.ResponseWriter, r *http.Request){
-        putBody, _ := json.Marshal(map[string]interface{}{
-            "name":  "Ash",
-            "age": 21,
-            "city": "Palet town",
-        })
-        PutBody := bytes.NewBuffer(putBody)
-        // Use handler request's context or SetContext before http.Client.Do method call
-        req,err := http.NewRequestWithContext(r.Context(), http.MethodPut, "https://example.com/updateDocs", PutBody)
-        req.Header.Set("Content-Type", "application/json; charset=utf-8")
-        if err!=nil{
-            log.Fatal(err)
-        }
-        resp,err := cl.Do(req)
-        if err!=nil{
-            log.Fatal(err)
-        }
-        defer resp.Body.Close()
-        body, err := io.ReadAll(resp.Body)
-        if err!=nil{
-            log.Fatal(err)
-        }
-        fmt.Println(" response Body: ", string(body))
-        
-    })
 
-    // gcp compute API integeration
-    client, err := google.DefaultClient(c.Request.Context(), compute.ComputeScope)
-    if err != nil {
-        fmt.Println(err)
-    }
-    // add keploy interceptor to gcp httpClient
-    intercept := khttpclient.NewInterceptor(client.Transport)
-    client.Transport = intercept
-    
-    r.HandleFunc("/mux/gcpDo", func(w http.ResponseWriter, r *http.Request){
-        computeService, err := compute.NewService(r.Context(), option.WithHTTPClient(client), option.WithCredentialsFile("/Users/abc/auth.json"))
-        zoneListCall := computeService.Zones.List(project)
-        zoneList, err := zoneListCall.Do()
-    })
+	r.HandleFunc("/mux/httpDo", func(w http.ResponseWriter, r *http.Request){
+		putBody, _ := json.Marshal(map[string]interface{}{
+		    "name":  "Ash",
+		    "age": 21,
+		    "city": "Palet town",
+		})
+		PutBody := bytes.NewBuffer(putBody)
+		// Use handler request's context or SetContext before http.Client.Do method call
+		req,err := http.NewRequestWithContext(r.Context(), http.MethodPut, "https://example.com/updateDocs", PutBody)
+		req.Header.Set("Content-Type", "application/json; charset=utf-8")
+		if err!=nil{
+		    log.Fatal(err)
+		}
+		resp,err := cl.Do(req)
+		if err!=nil{
+		    log.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err!=nil{
+		    log.Fatal(err)
+		}
+		fmt.Println(" response Body: ", string(body))
+
+	})
+
+	// gcp compute API integeration
+	client, err := google.DefaultClient(context.TODO(), compute.ComputeScope)
+	if err != nil {
+		fmt.Println(err)
+	}
+	// add keploy interceptor to gcp httpClient
+	intercept := khttpclient.NewInterceptor(client.Transport)
+	client.Transport = intercept
+
+	r.HandleFunc("/mux/gcpDo", func(w http.ResponseWriter, r *http.Request){
+		computeService, err := compute.NewService(r.Context(), option.WithHTTPClient(client), option.WithCredentialsFile("/Users/abc/auth.json"))
+		zoneListCall := computeService.Zones.List(project)
+		zoneList, err := zoneListCall.Do()
+	})
 }
 ```
 **Note**: ensure to pass request context to all external requests like http requests, db calls, etc. 
