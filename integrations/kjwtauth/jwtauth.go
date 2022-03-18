@@ -18,6 +18,7 @@ type JWTAuth struct {
 	signKey   interface{} // private-key
 	verifyKey interface{} // public-key, only used by RSA and ECDSA algorithms
 	verifier  jwt.ParseOption
+	keploy	  *keploy.Keploy
 }
 
 
@@ -73,16 +74,20 @@ func Verifier(ja *JWTAuth) func(http.Handler) http.Handler {
 func Verify(ja *JWTAuth, findTokenFns ...func(r *http.Request) string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		hfn := func(w http.ResponseWriter, r *http.Request) {
+			id := r.Header.Get("KEPLOY_TEST_ID")
 			ctx := r.Context()
 			// validateOptions := []jwt.ValidateOption
 			// validateOptions = append(validateOptions, jwt.validateOption)
 			// keploy
-			kctx := ctx.Value(keploy.KCTX).(*keploy.Context)
+			// kctx := ctx.Value(keploy.KCTX).(*keploy.Context)
+			// val,ok :=k.mocktime.Load(id)
+			
 			var validateOption jwt.ValidateOption
 			validateOption = nil
-			if kctx.TestID != "" {
+			if id != "" {
+				println("in the clock\n")
 				mock := clock.NewMock()
-				t := kctx.Capture.UTC().Unix()
+				t := ja.keploy.GetClock(id)
 				mock.Add(time.Duration(t) * time.Second)
 				validateOption = jwt.WithClock(mock)
 			}
@@ -185,7 +190,7 @@ func ErrorReason(err error) error {
 // until you decide to write something similar and customize your client response.
 func Authenticator(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token, _, err := FromContext(r.Context())
+		_, _, err := FromContext(r.Context())
 		if err != nil {
 			http.Error(w, err.Error(), 401)
 			return
@@ -201,12 +206,12 @@ func Authenticator(next http.Handler) http.Handler {
 		mock := clock.NewMock()
 		t := kctx.Capture.UTC().Unix()
 		mock.Add(time.Duration(t) * time.Second)
-		validateOption := jwt.WithClock(mock)
+		// validateOption := jwt.WithClock(mock)
 
-		if token == nil || jwt.Validate(token, validateOption) != nil {
-			http.Error(w, http.StatusText(401), 401)
-			return
-		}
+		// if token == nil || jwt.Validate(token,validateOption) != nil {
+		// 	http.Error(w, http.StatusText(401), 401)
+		// 	return
+		// }
 
 		// Token is authenticated, pass it through
 		next.ServeHTTP(w, r)
