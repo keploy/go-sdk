@@ -18,9 +18,8 @@ type JWTAuth struct {
 	signKey   interface{} // private-key
 	verifyKey interface{} // public-key, only used by RSA and ECDSA algorithms
 	verifier  jwt.ParseOption
-	keploy	  *keploy.Keploy
+	keploy    *keploy.Keploy
 }
-
 
 var (
 	TokenCtxKey          = &contextKey{"Token"}
@@ -37,8 +36,8 @@ var (
 	ErrAlgoInvalid  = errors.New("algorithm mismatch")
 )
 
-func New(alg string, signKey interface{}, verifyKey interface{}) *JWTAuth {
-	ja := &JWTAuth{alg: jwa.SignatureAlgorithm(alg), signKey: signKey, verifyKey: verifyKey}
+func New(alg string, signKey interface{}, verifyKey interface{}, keploy *keploy.Keploy) *JWTAuth {
+	ja := &JWTAuth{alg: jwa.SignatureAlgorithm(alg), signKey: signKey, verifyKey: verifyKey, keploy: keploy}
 
 	if ja.verifyKey != nil {
 		ja.verifier = jwt.WithVerify(ja.alg, ja.verifyKey)
@@ -81,10 +80,10 @@ func Verify(ja *JWTAuth, findTokenFns ...func(r *http.Request) string) func(http
 			// keploy
 			// kctx := ctx.Value(keploy.KCTX).(*keploy.Context)
 			// val,ok :=k.mocktime.Load(id)
-			
+
 			var validateOption jwt.ValidateOption
 			validateOption = nil
-			if id != "" {
+			if id != "" && ja.keploy != nil {
 				println("in the clock\n")
 				mock := clock.NewMock()
 				t := ja.keploy.GetClock(id)

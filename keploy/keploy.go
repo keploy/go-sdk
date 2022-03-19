@@ -68,7 +68,7 @@ type AppConfig struct {
 	Port    string        `validate:"required"`
 	Delay   time.Duration `default:"5s"`
 	Timeout time.Duration `default:"60s"`
-	Filter  Filter        
+	Filter  Filter
 }
 
 type Filter struct {
@@ -110,8 +110,8 @@ func New(cfg Config) *Keploy {
 		client: &http.Client{
 			Timeout: cfg.App.Timeout,
 		},
-		deps: sync.Map{},
-		resp: sync.Map{},
+		deps:     sync.Map{},
+		resp:     sync.Map{},
 		mocktime: sync.Map{},
 	}
 	if mode == MODE_TEST {
@@ -126,7 +126,7 @@ type Keploy struct {
 	client *http.Client
 	deps   sync.Map
 	//Deps map[string][]models.Dependency
-	resp   sync.Map
+	resp sync.Map
 	//Resp map[string]models.HttpResp
 	mocktime sync.Map
 }
@@ -145,11 +145,11 @@ func (k *Keploy) GetDependencies(id string) []models.Dependency {
 }
 
 func (k *Keploy) GetClock(id string) int64 {
-	val,ok :=k.mocktime.Load(id)
+	val, ok := k.mocktime.Load(id)
 	if !ok {
 		return 0
 	}
-	mocktime,ok:=val.(int64)
+	mocktime, ok := val.(int64)
 	if !ok {
 		k.Log.Error("failed getting time for http request", zap.String("test case id", id))
 		return 0
@@ -259,9 +259,9 @@ func (k *Keploy) simulate(tc models.TestCase) (*models.HttpResp, error) {
 	defer k.deps.Delete(tc.ID)
 	// mock := clock.NewMock()
 	// t:=tc.Captured
-	// mock.Add(time.Duration(t) * time.Second) 
+	// mock.Add(time.Duration(t) * time.Second)
 	// tc.Captured = mock.Now().UTC().Unix()
-	k.mocktime.Store(tc.ID,tc.Captured)
+	k.mocktime.Store(tc.ID, tc.Captured)
 	defer k.mocktime.Delete(tc.ID)
 	//k.Deps[tc.ID] = tc.Deps
 	//defer delete(k.Deps, tc.ID)
