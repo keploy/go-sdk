@@ -9,7 +9,7 @@ require (
 	github.com/bnkamalesh/webgo/v6 v6.2.2
 	github.com/creasty/defaults v1.5.2
 	github.com/gin-gonic/gin v1.7.7
-	github.com/go-playground/validator/v10 v10.4.1
+	github.com/go-playground/validator/v10 v10.10.1
 	github.com/labstack/echo/v4 v4.6.1
 	go.mongodb.org/mongo-driver v1.8.1
 	go.uber.org/zap v1.19.1
@@ -37,8 +37,8 @@ require (
 	github.com/agnivade/levenshtein v1.1.0 // indirect
 	github.com/gin-contrib/sse v0.1.0 // indirect
 	github.com/go-chi/render v1.0.1 // indirect
-	github.com/go-playground/locales v0.13.0 // indirect
-	github.com/go-playground/universal-translator v0.17.0 // indirect
+	github.com/go-playground/locales v0.14.0 // indirect
+	github.com/go-playground/universal-translator v0.18.0 // indirect
 	github.com/go-stack/stack v1.8.0 // indirect
 	github.com/golang/protobuf v1.4.3 // indirect
 	github.com/golang/snappy v0.0.1 // indirect

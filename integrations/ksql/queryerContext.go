@@ -20,8 +20,9 @@ type Rows struct {
 	driver.Rows
 	query string
 	args  []driver.NamedValue
-	log *zap.Logger
+	log   *zap.Logger
 }
+
 // Columns mocks the output of Columns method of your SQL driver.
 func (r Rows) Columns() []string {
 	if keploy.GetModeFromContext(r.ctx) == keploy.MODE_OFF {
@@ -49,13 +50,14 @@ func (r Rows) Columns() []string {
 		"type":      string(models.SqlDB),
 		"operation": "QueryContext.Columns",
 	}
-	
+
 	mock, _ := keploy.ProcessDep(r.ctx, r.log, meta, output)
 	if mock {
 		return *output
 	}
 	return *output
 }
+
 // Close mocks the output of Close method of your SQL driver.
 func (r Rows) Close() error {
 	if keploy.GetModeFromContext(r.ctx) == keploy.MODE_OFF {
@@ -72,7 +74,11 @@ func (r Rows) Close() error {
 	mode := kctx.Mode
 	switch mode {
 	case "test":
-		// don't run
+		// don't run actual rows.Close
+		// ignore the rows.Close which is not done manually.
+		if kctx.Deps == nil || len(kctx.Deps) == 0 || len(kctx.Deps[0].Data) != 1 {
+			return nil
+		}
 	case "capture":
 		err = r.Rows.Close()
 	default:
@@ -86,7 +92,7 @@ func (r Rows) Close() error {
 	if err != nil {
 		kerr = &keploy.KError{Err: err}
 	}
-	
+
 	mock, res := keploy.ProcessDep(r.ctx, r.log, meta, kerr)
 	if mock {
 		var mockErr error
@@ -94,6 +100,7 @@ func (r Rows) Close() error {
 		if x.Err != nil {
 			mockErr = x.Err
 		}
+		mockErr = convertKError(mockErr)
 		return mockErr
 	}
 	return err
@@ -142,6 +149,7 @@ func (d *Value) GobEncode() ([]byte, error) {
 	return json.Marshal(res)
 
 }
+
 // GobDecode decodes Values using gob Decoder.
 func (d *Value) GobDecode(b []byte) error {
 	var res *[][]byte = &[][]byte{}
@@ -218,7 +226,7 @@ func (r Rows) Next(dest []driver.Value) error {
 	var (
 		err    error
 		kerr   *keploy.KError = &keploy.KError{}
-		output *Value   = &Value{Value: dest}
+		output *Value         = &Value{Value: dest}
 	)
 	kctx, er := keploy.GetState(r.ctx)
 	if er != nil {
@@ -254,6 +262,7 @@ func (r Rows) Next(dest []driver.Value) error {
 				dest[i] = output.Value[i]
 			}
 		}
+		mockErr = convertKError(mockErr)
 		return mockErr
 	}
 	return err
@@ -269,13 +278,13 @@ func (c Conn) QueryContext(ctx context.Context, query string, args []driver.Name
 		return queryerContext.QueryContext(ctx, query, args)
 	}
 	var (
-		err    error
-		kerr   *keploy.KError = &keploy.KError{}
-		driverRows *Rows    = &Rows{
-			ctx   :   ctx,
-			query :   query,
-			args  :   args,
-			log   :   c.log,
+		err        error
+		kerr       *keploy.KError = &keploy.KError{}
+		driverRows *Rows          = &Rows{
+			ctx:   ctx,
+			query: query,
+			args:  args,
+			log:   c.log,
 		}
 		rows driver.Rows
 	)
@@ -310,6 +319,7 @@ func (c Conn) QueryContext(ctx context.Context, query string, args []driver.Name
 		if x.Err != nil {
 			mockErr = x.Err
 		}
+		mockErr = convertKError(mockErr)
 		return driverRows, mockErr
 	}
 	return driverRows, err
