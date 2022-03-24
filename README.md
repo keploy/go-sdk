@@ -511,7 +511,7 @@ func router() http.Handler {
     // Chi example(comment echo, gin to use chi)
 	r := chi.NewRouter()
 	kchi.ChiV5(kApp, r)
-	// Protected routes
+    // Protected routes
 	r.Group(func(r chi.Router) {
 		// Seek, verify and validate JWT tokens
 		r.Use(kjwtauth.VerifierChi(tokenAuth))
@@ -529,9 +529,9 @@ func router() http.Handler {
 		})
 	})
 	// Public routes
-    r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-        w.Write([]byte("welcome"))
-    })
+    	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+        	w.Write([]byte("welcome"))
+    	})
 
 	return r
 }
