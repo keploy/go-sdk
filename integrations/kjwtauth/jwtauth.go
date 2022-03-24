@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/benbjohnson/clock"
+	"github.com/gin-gonic/gin"
 	"github.com/keploy/go-sdk/keploy"
+	"github.com/labstack/echo/v4"
 	"github.com/lestrrat-go/jwx/jwa"
 	"github.com/lestrrat-go/jwx/jwt"
 )
@@ -48,6 +50,53 @@ func New(alg string, signKey interface{}, verifyKey interface{}, keploy *keploy.
 	return ja
 }
 
+func setTestClock(ja *JWTAuth, r *http.Request) jwt.ValidateOption {
+	id := r.Header.Get("KEPLOY_TEST_ID")
+	var validateOption jwt.ValidateOption
+	if id != "" && ja.keploy != nil {
+		mock := clock.NewMock()
+		t := ja.keploy.GetClock(id)
+		mock.Add(time.Duration(t) * time.Second)
+		validateOption = jwt.WithClock(mock)
+	}
+	return validateOption
+}
+
+func setContext(ja *JWTAuth, r *http.Request, findTokenFns ...func(r *http.Request) string) *http.Request {
+	validateOption := setTestClock(ja, r)
+
+	token, err := VerifyRequest(ja, r, validateOption, findTokenFns...)
+	ctx := r.Context()
+	ctx = NewContext(ctx, token, err, validateOption)
+	return r.WithContext(ctx)
+}
+
+func VerifierEcho(ja *JWTAuth) func(echo.HandlerFunc) echo.HandlerFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return VerifyEcho(ja, TokenFromHeader, TokenFromCookie)(next)
+	}
+}
+
+func VerifyEcho(ja *JWTAuth, findTokenFns ...func(r *http.Request) string) func(echo.HandlerFunc) echo.HandlerFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(ctx echo.Context) error {
+			ctx.SetRequest(setContext(ja, ctx.Request(), findTokenFns...))
+			return next(ctx)
+		}
+	}
+}
+
+func VerifierGin(ja *JWTAuth) gin.HandlerFunc {
+	return VerifyGin(ja, TokenFromHeader, TokenFromCookie)
+}
+
+func VerifyGin(ja *JWTAuth, findTokenFns ...func(r *http.Request) string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Request = setContext(ja, c.Request, findTokenFns...)
+		c.Next()
+	}
+}
+
 // Verifier http middleware handler will verify a JWT string from a http request.
 //
 // Verifier will search for a JWT token in a http request, in the order:
@@ -64,36 +113,17 @@ func New(alg string, signKey interface{}, verifyKey interface{}, keploy *keploy.
 // be the generic `jwtauth.Authenticator` middleware or your own custom handler
 // which checks the request context jwt token and error to prepare a custom
 // http response.
-func Verifier(ja *JWTAuth) func(http.Handler) http.Handler {
+func VerifierChi(ja *JWTAuth) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		return Verify(ja, TokenFromHeader, TokenFromCookie)(next)
+		return VerifyChi(ja, TokenFromHeader, TokenFromCookie)(next)
 	}
 }
 
-func Verify(ja *JWTAuth, findTokenFns ...func(r *http.Request) string) func(http.Handler) http.Handler {
+func VerifyChi(ja *JWTAuth, findTokenFns ...func(r *http.Request) string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		hfn := func(w http.ResponseWriter, r *http.Request) {
-			id := r.Header.Get("KEPLOY_TEST_ID")
-			ctx := r.Context()
-			// validateOptions := []jwt.ValidateOption
-			// validateOptions = append(validateOptions, jwt.validateOption)
-			// keploy
-			// kctx := ctx.Value(keploy.KCTX).(*keploy.Context)
-			// val,ok :=k.mocktime.Load(id)
-
-			var validateOption jwt.ValidateOption
-			validateOption = nil
-			if id != "" && ja.keploy != nil {
-				println("in the clock\n")
-				mock := clock.NewMock()
-				t := ja.keploy.GetClock(id)
-				mock.Add(time.Duration(t) * time.Second)
-				validateOption = jwt.WithClock(mock)
-			}
-
-			token, err := VerifyRequest(ja, r, validateOption, findTokenFns...)
-			ctx = NewContext(ctx, token, err)
-			next.ServeHTTP(w, r.WithContext(ctx))
+			r = setContext(ja, r, findTokenFns...)
+			next.ServeHTTP(w, r)
 		}
 		return http.HandlerFunc(hfn)
 	}
@@ -183,49 +213,66 @@ func ErrorReason(err error) error {
 	}
 }
 
+func authenticateRequest(req *http.Request) string {
+	token, _, err := FromContext(req.Context())
+	if err != nil {
+		return err.Error()
+	}
+	validateOption := GetValidateOption(req.Context())
+	if token == nil || (validateOption == nil && jwt.Validate(token) != nil) || (validateOption != nil && jwt.Validate(token, validateOption) != nil) {
+		return http.StatusText(http.StatusUnauthorized)
+	}
+	return ""
+}
+
+func AuthenticatorEcho(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		errStr := authenticateRequest(c.Request())
+		if errStr != "" {
+			c.String(http.StatusUnauthorized, errStr)
+			return errors.New(errStr)
+		}
+		next(c)
+		return nil
+	}
+}
+
+func AuthenticatorGin(c *gin.Context) {
+	errStr := authenticateRequest(c.Request)
+	if errStr != "" {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, errStr)
+		return
+	}
+	c.Next()
+}
+
 // Authenticator is a default authentication middleware to enforce access from the
 // Verifier middleware request context values. The Authenticator sends a 401 Unauthorized
 // response for any unverified tokens and passes the good ones through. It's just fine
 // until you decide to write something similar and customize your client response.
-func Authenticator(next http.Handler) http.Handler {
+func AuthenticatorChi(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _, err := FromContext(r.Context())
-		if err != nil {
-			http.Error(w, err.Error(), 401)
+		errStr := authenticateRequest(r)
+		if errStr != "" {
+			http.Error(w, errStr, http.StatusUnauthorized)
 			return
 		}
-
-		// validateOptions := GetOptions(r.Context())
-		// if err != nil {
-		// 	http.Error(w, err.Error(), 401)
-		// 	return
-		// }
-
-		kctx := r.Context().Value(keploy.KCTX).(*keploy.Context)
-		mock := clock.NewMock()
-		t := kctx.Capture.UTC().Unix()
-		mock.Add(time.Duration(t) * time.Second)
-		// validateOption := jwt.WithClock(mock)
-
-		// if token == nil || jwt.Validate(token,validateOption) != nil {
-		// 	http.Error(w, http.StatusText(401), 401)
-		// 	return
-		// }
-
-		// Token is authenticated, pass it through
 		next.ServeHTTP(w, r)
 	})
 }
 
-func GetOptions(ctx context.Context) []jwt.ValidateOption {
-	options, _ := ctx.Value(ValidateOptionCtxKey).([]jwt.ValidateOption)
-	return options
+func GetValidateOption(ctx context.Context) jwt.ValidateOption {
+	option, ok := ctx.Value(ValidateOptionCtxKey).(jwt.ValidateOption)
+	if !ok {
+		return nil
+	}
+	return option
 }
 
-func NewContext(ctx context.Context, t jwt.Token, err error) context.Context {
+func NewContext(ctx context.Context, t jwt.Token, err error, validateOption jwt.ValidateOption) context.Context {
 	ctx = context.WithValue(ctx, TokenCtxKey, t)
 	ctx = context.WithValue(ctx, ErrorCtxKey, err)
-	// ctx = context.WithValue(ctx, ValidateOptionCtxKey, validateOptions)
+	ctx = context.WithValue(ctx, ValidateOptionCtxKey, validateOption)
 	return ctx
 }
 

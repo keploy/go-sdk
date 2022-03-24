@@ -20,6 +20,7 @@ This is the client SDK for Keploy API testing platform. There are 2 modes:
 4. [Supported Routers](#supported-routers)
 5. [Supported Databases](#supported-databases)
 6. [Support Clients](#supported-clients)
+7. [Supported JWT Middlewares](#supported-jwt-middlewares)
 
 ## Installation
 ```bash
@@ -305,3 +306,124 @@ k := keploy.New(keploy.Config{
 conn, err := grpc.Dial(address, grpc.WithInsecure(), kgrpc.WithClientUnaryInterceptor(k))
 ```
 **Note**: Currently streaming is not yet supported. 
+
+## Supported JWT Middlewares
+### jwtauth
+Middlewares which can be used to authenticate. It is compatible for Chi, Gin and Echo router. Usage is similar to go-chi/jwtauth. Adds ValidationOption to mock time in test mode.
+ 
+#### Example
+```go
+package main
+
+import (
+	"github.com/gin-gonic/gin"
+	"github.com/go-chi/chi"
+	"github.com/labstack/echo/v4"
+
+	"github.com/benbjohnson/clock"
+	"github.com/keploy/go-sdk/integrations/kchi"
+	"github.com/keploy/go-sdk/integrations/kecho/v4"
+	"github.com/keploy/go-sdk/integrations/kgin/v1"
+
+	"github.com/keploy/go-sdk/integrations/kjwtauth"
+	"github.com/keploy/go-sdk/keploy"
+)
+
+var (
+	kApp      *keploy.Keploy
+	tokenAuth *kjwtauth.JWTAuth
+)
+
+func init() {
+    // Initialize kaploy instance
+	port := "6060"
+	kApp = keploy.New(keploy.Config{
+		App: keploy.AppConfig{
+			Name: "client-echo-App",
+			Port: port,
+		},
+		Server: keploy.ServerConfig{
+			URL: "http://localhost:8081/api",
+		},
+	})
+    // Generate a JWTConfig
+	tokenAuth = kjwtauth.New("HS256", []byte("mysecret"), nil, kApp)
+
+	claims := map[string]interface{}{"user_id": 123}
+	kjwtauth.SetExpiryIn(claims, 20*time.Second)
+    // Create a token string
+	_, tokenString, _ := tokenAuth.Encode(claims)
+	fmt.Printf("DEBUG: a sample jwt is %s\n\n", tokenString)
+}
+
+func main() {
+	addr := ":6060"
+
+	fmt.Printf("Starting server on %v\n", addr)
+	http.ListenAndServe(addr, router())
+}
+
+func router() http.Handler {
+    // Echo example
+	er := echo.New()
+    // add keploy's echo middleware
+	kecho.EchoV4(kApp, er)
+    // Public route
+	er.GET("/", func(c echo.Context) error {
+		return c.String(http.StatusOK, "Accessible")
+	})
+    // Protected route
+	er.GET("echoAdmin", func(c echo.Context) error {
+		_, claims, _ := kjwtauth.FromContext(c.Request().Context())
+		fmt.Println("requested admin")
+		return c.String(http.StatusOK, fmt.Sprint("protected area, Hi fin user: %v", claims["user_id"]))
+	}, kjwtauth.VerifierEcho(tokenAuth), kjwtauth.AuthenticatorEcho)
+	return er
+
+    // Gin example(comment echo example to use gin)
+	gr := gin.New()
+	kgin.GinV1(kApp, gr)
+    // Public route
+	gr.GET("/", func(ctx *gin.Context) {
+		ctx.Writer.Write([]byte("welcome to gin"))
+	})
+    // Protected route
+	auth := gr.Group("/auth")
+	auth.Use(kjwtauth.VerifierGin(tokenAuth))
+	auth.Use(kjwtauth.AuthenticatorGin)
+	auth.GET("/ginAdmin", func(c *gin.Context) {
+		_, claims, _ := kjwtauth.FromContext(c.Request.Context())
+		fmt.Println("requested admin")
+		c.Writer.Write([]byte(fmt.Sprintf("protected area, Hi fin user: %v", claims["user_id"])))
+	})
+	return gr
+
+    // Chi example(comment echo, gin to use chi)
+	r := chi.NewRouter()
+	kchi.ChiV5(kApp, r)
+	// Protected routes
+	r.Group(func(r chi.Router) {
+		// Seek, verify and validate JWT tokens
+		r.Use(kjwtauth.VerifierChi(tokenAuth))
+
+		// Handle valid / invalid tokens. In this example, we use
+		// the provided authenticator middleware, but you can write your
+		// own very easily, look at the Authenticator method in jwtauth.go
+		// and tweak it, its not scary.
+		r.Use(kjwtauth.AuthenticatorChi)
+
+		r.Get("/admin", func(w http.ResponseWriter, r *http.Request) {
+			_, claims, _ := kjwtauth.FromContext(r.Context())
+			fmt.Println("requested admin")
+			w.Write([]byte(fmt.Sprintf("protected area, Hi %v", claims["user_id"])))
+		})
+	})
+	// Public routes
+    r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte("welcome"))
+    })
+
+	return r
+}
+
+```
