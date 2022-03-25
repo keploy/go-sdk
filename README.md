@@ -243,7 +243,7 @@ Here is an example -
     func main(){
         // Register keploy sql driver to database/sql package.
         driver := ksql.Driver{Driver: pq.Driver{}}
-	    sql.Register("keploy", &driver)
+	sql.Register("keploy", &driver)
         
         pSQL_URI := fmt.Sprintf("host=%s user=%s dbname=%s sslmode=disable password=%s port=%s", "localhost", "postgres", "Book_Keeper", "8789", "5432")
         // keploy driver will internally open the connection using dataSourceName string parameter
@@ -275,7 +275,7 @@ Here is an example -
 Example for gORM with GCP-Postgres driver:
 ```go
     import (
-	    gcppostgres "github.com/GoogleCloudPlatform/cloudsql-proxy/proxy/dialers/postgres"
+	gcppostgres "github.com/GoogleCloudPlatform/cloudsql-proxy/proxy/dialers/postgres"
         "github.com/keploy/go-sdk/integrations/ksql"
         "gorm.io/driver/postgres"
 	    "gorm.io/gorm"
@@ -298,7 +298,7 @@ Example for gORM with GCP-Postgres driver:
         driver := ksql.Driver{Driver: gcppostgres.Driver{}}
         sql.Register("keploy", &driver)
 
-        pSQL_URI := fmt.Sprintf("host=%s user=%s dbname=%s sslmode=disable password=%s", GCPhost, "postgres", "Book_Keeper", "8789", "5432")
+        pSQL_URI := fmt.Sprintf("host=%s user=%s dbname=%s sslmode=disable password=%s", GCPHost, "postgres", "Book_Keeper", "8789", "5432")
 
         // set DisableAutomaticPing to true so that .
         pSQL_DB, err :=  gorm.Open( postgres.New(postgres.Config{
