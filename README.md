@@ -272,14 +272,33 @@ Here is an example -
     }
 ```
 **Note**: To integerate with gORM set DisableAutomaticPing of gorm.Config to true. Also pass request context to methods as params. 
-Example for gORM:
+Example for gORM with GCP-Postgres driver:
 ```go
+    import (
+	    gcppostgres "github.com/GoogleCloudPlatform/cloudsql-proxy/proxy/dialers/postgres"
+        "github.com/keploy/go-sdk/integrations/ksql"
+        "gorm.io/driver/postgres"
+	    "gorm.io/gorm"
+    )
+    type Person struct {
+        gorm.Model
+        Name  string
+        Email string `gorm:"typevarchar(100);unique_index"`
+        Books []Book
+    }
+    type Book struct {
+        gorm.Model
+        Title      string
+        Author     string
+        CallNumber int64 `gorm:"unique_index"`
+        PersonID   int
+    }
     func main(){
         // Register keploy sql driver to database/sql package.
-        driver := ksql.Driver{Driver: pq.Driver{}}
+        driver := ksql.Driver{Driver: gcppostgres.Driver{}}
         sql.Register("keploy", &driver)
 
-        pSQL_URI := fmt.Sprintf("host=%s user=%s dbname=%s sslmode=disable password=%s port=%s", "localhost", "postgres", "Book_Keeper", "8789", "5432")
+        pSQL_URI := fmt.Sprintf("host=%s user=%s dbname=%s sslmode=disable password=%s", GCPhost, "postgres", "Book_Keeper", "8789", "5432")
 
         // set DisableAutomaticPing to true so that .
         pSQL_DB, err :=  gorm.Open( postgres.New(postgres.Config{
@@ -288,6 +307,8 @@ Example for gORM:
             }), &gorm.Config{ 
                 DisableAutomaticPing: true 
         })
+        pSQL_DB.AutoMigrate(&Person{})
+        pSQL_DB.AutoMigrate(&Book{})
         r:=gin.New()
         kgin.GinV1(kApp, r)
         r.GET("/gin/:color/*type", func(c *gin.Context) {
