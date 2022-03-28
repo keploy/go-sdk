@@ -77,25 +77,31 @@ There are 3 modes:
 ### 1. Chi
 ```go
 r := chi.NewRouter()
-kchi.ChiV5(k,r)
+r.Use(kchi.ChiMiddlewareV5(k))
 ```
 #### Example
 ```go
-import("github.com/keploy/go-sdk/integrations/kchi")
+import(
+    "github.com/keploy/go-sdk/integrations/kchi"
+	"github.com/keploy/go-sdk/keploy"
+	"github.com/go-chi/chi"
+)
 
-r := chi.NewRouter()
-port := "8080"
-k := keploy.New(keploy.Config{
-           App: keploy.AppConfig{
-               Name: "my_app",
-               Port: port,
-           },
-           Server: keploy.ServerConfig{
-               URL: "http://localhost:8081/api",
-           },
-         })
-kchi.ChiV5(k,r)
-http.ListenAndServe(":" + port, r)
+func main(){
+    r := chi.NewRouter()
+    port := "8080"
+    k := keploy.New(keploy.Config{
+            App: keploy.AppConfig{
+                Name: "my_app",
+                Port: port,
+            },
+            Server: keploy.ServerConfig{
+                URL: "http://localhost:8081/api",
+            },
+            })
+    r.Use(kchi.ChiMiddlewareV5(k))
+    http.ListenAndServe(":" + port, r)
+}
 ```
 ### 2. Gin
 ```go
@@ -104,7 +110,10 @@ kgin.GinV1(k, r)
 ```
 #### Example
 ```go
-import("github.com/keploy/go-sdk/integrations/kgin/v1")
+import(
+    "github.com/keploy/go-sdk/integrations/kgin/v1"
+	"github.com/keploy/go-sdk/keploy"
+)
 
 r:=gin.New()
 port := "8080"
@@ -123,82 +132,101 @@ r.Run(":" + port)
 ### 3. Echo
 ```go
 e := echo.New()
-kecho.EchoV4(k, e)
+e.Use(kecho.EchoMiddlewareV4(k))
 ```
 #### Example
 ```go
-import("github.com/keploy/go-sdk/integrations/kecho/v4")
+import(
+    "github.com/keploy/go-sdk/integrations/kecho/v4"
+	"github.com/keploy/go-sdk/keploy"
+	"github.com/labstack/echo/v4"
+)
 
-e := echo.New()
-port := "8080"
-k := keploy.New(keploy.Config{
-  App: keploy.AppConfig{
-      Name: "my-app",
-      Port: port,
-  },
-  Server: keploy.ServerConfig{
-      URL: "http://localhost:8081/api",
-  },
-})
-kecho.EchoV4(k, e)
-e.Start(":" + port)
+func main(){
+    e := echo.New()
+    port := "8080"
+    k := keploy.New(keploy.Config{
+      App: keploy.AppConfig{
+          Name: "my-app",
+          Port: port,
+      },
+      Server: keploy.ServerConfig{
+          URL: "http://localhost:8081/api",
+      },
+    })
+    e.Use(kecho.EchoMiddlewareV4(k))
+    e.Start(":" + port)
+}
 ```
 ### 4. WebGo
 #### WebGoV4
 ```go
 router := webgo.NewRouter(cfg, getRoutes())
-kwebgo.WebGoV4(k, router)
+router.Use(kwebgo.WebgoMiddlewareV4(k))
 ```
 #### WebGoV6
 ```go
-kwebgo.WebGoV6(k, router)
+router.Use(kwebgo.WebgoMiddlewareV6(k))
 router.Start()
 ```
 #### Example
 ```go
-import("github.com/keploy/go-sdk/integrations/kwebgo/v4")
+import(
+    "github.com/keploy/go-sdk/integrations/kwebgo/v4"
+	"github.com/keploy/go-sdk/keploy"
+	"github.com/bnkamalesh/webgo/v4"
+)
 
-port := "8080"
-k := keploy.New(keploy.Config{
-  App: keploy.AppConfig{
-      Name: "my-app",
-      Port: port,
-  },
-  Server: keploy.ServerConfig{
-      URL: "http://localhost:8081/api",
-  },
-})
-
-kwebgo.WebGoV4(k
-
-, router)
-router.Start()
+func main(){
+    port := "8080"
+    k := keploy.New(keploy.Config{
+      App: keploy.AppConfig{
+          Name: "my-app",
+          Port: port,
+      },
+      Server: keploy.ServerConfig{
+          URL: "http://localhost:8081/api",
+      },
+    })
+    router := webgo.NewRouter(&webgo.Config{
+		Host:         "",
+		Port:         port,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 60 * time.Second,
+	}, [])
+    router.Use(kwebgo.WebgoMiddlewareV4(k))
+    router.Start()
+}
 ```
 ### 5. Gorilla/Mux 
 ```go
 r := mux.NewRouter()
-kmux.Mux(k, r)
+r.Use(kmux.MuxMiddleware(k))
 ```
 #### Example
 ```go
 import(	
     "github.com/keploy/go-sdk/integrations/kmux"
+	"github.com/keploy/go-sdk/keploy"
+	"github.com/gorilla/mux"
     "net/http"
 )
 
-r := mux.NewRouter()
-port := "8080"
-k := keploy.New(keploy.Config{
-  App: keploy.AppConfig{
-      Name: "my-app",
-      Port: port,
-  },
-  Server: keploy.ServerConfig{
-      URL: "http://localhost:8081/api",
-  },
-})
-kmux.Mux(k, r)
-http.ListenAndServe(":"+port, r)
+func main(){
+    r := mux.NewRouter()
+    port := "8080"
+    k := keploy.New(keploy.Config{
+      App: keploy.AppConfig{
+          Name: "my-app",
+          Port: port,
+      },
+      Server: keploy.ServerConfig{
+          URL: "http://localhost:8081/api",
+      },
+    })
+    r.Use(kmux.MuxMiddleware(k))
+    http.ListenAndServe(":"+port, r)
+}
 ```
 
 ## Supported Databases
