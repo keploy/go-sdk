@@ -470,48 +470,14 @@ func main() {
 	addr := ":6060"
 
 	fmt.Printf("Starting server on %v\n", addr)
-	http.ListenAndServe(addr, router())
+	http.ListenAndServe(addr, echoRouter())
 }
 
-func router() http.Handler {
-    // Echo example
-	er := echo.New()
-    // add keploy's echo middleware
-	kecho.EchoV4(kApp, er)
-    // Public route
-	er.GET("/", func(c echo.Context) error {
-		return c.String(http.StatusOK, "Accessible")
-	})
-    // Protected route
-	er.GET("echoAdmin", func(c echo.Context) error {
-		_, claims, _ := kjwtauth.FromContext(c.Request().Context())
-		fmt.Println("requested admin")
-		return c.String(http.StatusOK, fmt.Sprint("protected area, Hi fin user: %v", claims["user_id"]))
-	}, kjwtauth.VerifierEcho(tokenAuth), kjwtauth.AuthenticatorEcho)
-	return er
-
-    // Gin example(comment echo example to use gin)
-	gr := gin.New()
-	kgin.GinV1(kApp, gr)
-    // Public route
-	gr.GET("/", func(ctx *gin.Context) {
-		ctx.Writer.Write([]byte("welcome to gin"))
-	})
-    // Protected route
-	auth := gr.Group("/auth")
-	auth.Use(kjwtauth.VerifierGin(tokenAuth))
-	auth.Use(kjwtauth.AuthenticatorGin)
-	auth.GET("/ginAdmin", func(c *gin.Context) {
-		_, claims, _ := kjwtauth.FromContext(c.Request.Context())
-		fmt.Println("requested admin")
-		c.Writer.Write([]byte(fmt.Sprintf("protected area, Hi fin user: %v", claims["user_id"])))
-	})
-	return gr
-
-    // Chi example(comment echo, gin to use chi)
+func chiRouter()  http.Handler {
+        // Chi example(comment echo, gin to use chi)
 	r := chi.NewRouter()
 	kchi.ChiV5(kApp, r)
-    // Protected routes
+        // Protected routes
 	r.Group(func(r chi.Router) {
 		// Seek, verify and validate JWT tokens
 		r.Use(kjwtauth.VerifierChi(tokenAuth))
@@ -536,4 +502,41 @@ func router() http.Handler {
 	return r
 }
 
+func echoRouter() http.Handler {
+        // Echo example
+	er := echo.New()
+        // add keploy's echo middleware
+	kecho.EchoV4(kApp, er)
+        // Public route
+	er.GET("/", func(c echo.Context) error {
+		return c.String(http.StatusOK, "Accessible")
+	})
+        // Protected route
+	er.GET("echoAdmin", func(c echo.Context) error {
+		_, claims, _ := kjwtauth.FromContext(c.Request().Context())
+		fmt.Println("requested admin")
+		return c.String(http.StatusOK, fmt.Sprint("protected area, Hi fin user: %v", claims["user_id"]))
+	}, kjwtauth.VerifierEcho(tokenAuth), kjwtauth.AuthenticatorEcho)
+	return er
+}
+
+func ginRouter() http.Handler {
+        // Gin example(comment echo example to use gin)
+	gr := gin.New()
+	kgin.GinV1(kApp, gr)
+        // Public route
+	gr.GET("/", func(ctx *gin.Context) {
+		ctx.Writer.Write([]byte("welcome to gin"))
+	})
+        // Protected route
+	auth := gr.Group("/auth")
+	auth.Use(kjwtauth.VerifierGin(tokenAuth))
+	auth.Use(kjwtauth.AuthenticatorGin)
+	auth.GET("/ginAdmin", func(c *gin.Context) {
+		_, claims, _ := kjwtauth.FromContext(c.Request.Context())
+		fmt.Println("requested admin")
+		c.Writer.Write([]byte(fmt.Sprintf("protected area, Hi fin user: %v", claims["user_id"])))
+	})
+	return gr
+}
 ```
