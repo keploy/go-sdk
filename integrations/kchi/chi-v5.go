@@ -61,9 +61,8 @@ func mw(k *keploy.Keploy) func(http.Handler) http.Handler {
 					TestID: id,
 					Deps:   k.GetDependencies(id),
 				})
-				
+
 				r = r.WithContext(ctx)
-				
 				resp := captureRespChi(w, r, next)
 				k.PutResp(id, resp)
 				return
