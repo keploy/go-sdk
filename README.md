@@ -210,10 +210,10 @@ r.Use(kmux.MuxMiddleware(k))
 #### Example
 ```go
 import(	
-    "github.com/keploy/go-sdk/integrations/kmux"
+        "github.com/keploy/go-sdk/integrations/kmux"
 	"github.com/keploy/go-sdk/keploy"
 	"github.com/gorilla/mux"
-    "net/http"
+        "net/http"
 )
 
 func main(){
