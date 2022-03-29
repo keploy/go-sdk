@@ -163,7 +163,7 @@ func CaptureTestcase(k *Keploy, r *http.Request, reqBody []byte, resp models.Htt
 		HttpResp: resp,
 		Deps:     deps.Deps,
 	})
-
+	
 }
 
 func urlParams(r *http.Request, params map[string]string) map[string]string {
