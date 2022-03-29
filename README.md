@@ -82,7 +82,7 @@ r.Use(kchi.ChiMiddlewareV5(k))
 #### Example
 ```go
 import(
-    "github.com/keploy/go-sdk/integrations/kchi"
+        "github.com/keploy/go-sdk/integrations/kchi"
 	"github.com/keploy/go-sdk/keploy"
 	"github.com/go-chi/chi"
 )
@@ -111,23 +111,25 @@ kgin.GinV1(k, r)
 #### Example
 ```go
 import(
-    "github.com/keploy/go-sdk/integrations/kgin/v1"
+        "github.com/keploy/go-sdk/integrations/kgin/v1"
 	"github.com/keploy/go-sdk/keploy"
 )
 
-r:=gin.New()
-port := "8080"
-k := keploy.New(keploy.Config{
-  App: keploy.AppConfig{
-      Name: "my_app",
-      Port: port,
-  },
-  Server: keploy.ServerConfig{
-      URL: "http://localhost:8081/api",
-  },
-})
-kgin.GinV1(k, r)
-r.Run(":" + port)
+func main(){
+	r:=gin.New()
+	port := "8080"
+	k := keploy.New(keploy.Config{
+	  App: keploy.AppConfig{
+	      Name: "my_app",
+	      Port: port,
+	  },
+	  Server: keploy.ServerConfig{
+	      URL: "http://localhost:8081/api",
+	  },
+	})
+	kgin.GinV1(k, r)
+	r.Run(":" + port)
+}
 ```
 ### 3. Echo
 ```go
@@ -137,7 +139,7 @@ e.Use(kecho.EchoMiddlewareV4(k))
 #### Example
 ```go
 import(
-    "github.com/keploy/go-sdk/integrations/kecho/v4"
+        "github.com/keploy/go-sdk/integrations/kecho/v4"
 	"github.com/keploy/go-sdk/keploy"
 	"github.com/labstack/echo/v4"
 )
@@ -163,16 +165,18 @@ func main(){
 ```go
 router := webgo.NewRouter(cfg, getRoutes())
 router.Use(kwebgo.WebgoMiddlewareV4(k))
+router.Start()
 ```
 #### WebGoV6
 ```go
+router := webgo.NewRouter(cfg, getRoutes())
 router.Use(kwebgo.WebgoMiddlewareV6(k))
 router.Start()
 ```
 #### Example
 ```go
 import(
-    "github.com/keploy/go-sdk/integrations/kwebgo/v4"
+        "github.com/keploy/go-sdk/integrations/kwebgo/v4"
 	"github.com/keploy/go-sdk/keploy"
 	"github.com/bnkamalesh/webgo/v4"
 )
@@ -193,7 +197,7 @@ func main(){
 		Port:         port,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 60 * time.Second,
-	}, [])
+	}, []*webgo.Route{})
     router.Use(kwebgo.WebgoMiddlewareV4(k))
     router.Start()
 }
