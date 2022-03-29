@@ -20,7 +20,7 @@ type JWTAuth struct {
 	signKey   interface{} // private-key
 	verifyKey interface{} // public-key, only used by RSA and ECDSA algorithms
 	verifier  jwt.ParseOption
-	keploy    *keploy.Keploy
+	keploy    *keploy.Keploy // keploy instace 
 }
 
 var (
@@ -97,7 +97,7 @@ func VerifyGin(ja *JWTAuth, findTokenFns ...func(r *http.Request) string) gin.Ha
 	}
 }
 
-// Verifier http middleware handler will verify a JWT string from a http request.
+// VerifierChi http middleware handler will verify a JWT string from a http request.
 //
 // Verifier will search for a JWT token in a http request, in the order:
 //   1. 'jwt' URI query parameter
@@ -246,7 +246,7 @@ func AuthenticatorGin(c *gin.Context) {
 	c.Next()
 }
 
-// Authenticator is a default authentication middleware to enforce access from the
+// AuthenticatorChi is a default authentication middleware to enforce access from the
 // Verifier middleware request context values. The Authenticator sends a 401 Unauthorized
 // response for any unverified tokens and passes the good ones through. It's just fine
 // until you decide to write something similar and customize your client response.
