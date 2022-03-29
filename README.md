@@ -445,7 +445,7 @@ var (
 )
 
 func init() {
-    // Initialize kaploy instance
+        // Initialize kaploy instance
 	port := "6060"
 	kApp = keploy.New(keploy.Config{
 		App: keploy.AppConfig{
@@ -456,12 +456,12 @@ func init() {
 			URL: "http://localhost:8081/api",
 		},
 	})
-    // Generate a JWTConfig
+        // Generate a JWTConfig
 	tokenAuth = kjwtauth.New("HS256", []byte("mysecret"), nil, kApp)
 
 	claims := map[string]interface{}{"user_id": 123}
 	kjwtauth.SetExpiryIn(claims, 20*time.Second)
-    // Create a token string
+        // Create a token string
 	_, tokenString, _ := tokenAuth.Encode(claims)
 	fmt.Printf("DEBUG: a sample jwt is %s\n\n", tokenString)
 }
