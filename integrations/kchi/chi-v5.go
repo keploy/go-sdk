@@ -6,7 +6,6 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	"time"
 
 	// "github.com/benbjohnson/clock"
 	"github.com/go-chi/chi"
@@ -63,7 +62,6 @@ func mw(k *keploy.Keploy) func(http.Handler) http.Handler {
 					Mode:   "test",
 					TestID: id,
 					Deps:   k.GetDependencies(id),
-					Capture: time.Unix(k.GetClock(id), 0),
 				})
 				
 				// auth middleware 
@@ -80,7 +78,6 @@ func mw(k *keploy.Keploy) func(http.Handler) http.Handler {
 			// mock.Add(time.Duration(t) * time.Second)
 			ctx := context.WithValue(r.Context(), keploy.KCTX, &keploy.Context{
 				Mode: "capture",
-				// Capture: mock.Now(),
 			})
 
 			r = r.WithContext(ctx)
