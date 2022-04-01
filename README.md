@@ -244,7 +244,6 @@ Here is an example -
     func main(){
         // Register keploy sql driver to database/sql package.
         driver := ksql.Driver{Driver: pq.Driver{}}
-
 	sql.Register("keploy", &driver)
         
         pSQL_URI := fmt.Sprintf("host=%s user=%s dbname=%s sslmode=disable password=%s port=%s", "localhost", "postgres", "Book_Keeper", "8789", "5432")
@@ -308,7 +307,7 @@ Example for gORM with GCP-Postgres driver:
                 DSN: pSQL_URI
             }), &gorm.Config{ 
                 DisableAutomaticPing: true 
-        }
+        })
         pSQL_DB.AutoMigrate(&Person{})
         pSQL_DB.AutoMigrate(&Book{})
         r:=gin.New()
