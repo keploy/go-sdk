@@ -314,7 +314,7 @@ Example for gORM with GCP-Postgres driver:
         kgin.GinV1(kApp, r)
         r.GET("/gin/:color/*type", func(c *gin.Context) {
             // set the context of *gorm.DB with request's context of http Handler function before queries.
-            pSQL_DB = pSQL_DB.WithContext(r.Context())
+            pSQL_DB = pSQL_DB.WithContext(c.Request.Context())
             // Find
             var (
                 people []Book
