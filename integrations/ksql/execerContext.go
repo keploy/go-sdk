@@ -19,6 +19,7 @@ type Result struct {
 	RowsAff      int64
 	RError       string
 }
+
 func (r Result) LastInsertId() (int64, error) {
 	return r.LastInserted, errors.New(r.LError)
 }
@@ -38,9 +39,9 @@ func (c Conn) ExecContext(ctx context.Context, query string, args []driver.Named
 		return execerContext.ExecContext(ctx, query, args)
 	}
 	var (
-		err      error
-		kerr     *keploy.KError = &keploy.KError{}
-		result   driver.Result
+		err          error
+		kerr         *keploy.KError = &keploy.KError{}
+		result       driver.Result
 		driverResult *Result = &Result{}
 	)
 	kctx, er := keploy.GetState(ctx)
@@ -87,6 +88,7 @@ func (c Conn) ExecContext(ctx context.Context, query string, args []driver.Named
 		if x.Err != nil {
 			mockErr = x.Err
 		}
+		mockErr = convertKError(mockErr)
 		return driverResult, mockErr
 	}
 	return result, err

@@ -100,6 +100,7 @@ func (r Rows) Close() error {
 		if x.Err != nil {
 			mockErr = x.Err
 		}
+		mockErr = convertKError(mockErr)
 		return mockErr
 	}
 	return err
@@ -261,6 +262,7 @@ func (r Rows) Next(dest []driver.Value) error {
 				dest[i] = output.Value[i]
 			}
 		}
+		mockErr = convertKError(mockErr)
 		return mockErr
 	}
 	return err
@@ -317,6 +319,7 @@ func (c Conn) QueryContext(ctx context.Context, query string, args []driver.Name
 		if x.Err != nil {
 			mockErr = x.Err
 		}
+		mockErr = convertKError(mockErr)
 		return driverRows, mockErr
 	}
 	return driverRows, err

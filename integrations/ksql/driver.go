@@ -131,6 +131,7 @@ func (c Conn) Ping(ctx context.Context) error {
 		if x.Err != nil {
 			mockErr = x.Err
 		}
+		mockErr = convertKError(mockErr)
 		return mockErr
 	}
 	return err
