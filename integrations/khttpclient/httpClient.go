@@ -116,9 +116,10 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 		return i.core.RoundTrip(r)
 	}
 	var (
-		err  error
-		kerr *keploy.KError = &keploy.KError{}
-		resp *http.Response = &http.Response{}
+		err       error
+		kerr      *keploy.KError = &keploy.KError{}
+		resp      *http.Response = &http.Response{}
+		isRespNil bool           = false
 	)
 	kctx, er := keploy.GetState(r.Context())
 	if er != nil {
@@ -141,6 +142,10 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 		//don't call i.core.RoundTrip method
 	case "capture":
 		resp, err = i.core.RoundTrip(r)
+		if resp == nil {
+			isRespNil = true
+			resp = &http.Response{}
+		}
 	default:
 		return nil, errors.New("integrations: Not in a valid sdk mode")
 	}
@@ -162,6 +167,9 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 			mockErr = x.Err
 		}
 		return resp, mockErr
+	}
+	if isRespNil {
+		return nil, err
 	}
 	return resp, err
 
