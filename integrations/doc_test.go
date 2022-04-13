@@ -346,8 +346,7 @@ func ExampleCollection_DeleteMany() {
 	fmt.Printf("deleted %v documents\n", result.DeletedCount)
 }
 
-
-func ExampleWebGoV4() {
+func ExampleWebgoMiddlewareV4() {
 	port := "6060"
 	k := keploy.New(keploy.Config{
 		App: keploy.AppConfig{
@@ -364,11 +363,11 @@ func ExampleWebGoV4() {
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 60 * time.Second,
 	}, []*webgo.Route{})
-	kwebgo.WebGoV4(k, router)
+	router.Use(kwebgo.WebgoMiddlewareV4(k))
 	router.Start()
 }
 
-func ExampleEchoV4() {
+func ExampleEchoMiddlewareV4() {
 	e := echo.New()
 	port := "6060"
 	k := keploy.New(keploy.Config{
@@ -380,8 +379,8 @@ func ExampleEchoV4() {
 			URL: "http://localhost:8081/api",
 		},
 	})
-	// Remember to call integrations.EchoV4 before route handling
-	kecho.EchoV4(k, e)
+	// Remember to add echo middleware before route handling
+	e.Use(kecho.EchoMiddlewareV4(k))
 	e.GET("/echo", func(c echo.Context) error {
 		return nil
 	})
@@ -460,7 +459,7 @@ func ExampleNewInterceptor() {
 		},
 	})
 	// configure mux for integeration with keploy
-	kmux.Mux(kApp, r)
+	r.Use(kmux.MuxMiddleware(kApp))
 	// configure http client with keploy's interceptor
 	interceptor := khttpclient.NewInterceptor(http.DefaultTransport)
 	_ = http.Client{
@@ -484,14 +483,15 @@ func ExampleHttpClient_SetCtxHttpClient() {
 		},
 	})
 	// configure mux for integeration with keploy
-	kmux.Mux(kApp, r)
+	r.Use(kmux.MuxMiddleware(kApp))
+
 	// configure http client with keploy's interceptor
 	interceptor := khttpclient.NewInterceptor(http.DefaultTransport)
 	client := http.Client{
 		Transport: interceptor,
 	}
-	
-	r.HandleFunc("/mux/{category}/{params}",func (w http.ResponseWriter, r *http.Request)  {
+
+	r.HandleFunc("/mux/{category}/{params}", func(w http.ResponseWriter, r *http.Request) {
 		// SetCtxHttpClient is called before mocked http.Client's Get method.
 		interceptor.SetContext(r.Context())
 		// make get request to external http service
@@ -520,14 +520,14 @@ func ExampleHttpClient_Get() {
 		},
 	})
 	// configure mux for integeration with keploy
-	kmux.Mux(kApp, r)
+	r.Use(kmux.MuxMiddleware(kApp))
 	// configure http client with keploy's interceptor
 	interceptor := khttpclient.NewInterceptor(http.DefaultTransport)
 	client := http.Client{
 		Transport: interceptor,
 	}
-	
-	r.HandleFunc("/mux/{category}/{params}",func (w http.ResponseWriter, r *http.Request)  {
+
+	r.HandleFunc("/mux/{category}/{params}", func(w http.ResponseWriter, r *http.Request) {
 		// SetCtxHttpClient is called before mocked http.Client's Get method.
 		interceptor.SetContext(r.Context())
 		// make get request to external http service
@@ -557,14 +557,14 @@ func ExampleHttpClient_Do() {
 		},
 	})
 	// configure mux for integeration with keploy
-	kmux.Mux(kApp, r)
+	r.Use(kmux.MuxMiddleware(kApp))
 	// configure http client with keploy's interceptor
 	interceptor := khttpclient.NewInterceptor(http.DefaultTransport)
 	client := http.Client{
 		Transport: interceptor,
 	}
-	
-	r.HandleFunc("/mux/{category}/{params}",func (w http.ResponseWriter, r *http.Request)  {
+
+	r.HandleFunc("/mux/{category}/{params}", func(w http.ResponseWriter, r *http.Request) {
 		// SetCtxHttpClient is called before mocked http.Client's Get method.
 		interceptor.SetContext(r.Context())
 		// make get request to external http service using http.Client.Do
@@ -598,14 +598,14 @@ func ExampleHttpClient_Post() {
 		},
 	})
 	// configure mux for integeration with keploy
-	kmux.Mux(kApp, r)
+	r.Use(kmux.MuxMiddleware(kApp))
 	// configure http client with keploy's interceptor
 	interceptor := khttpclient.NewInterceptor(http.DefaultTransport)
 	client := http.Client{
 		Transport: interceptor,
 	}
-	
-	r.HandleFunc("/mux/{category}/{params}",func (w http.ResponseWriter, r *http.Request)  {
+
+	r.HandleFunc("/mux/{category}/{params}", func(w http.ResponseWriter, r *http.Request) {
 		// SetCtxHttpClient is called before mocked http.Client's Get method.
 		interceptor.SetContext(r.Context())
 		// make POST request to external http service using http.Client.POST method.
