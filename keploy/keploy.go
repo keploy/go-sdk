@@ -340,31 +340,40 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 	return false
 }
 
+func (k *Keploy) getHeaderFilter(tcs regression.TestCaseReq) bool {
+    var fil = k.cfg.App.Filter
+    var t = tcs.HttpReq.Header
+    var flag bool = false
+    for _, v := range fil.HeaderRegex {
+        headReg := regexp.MustCompile(v)
+        for key := range t {
+            if headReg.FindString(key) != "" {
+                flag = true
+                break
+            }
+        }
+        if flag {
+            break
+        }
+    }
+    if !flag {
+        return false
+    }
+    return true
+}
+
 func (k *Keploy) put(tcs regression.TestCaseReq) {
 
-	var str = k.cfg.App.Filter
-	reg := regexp.MustCompile(str.UrlRegex)
+	var fil = k.cfg.App.Filter
+	
+	if fil.HeaderRegex != nil {
+        if k.getHeaderFilter(tcs) == false {
+            return
+        }
+    }
 
-	var t = tcs.HttpReq.Header
-	var flag bool = false
-	for _, v := range str.HeaderRegex {
-		headReg:=regexp.MustCompile(v)
-		
-		for key,_ := range t {
-			if(headReg.FindString(key)!=""){
-				flag = true
-				break
-			}
-		}
-		if(flag){
-			break;
-		}
-	}
-	if(!flag){
-		return
-	}
-
-	if str.UrlRegex != "" && reg.FindString(tcs.URI) == "" {
+	reg := regexp.MustCompile(fil.UrlRegex)
+	if fil.UrlRegex != "" && reg.FindString(tcs.URI) == "" {
 		return
 	}
 
