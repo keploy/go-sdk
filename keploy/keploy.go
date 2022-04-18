@@ -343,20 +343,20 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 func (k *Keploy) getHeaderFilter(tcs regression.TestCaseReq) bool {
     var fil = k.cfg.App.Filter
     var t = tcs.HttpReq.Header
-    var flag bool = false
+    var valid bool = false
     for _, v := range fil.HeaderRegex {
         headReg := regexp.MustCompile(v)
         for key := range t {
             if headReg.FindString(key) != "" {
-                flag = true
+                valid = true
                 break
             }
         }
-        if flag {
+        if valid {
             break
         }
     }
-    if !flag {
+    if !valid {
         return false
     }
     return true
