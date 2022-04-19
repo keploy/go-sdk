@@ -17,13 +17,6 @@ import (
 	// "google.golang.org/genproto/googleapis/cloud/aiplatform/v1/schema/predict/params"
 )
 
-// func Mw(k *keploy.Keploy, r *routing.Router) {
-// 	if keploy.GetMode() == keploy.MODE_OFF {
-// 		return
-// 	}
-// 	r.Use(Fast(k))
-// }
-
 func captureResp(c *fasthttp.RequestCtx, next fasthttp.RequestHandler) models.HttpResp {
 	resBody := new(bytes.Buffer)
 	w := c.Response.BodyWriter()
@@ -87,7 +80,6 @@ func Fast(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp.RequestHandle
 					return
 				}
 			}
-			//c.RequestBodyStream() = ioutil.NopCloser(bytes.NewBuffer(reqBody))
 			r := &http.Request{}
 			fasthttpadaptor.ConvertRequest(c, r, true) //converting fasthttp request to http
 			resp := captureResp(c, next)
