@@ -274,21 +274,29 @@ func (k *Keploy) simulate(tc models.TestCase) (*models.HttpResp, error) {
 	req.ProtoMajor = tc.HttpReq.ProtoMajor
 	req.ProtoMinor = tc.HttpReq.ProtoMinor
 
-	_, err = k.client.Do(req)
+	httpresp, err := k.client.Do(req)
 	if err != nil {
 		k.Log.Error("failed sending testcase request to app", zap.Error(err))
 		return nil, err
 	}
 
-	//defer resp.Body.Close()
+	defer httpresp.Body.Close()
 	resp := k.GetResp(tc.ID)
-	k.resp.Delete(tc.ID)
+	defer k.resp.Delete(tc.ID)
 
-	//body, err := ioutil.ReadAll(resp.Body)
-	//if err != nil {
-	//  a.Log.Error("failed reading simulated response from app", zap.Error(err))
-	//  return nil, err
-	//}
+	body, err := ioutil.ReadAll(httpresp.Body)
+	if err != nil {
+		k.Log.Error("failed reading simulated response from app", zap.Error(err))
+		return nil, err
+	}
+	if resp.Body != string(body) {
+		resp.Body = string(body)
+		resp.Header = httpresp.Header
+	}
+	if resp.StatusCode != httpresp.StatusCode {
+		resp.StatusCode = httpresp.StatusCode
+	}
+
 	return &resp, nil
 }
 
