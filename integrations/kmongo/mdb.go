@@ -294,7 +294,7 @@ func (c *Collection) callMethod(ctx context.Context, str string, data []interfac
 			opts = append(opts, d.(*options.DistinctOptions))
 		}
 		output, err = c.Collection.Distinct(ctx, fieldName.(string), filter, opts...)
-	case "CountDocuments": 
+	case "CountDocuments":
 		filter := data[0]
 		data = data[1:]
 		var opts []*options.CountOptions
@@ -302,6 +302,28 @@ func (c *Collection) callMethod(ctx context.Context, str string, data []interfac
 			opts = append(opts, d.(*options.CountOptions))
 		}
 		output, err = c.Collection.CountDocuments(ctx, filter, opts...)
+	case "BulkWrite":
+		models := data[0]
+		data = data[1:]
+		var opts []*options.BulkWriteOptions
+		for _, d := range data {
+			opts = append(opts, d.(*options.BulkWriteOptions))
+		}
+		output, err = c.Collection.BulkWrite(ctx, models, opts...)
+	case "Watch":
+		pipeline := data[0]
+		data = data[1:]
+		var opts []*options.ChangeStreamOptions
+		for _, d := range data {
+			opts = append(opts, d.(*options.ChangeStreamOptions))
+		}
+		output, err = c.Collection.Watch(ctx, pipeline, opts...)
+	case "EstimatedDocumentCount":
+		var opts []*options.EstimatedDocumentCountOptions
+		for _, d := range data {
+			opts = append(opts, d.(*options.EstimatedDocumentCountOptions))
+		}
+		output, err = c.Collection.EstimatedDocumentCount(ctx, opts...)
 	default:
 		return nil, errors.New("integerations: SDK Not supported for this method")
 	}
