@@ -6,14 +6,15 @@ import (
 	"context"
 	"encoding/gob"
 	"errors"
-	"go.keploy.io/server/http/regression"
-	"go.keploy.io/server/pkg/models"
 	"io"
 	"net"
 	"net/http"
 	"reflect"
 	"strings"
 	"time"
+
+	"go.keploy.io/server/http/regression"
+	"go.keploy.io/server/pkg/models"
 
 	"go.uber.org/zap"
 )
@@ -163,7 +164,7 @@ func CaptureTestcase(k *Keploy, r *http.Request, reqBody []byte, resp models.Htt
 		HttpResp: resp,
 		Deps:     deps.Deps,
 	})
-	
+
 }
 
 func urlParams(r *http.Request, params map[string]string) map[string]string {
