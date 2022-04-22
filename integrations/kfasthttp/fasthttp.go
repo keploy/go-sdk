@@ -46,7 +46,7 @@ func setContextValFast(c *fasthttp.RequestCtx, val interface{}) {
 	c.SetUserValue(string(keploy.KCTX), val)
 
 }
-func Fast(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp.RequestHandler {
+func FastHttpMiddlware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp.RequestHandler {
 	if k == nil || keploy.GetMode() == keploy.MODE_OFF {
 		return func(next fasthttp.RequestHandler) fasthttp.RequestHandler {
 			return next
@@ -83,7 +83,7 @@ func Fast(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp.RequestHandle
 			r := &http.Request{}
 			fasthttpadaptor.ConvertRequest(c, r, true) //converting fasthttp request to http
 			resp := captureResp(c, next)
-			params := paramsfast(c)
+			params := pathParams(c)
 
 			ctx := context.TODO()
 			c.VisitUserValues(func(key []byte, val interface{}) {
@@ -102,7 +102,7 @@ func Fast(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp.RequestHandle
 		})
 	}
 }
-func paramsfast(c *fasthttp.RequestCtx) map[string]string {
+func pathParams(c *fasthttp.RequestCtx) map[string]string {
 	var result map[string]string = make(map[string]string)
 	c.URI().QueryArgs().VisitAll(func(key, value []byte) {
 		k, v := string(key), string(value)
