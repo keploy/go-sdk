@@ -7,6 +7,7 @@ import (
 	"encoding/gob"
 	"errors"
 	"io"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"reflect"
@@ -219,4 +220,49 @@ func (w *BodyDumpResponseWriter) Flush() {
 
 func (w *BodyDumpResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return w.ResponseWriter.(http.Hijacker).Hijack()
+}
+
+func ProcessRequest(rw http.ResponseWriter, r *http.Request, k *Keploy) (*BodyDumpResponseWriter, *http.Request, *bytes.Buffer, []byte, error) {
+	// Response body
+	resBody := new(bytes.Buffer)
+	mw := io.MultiWriter(rw, resBody)
+	writer := &BodyDumpResponseWriter{
+		Writer:         mw,
+		ResponseWriter: rw,
+		Status:         http.StatusOK,
+	}
+	// rw = writer
+
+	// Request context
+	id := r.Header.Get("KEPLOY_TEST_ID")
+	if id != "" {
+		// id is only present during simulation
+		// run it similar to how testcases would run
+		ctx := context.WithValue(r.Context(), KCTX, &Context{
+			Mode:   "test",
+			TestID: id,
+			Deps:   k.GetDependencies(id),
+		})
+		r = r.WithContext(ctx)
+		return writer, r, resBody, nil, nil
+	}
+	ctx := context.WithValue(r.Context(), KCTX, &Context{
+		Mode: "capture",
+	})
+	r = r.WithContext(ctx)
+
+	// Request Body
+	var reqBody []byte
+	var err error
+	if r.Body != nil { // Read
+		reqBody, err = ioutil.ReadAll(r.Body)
+		if err != nil {
+			// TODO right way to log errors
+			k.Log.Error("Unable to read request body", zap.Error(err))
+			return writer, r, resBody, nil, err
+		}
+	}
+	r.Body = ioutil.NopCloser(bytes.NewBuffer(reqBody)) // Reset
+
+	return writer, r, resBody, reqBody, nil
 }

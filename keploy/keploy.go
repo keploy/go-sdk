@@ -289,7 +289,7 @@ func (k *Keploy) simulate(tc models.TestCase) (*models.HttpResp, error) {
 		k.Log.Error("failed reading simulated response from app", zap.Error(err))
 		return nil, err
 	}
-
+  
 	if (resp.StatusCode < 300 || resp.StatusCode >= 400) && resp.Body != string(body) {
 		resp.Body = string(body)
 		resp.Header = httpresp.Header
