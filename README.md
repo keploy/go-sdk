@@ -237,7 +237,7 @@ func main(){
 ```go
 mw := kfasthttp.FastHttpMiddleware(k)
 ```
-####Example
+#### Example
 ```go
 import(
 	"github.com/keploy/go-sdk/integrations/kfasthttp"
