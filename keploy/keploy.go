@@ -347,7 +347,9 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 	return false
 }
 
-func (k *Keploy) getHeaderFilter(tcs regression.TestCaseReq) bool {
+// isValidHeader checks the valid header to filter out testcases
+// It returns true when any of the header matches with regular expression and returns false when it doesn't match.
+func (k *Keploy) isValidHeader(tcs regression.TestCaseReq) bool {
     var fil = k.cfg.App.Filter
     var t = tcs.HttpReq.Header
     var valid bool = false
@@ -374,7 +376,7 @@ func (k *Keploy) put(tcs regression.TestCaseReq) {
 	var fil = k.cfg.App.Filter
 	
 	if fil.HeaderRegex != nil {
-        if k.getHeaderFilter(tcs) == false {
+        if k.isValidHeader(tcs) == false {
             return
         }
     }
