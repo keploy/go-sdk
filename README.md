@@ -233,6 +233,42 @@ func main(){
     http.ListenAndServe(":"+port, r)
 }
 ```
+### 6. FastHttp
+```go
+mw := kfasthttp.FastHttpMiddleware(k)
+```
+####Example
+```go
+import(
+	"github.com/keploy/go-sdk/integrations/kfasthttp"
+	"github.com/keploy/go-sdk/keploy"
+	"github.com/valyala/fasthttp"
+)
+
+func main() {
+	k := keploy.New(keploy.Config{
+		App: keploy.AppConfig{
+			Name: "fasthttp-URL",
+			Port: "8080",
+		},
+		Server: keploy.ServerConfig{
+			URL: "http://localhost:8081/api",
+		},
+	})
+
+	mw := kfasthttp.FastHttpMiddleware(k)
+	m := func(ctx *fasthttp.RequestCtx) {
+		switch string(ctx.Path()) {
+		case "/index":
+			index(ctx)
+		default:
+			ctx.Error("not found", fasthttp.StatusNotFound)
+		}
+	}
+	log.Fatal(fasthttp.ListenAndServe(":8080", mw(m)))
+}
+```
+
 
 ## Supported Databases
 ### 1. MongoDB
