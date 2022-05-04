@@ -20,6 +20,7 @@ This is the client SDK for Keploy API testing platform. There are 2 modes:
 4. [Supported Routers](#supported-routers)
 5. [Supported Databases](#supported-databases)
 6. [Support Clients](#supported-clients)
+7. [Supported JWT Middlewares](#supported-jwt-middlewares)
 
 ## Installation
 ```bash
@@ -82,7 +83,7 @@ r.Use(kchi.ChiMiddlewareV5(k))
 #### Example
 ```go
 import(
-    "github.com/keploy/go-sdk/integrations/kchi"
+  "github.com/keploy/go-sdk/integrations/kchi"
 	"github.com/keploy/go-sdk/keploy"
 	"github.com/go-chi/chi"
 )
@@ -111,23 +112,25 @@ kgin.GinV1(k, r)
 #### Example
 ```go
 import(
-    "github.com/keploy/go-sdk/integrations/kgin/v1"
+  "github.com/keploy/go-sdk/integrations/kgin/v1"
 	"github.com/keploy/go-sdk/keploy"
 )
 
-r:=gin.New()
-port := "8080"
-k := keploy.New(keploy.Config{
-  App: keploy.AppConfig{
-      Name: "my_app",
-      Port: port,
-  },
-  Server: keploy.ServerConfig{
-      URL: "http://localhost:8081/api",
-  },
-})
-kgin.GinV1(k, r)
-r.Run(":" + port)
+func main(){
+	r:=gin.New()
+	port := "8080"
+	k := keploy.New(keploy.Config{
+	  App: keploy.AppConfig{
+	      Name: "my_app",
+	      Port: port,
+	  },
+	  Server: keploy.ServerConfig{
+	      URL: "http://localhost:8081/api",
+	  },
+	})
+	kgin.GinV1(k, r)
+	r.Run(":" + port)
+}
 ```
 ### 3. Echo
 ```go
@@ -137,7 +140,7 @@ e.Use(kecho.EchoMiddlewareV4(k))
 #### Example
 ```go
 import(
-    "github.com/keploy/go-sdk/integrations/kecho/v4"
+  "github.com/keploy/go-sdk/integrations/kecho/v4"
 	"github.com/keploy/go-sdk/keploy"
 	"github.com/labstack/echo/v4"
 )
@@ -163,16 +166,18 @@ func main(){
 ```go
 router := webgo.NewRouter(cfg, getRoutes())
 router.Use(kwebgo.WebgoMiddlewareV4(k))
+router.Start()
 ```
 #### WebGoV6
 ```go
+router := webgo.NewRouter(cfg, getRoutes())
 router.Use(kwebgo.WebgoMiddlewareV6(k))
 router.Start()
 ```
 #### Example
 ```go
 import(
-    "github.com/keploy/go-sdk/integrations/kwebgo/v4"
+  "github.com/keploy/go-sdk/integrations/kwebgo/v4"
 	"github.com/keploy/go-sdk/keploy"
 	"github.com/bnkamalesh/webgo/v4"
 )
@@ -193,7 +198,7 @@ func main(){
 		Port:         port,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 60 * time.Second,
-	}, [])
+	}, []*webgo.Route{})
     router.Use(kwebgo.WebgoMiddlewareV4(k))
     router.Start()
 }
@@ -205,11 +210,11 @@ r.Use(kmux.MuxMiddleware(k))
 ```
 #### Example
 ```go
-import(	
-    "github.com/keploy/go-sdk/integrations/kmux"
+import(
+  "github.com/keploy/go-sdk/integrations/kmux"
 	"github.com/keploy/go-sdk/keploy"
 	"github.com/gorilla/mux"
-    "net/http"
+  "net/http"
 )
 
 func main(){
@@ -271,7 +276,8 @@ Here is an example -
     func main(){
         // Register keploy sql driver to database/sql package.
         driver := ksql.Driver{Driver: pq.Driver{}}
-	    sql.Register("keploy", &driver)
+
+	sql.Register("keploy", &driver)
         
         pSQL_URI := fmt.Sprintf("host=%s user=%s dbname=%s sslmode=disable password=%s port=%s", "localhost", "postgres", "Book_Keeper", "8789", "5432")
         // keploy driver will internally open the connection using dataSourceName string parameter
@@ -300,14 +306,33 @@ Here is an example -
     }
 ```
 **Note**: To integerate with gORM set DisableAutomaticPing of gorm.Config to true. Also pass request context to methods as params. 
-Example for gORM:
+Example for gORM with GCP-Postgres driver:
 ```go
+    import (
+	gcppostgres "github.com/GoogleCloudPlatform/cloudsql-proxy/proxy/dialers/postgres"
+        "github.com/keploy/go-sdk/integrations/ksql"
+        "gorm.io/driver/postgres"
+	    "gorm.io/gorm"
+    )
+    type Person struct {
+        gorm.Model
+        Name  string
+        Email string `gorm:"typevarchar(100);unique_index"`
+        Books []Book
+    }
+    type Book struct {
+        gorm.Model
+        Title      string
+        Author     string
+        CallNumber int64 `gorm:"unique_index"`
+        PersonID   int
+    }
     func main(){
         // Register keploy sql driver to database/sql package.
-        driver := ksql.Driver{Driver: pq.Driver{}}
+        driver := ksql.Driver{Driver: gcppostgres.Driver{}}
         sql.Register("keploy", &driver)
 
-        pSQL_URI := fmt.Sprintf("host=%s user=%s dbname=%s sslmode=disable password=%s port=%s", "localhost", "postgres", "Book_Keeper", "8789", "5432")
+        pSQL_URI := fmt.Sprintf("host=%s user=%s dbname=%s sslmode=disable password=%s", GCPHost, "postgres", "Book_Keeper", "8789", "5432")
 
         // set DisableAutomaticPing to true so that .
         pSQL_DB, err :=  gorm.Open( postgres.New(postgres.Config{
@@ -315,12 +340,14 @@ Example for gORM:
                 DSN: pSQL_URI
             }), &gorm.Config{ 
                 DisableAutomaticPing: true 
-        })
+        }
+        pSQL_DB.AutoMigrate(&Person{})
+        pSQL_DB.AutoMigrate(&Book{})
         r:=gin.New()
         kgin.GinV1(kApp, r)
         r.GET("/gin/:color/*type", func(c *gin.Context) {
             // set the context of *gorm.DB with request's context of http Handler function before queries.
-            pSQL_DB = pSQL_DB.WithContext(r.Context())
+            pSQL_DB = pSQL_DB.WithContext(c.Request.Context())
             // Find
             var (
                 people []Book
@@ -443,3 +470,127 @@ k := keploy.New(keploy.Config{
 conn, err := grpc.Dial(address, grpc.WithInsecure(), kgrpc.WithClientUnaryInterceptor(k))
 ```
 **Note**: Currently streaming is not yet supported. 
+
+## Supported JWT Middlewares
+### jwtauth
+Middlewares which can be used to authenticate. It is compatible for Chi, Gin and Echo router. Usage is similar to go-chi/jwtauth. Adds ValidationOption to mock time in test mode.
+ 
+#### Example
+```go
+package main
+
+import (
+	"github.com/gin-gonic/gin"
+	"github.com/go-chi/chi"
+	"github.com/labstack/echo/v4"
+
+	"github.com/benbjohnson/clock"
+	"github.com/keploy/go-sdk/integrations/kchi"
+	"github.com/keploy/go-sdk/integrations/kecho/v4"
+	"github.com/keploy/go-sdk/integrations/kgin/v1"
+
+	"github.com/keploy/go-sdk/integrations/kjwtauth"
+	"github.com/keploy/go-sdk/keploy"
+)
+
+var (
+	kApp      *keploy.Keploy
+	tokenAuth *kjwtauth.JWTAuth
+)
+
+func init() {
+        // Initialize kaploy instance
+	port := "6060"
+	kApp = keploy.New(keploy.Config{
+		App: keploy.AppConfig{
+			Name: "client-echo-App",
+			Port: port,
+		},
+		Server: keploy.ServerConfig{
+			URL: "http://localhost:8081/api",
+		},
+	})
+        // Generate a JWTConfig
+	tokenAuth = kjwtauth.New("HS256", []byte("mysecret"), nil, kApp)
+
+	claims := map[string]interface{}{"user_id": 123}
+	kjwtauth.SetExpiryIn(claims, 20*time.Second)
+        // Create a token string
+	_, tokenString, _ := tokenAuth.Encode(claims)
+	fmt.Printf("DEBUG: a sample jwt is %s\n\n", tokenString)
+}
+
+func main() {
+	addr := ":6060"
+
+	fmt.Printf("Starting server on %v\n", addr)
+	http.ListenAndServe(addr, echoRouter())
+}
+
+func chiRouter()  http.Handler {
+        // Chi example(comment echo, gin to use chi)
+	r := chi.NewRouter()
+	kchi.ChiV5(kApp, r)
+        // Protected routes
+	r.Group(func(r chi.Router) {
+		// Seek, verify and validate JWT tokens
+		r.Use(kjwtauth.VerifierChi(tokenAuth))
+
+		// Handle valid / invalid tokens. In this example, we use
+		// the provided authenticator middleware, but you can write your
+		// own very easily, look at the Authenticator method in jwtauth.go
+		// and tweak it, its not scary.
+		r.Use(kjwtauth.AuthenticatorChi)
+
+		r.Get("/admin", func(w http.ResponseWriter, r *http.Request) {
+			_, claims, _ := kjwtauth.FromContext(r.Context())
+			fmt.Println("requested admin")
+			w.Write([]byte(fmt.Sprintf("protected area, Hi %v", claims["user_id"])))
+		})
+	})
+	// Public routes
+    	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+        	w.Write([]byte("welcome"))
+    	})
+
+	return r
+}
+
+func echoRouter() http.Handler {
+        // Echo example
+	er := echo.New()
+        // add keploy's echo middleware
+	kecho.EchoV4(kApp, er)
+        // Public route
+	er.GET("/", func(c echo.Context) error {
+		return c.String(http.StatusOK, "Accessible")
+	})
+        // Protected route
+	er.GET("echoAdmin", func(c echo.Context) error {
+		_, claims, _ := kjwtauth.FromContext(c.Request().Context())
+		fmt.Println("requested admin")
+		return c.String(http.StatusOK, fmt.Sprint("protected area, Hi fin user: %v", claims["user_id"]))
+	}, kjwtauth.VerifierEcho(tokenAuth), kjwtauth.AuthenticatorEcho)
+	return er
+}
+
+func ginRouter() http.Handler {
+        // Gin example(comment echo example to use gin)
+	gr := gin.New()
+	kgin.GinV1(kApp, gr)
+        // Public route
+	gr.GET("/", func(ctx *gin.Context) {
+		ctx.Writer.Write([]byte("welcome to gin"))
+	})
+        // Protected route
+	auth := gr.Group("/auth")
+	auth.Use(kjwtauth.VerifierGin(tokenAuth))
+	auth.Use(kjwtauth.AuthenticatorGin)
+	auth.GET("/ginAdmin", func(c *gin.Context) {
+		_, claims, _ := kjwtauth.FromContext(c.Request.Context())
+		fmt.Println("requested admin")
+		c.Writer.Write([]byte(fmt.Sprintf("protected area, Hi fin user: %v", claims["user_id"])))
+	})
+	return gr
+}
+```

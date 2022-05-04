@@ -5,6 +5,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/keploy/go-sdk/keploy"
 	"net/http"
+
 )
 
 // MuxMiddleware adds keploy instrumentation for Mux router.
@@ -12,7 +13,6 @@ import (
 //
 // k is the Keploy instance
 func MuxMiddleware(k *keploy.Keploy) func(http.Handler) http.Handler {
-
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			keploy.Middleware(k, &gmux{

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/creasty/defaults"
 	"github.com/go-playground/validator/v10"
+	// "github.com/benbjohnson/clock"
 	"go.keploy.io/server/http/regression"
 	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
@@ -67,7 +68,7 @@ type AppConfig struct {
 	Port    string        `validate:"required"`
 	Delay   time.Duration `default:"5s"`
 	Timeout time.Duration `default:"60s"`
-	Filter  Filter        
+	Filter  Filter
 }
 
 type Filter struct {
@@ -109,8 +110,9 @@ func New(cfg Config) *Keploy {
 		client: &http.Client{
 			Timeout: cfg.App.Timeout,
 		},
-		deps: sync.Map{},
-		resp: sync.Map{},
+		deps:     sync.Map{},
+		resp:     sync.Map{},
+		mocktime: sync.Map{},
 	}
 	if mode == MODE_TEST {
 		go k.Test()
@@ -124,8 +126,9 @@ type Keploy struct {
 	client *http.Client
 	deps   sync.Map
 	//Deps map[string][]models.Dependency
-	resp   sync.Map
+	resp sync.Map
 	//Resp map[string]models.HttpResp
+	mocktime sync.Map
 }
 
 func (k *Keploy) GetDependencies(id string) []models.Dependency {
@@ -139,6 +142,20 @@ func (k *Keploy) GetDependencies(id string) []models.Dependency {
 		return nil
 	}
 	return deps
+}
+
+func (k *Keploy) GetClock(id string) int64 {
+	val, ok := k.mocktime.Load(id)
+	if !ok {
+		return 0
+	}
+	mocktime, ok := val.(int64)
+	if !ok {
+		k.Log.Error("failed getting time for http request", zap.String("test case id", id))
+		return 0
+	}
+
+	return mocktime
 }
 
 func (k *Keploy) GetResp(id string) models.HttpResp {
@@ -240,6 +257,12 @@ func (k *Keploy) simulate(tc models.TestCase) (*models.HttpResp, error) {
 	// add dependencies to shared context
 	k.deps.Store(tc.ID, tc.Deps)
 	defer k.deps.Delete(tc.ID)
+	// mock := clock.NewMock()
+	// t:=tc.Captured
+	// mock.Add(time.Duration(t) * time.Second)
+	// tc.Captured = mock.Now().UTC().Unix()
+	k.mocktime.Store(tc.ID, tc.Captured)
+	defer k.mocktime.Delete(tc.ID)
 	//k.Deps[tc.ID] = tc.Deps
 	//defer delete(k.Deps, tc.ID)
 	req, err := http.NewRequest(string(tc.HttpReq.Method), "http://"+k.cfg.App.Host+":"+k.cfg.App.Port+tc.HttpReq.URL, bytes.NewBufferString(tc.HttpReq.Body))
@@ -251,21 +274,28 @@ func (k *Keploy) simulate(tc models.TestCase) (*models.HttpResp, error) {
 	req.ProtoMajor = tc.HttpReq.ProtoMajor
 	req.ProtoMinor = tc.HttpReq.ProtoMinor
 
-	_, err = k.client.Do(req)
+	httpresp, err := k.client.Do(req)
 	if err != nil {
 		k.Log.Error("failed sending testcase request to app", zap.Error(err))
 		return nil, err
 	}
 
-	//defer resp.Body.Close()
+	defer httpresp.Body.Close()
 	resp := k.GetResp(tc.ID)
-	k.resp.Delete(tc.ID)
+	defer k.resp.Delete(tc.ID)
 
-	//body, err := ioutil.ReadAll(resp.Body)
-	//if err != nil {
-	//  a.Log.Error("failed reading simulated response from app", zap.Error(err))
-	//  return nil, err
-	//}
+	body, err := ioutil.ReadAll(httpresp.Body)
+	if err != nil {
+		k.Log.Error("failed reading simulated response from app", zap.Error(err))
+		return nil, err
+	}
+  
+	if (resp.StatusCode < 300 || resp.StatusCode >= 400) && resp.Body != string(body) {
+		resp.Body = string(body)
+		resp.Header = httpresp.Header
+		resp.StatusCode = httpresp.StatusCode
+	}
+
 	return &resp, nil
 }
 
@@ -319,8 +349,8 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 func (k *Keploy) put(tcs regression.TestCaseReq) {
 
 	var str = k.cfg.App.Filter
-	reg:= regexp.MustCompile(str.UrlRegex)
-	if str.UrlRegex!="" && reg.FindString(tcs.URI) == ""{
+	reg := regexp.MustCompile(str.UrlRegex)
+	if str.UrlRegex != "" && reg.FindString(tcs.URI) == "" {
 		return
 	}
 
@@ -362,14 +392,14 @@ func (k *Keploy) put(tcs regression.TestCaseReq) {
 	}
 	id := res["id"]
 	if id == "" {
-		return 
+		return
 	}
 	k.denoise(id, tcs)
 }
 
-func (k *Keploy) denoise (id string, tcs regression.TestCaseReq){
+func (k *Keploy) denoise(id string, tcs regression.TestCaseReq) {
 	// run the request again to find noisy fields
-	time.Sleep(2*time.Second)
+	time.Sleep(2 * time.Second)
 	resp2, err := k.simulate(models.TestCase{
 		ID:       id,
 		Captured: tcs.Captured,
