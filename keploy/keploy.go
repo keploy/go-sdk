@@ -72,7 +72,8 @@ type AppConfig struct {
 }
 
 type Filter struct {
-	UrlRegex string
+	UrlRegex    string
+	HeaderRegex []string
 }
 
 type ServerConfig struct {
@@ -346,11 +347,42 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 	return false
 }
 
+// isValidHeader checks the valid header to filter out testcases
+// It returns true when any of the header matches with regular expression and returns false when it doesn't match.
+func (k *Keploy) isValidHeader(tcs regression.TestCaseReq) bool {
+    var fil = k.cfg.App.Filter
+    var t = tcs.HttpReq.Header
+    var valid bool = false
+    for _, v := range fil.HeaderRegex {
+        headReg := regexp.MustCompile(v)
+        for key := range t {
+            if headReg.FindString(key) != "" {
+                valid = true
+                break
+            }
+        }
+        if valid {
+            break
+        }
+    }
+    if !valid {
+        return false
+    }
+    return true
+}
+
 func (k *Keploy) put(tcs regression.TestCaseReq) {
 
-	var str = k.cfg.App.Filter
-	reg := regexp.MustCompile(str.UrlRegex)
-	if str.UrlRegex != "" && reg.FindString(tcs.URI) == "" {
+	var fil = k.cfg.App.Filter
+	
+	if fil.HeaderRegex != nil {
+        if k.isValidHeader(tcs) == false {
+            return
+        }
+    }
+
+	reg := regexp.MustCompile(fil.UrlRegex)
+	if fil.UrlRegex != "" && reg.FindString(tcs.URI) == "" {
 		return
 	}
 
