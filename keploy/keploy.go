@@ -72,7 +72,8 @@ type AppConfig struct {
 }
 
 type Filter struct {
-	UrlRegex string
+	UrlRegex    string
+	HeaderRegex []string
 }
 
 type ServerConfig struct {
@@ -274,21 +275,28 @@ func (k *Keploy) simulate(tc models.TestCase) (*models.HttpResp, error) {
 	req.ProtoMajor = tc.HttpReq.ProtoMajor
 	req.ProtoMinor = tc.HttpReq.ProtoMinor
 
-	_, err = k.client.Do(req)
+	httpresp, err := k.client.Do(req)
 	if err != nil {
 		k.Log.Error("failed sending testcase request to app", zap.Error(err))
 		return nil, err
 	}
 
-	//defer resp.Body.Close()
+	defer httpresp.Body.Close()
 	resp := k.GetResp(tc.ID)
-	k.resp.Delete(tc.ID)
+	defer k.resp.Delete(tc.ID)
 
-	//body, err := ioutil.ReadAll(resp.Body)
-	//if err != nil {
-	//  a.Log.Error("failed reading simulated response from app", zap.Error(err))
-	//  return nil, err
-	//}
+	body, err := ioutil.ReadAll(httpresp.Body)
+	if err != nil {
+		k.Log.Error("failed reading simulated response from app", zap.Error(err))
+		return nil, err
+	}
+  
+	if (resp.StatusCode < 300 || resp.StatusCode >= 400) && resp.Body != string(body) {
+		resp.Body = string(body)
+		resp.Header = httpresp.Header
+		resp.StatusCode = httpresp.StatusCode
+	}
+
 	return &resp, nil
 }
 
@@ -339,11 +347,42 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 	return false
 }
 
+// isValidHeader checks the valid header to filter out testcases
+// It returns true when any of the header matches with regular expression and returns false when it doesn't match.
+func (k *Keploy) isValidHeader(tcs regression.TestCaseReq) bool {
+    var fil = k.cfg.App.Filter
+    var t = tcs.HttpReq.Header
+    var valid bool = false
+    for _, v := range fil.HeaderRegex {
+        headReg := regexp.MustCompile(v)
+        for key := range t {
+            if headReg.FindString(key) != "" {
+                valid = true
+                break
+            }
+        }
+        if valid {
+            break
+        }
+    }
+    if !valid {
+        return false
+    }
+    return true
+}
+
 func (k *Keploy) put(tcs regression.TestCaseReq) {
 
-	var str = k.cfg.App.Filter
-	reg := regexp.MustCompile(str.UrlRegex)
-	if str.UrlRegex != "" && reg.FindString(tcs.URI) == "" {
+	var fil = k.cfg.App.Filter
+	
+	if fil.HeaderRegex != nil {
+        if k.isValidHeader(tcs) == false {
+            return
+        }
+    }
+
+	reg := regexp.MustCompile(fil.UrlRegex)
+	if fil.UrlRegex != "" && reg.FindString(tcs.URI) == "" {
 		return
 	}
 
