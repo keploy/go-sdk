@@ -8,12 +8,20 @@ import (
 )
 
 type Router interface {
+	// GetRequest provides access to the current http request object. 
+	// Example: echo.Context.Request()
 	GetRequest() *http.Request
+	// SetRequest sets the http request with given request object parameter.
 	SetRequest(*http.Request)
+	// GetResponseWriter returns current ResponseWriter of the http handler.
 	GetResponseWriter() http.ResponseWriter
+	// SetResponseWriter sets the ResponseWriter of http handler with given parameter.
 	SetResponseWriter(http.ResponseWriter)
+	// Context returns the underlying context of the http.Request.
 	Context() context.Context
+	// Next is used to call the next handler of the middleware chain.
 	Next() error
+	// GetURLParams returns the url parameter as key:value pair.
 	GetURLParams() map[string]string
 }
 
