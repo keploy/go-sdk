@@ -83,7 +83,7 @@ r.Use(kchi.ChiMiddlewareV5(k))
 #### Example
 ```go
 import(
-        "github.com/keploy/go-sdk/integrations/kchi"
+  "github.com/keploy/go-sdk/integrations/kchi"
 	"github.com/keploy/go-sdk/keploy"
 	"github.com/go-chi/chi"
 )
@@ -112,7 +112,7 @@ kgin.GinV1(k, r)
 #### Example
 ```go
 import(
-        "github.com/keploy/go-sdk/integrations/kgin/v1"
+  "github.com/keploy/go-sdk/integrations/kgin/v1"
 	"github.com/keploy/go-sdk/keploy"
 )
 
@@ -140,7 +140,7 @@ e.Use(kecho.EchoMiddlewareV4(k))
 #### Example
 ```go
 import(
-        "github.com/keploy/go-sdk/integrations/kecho/v4"
+  "github.com/keploy/go-sdk/integrations/kecho/v4"
 	"github.com/keploy/go-sdk/keploy"
 	"github.com/labstack/echo/v4"
 )
@@ -177,7 +177,7 @@ router.Start()
 #### Example
 ```go
 import(
-        "github.com/keploy/go-sdk/integrations/kwebgo/v4"
+  "github.com/keploy/go-sdk/integrations/kwebgo/v4"
 	"github.com/keploy/go-sdk/keploy"
 	"github.com/bnkamalesh/webgo/v4"
 )
@@ -210,11 +210,11 @@ r.Use(kmux.MuxMiddleware(k))
 ```
 #### Example
 ```go
-import(	
-        "github.com/keploy/go-sdk/integrations/kmux"
+import(
+  "github.com/keploy/go-sdk/integrations/kmux"
 	"github.com/keploy/go-sdk/keploy"
 	"github.com/gorilla/mux"
-        "net/http"
+  "net/http"
 )
 
 func main(){

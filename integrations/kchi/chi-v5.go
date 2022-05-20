@@ -1,46 +1,21 @@
 package kchi
 
 import (
-	"net/http"
-
+	"context"
 	"github.com/go-chi/chi"
 	"github.com/keploy/go-sdk/keploy"
-	"go.keploy.io/server/pkg/models"
+	"net/http"
 )
 
 func ChiMiddlewareV5(k *keploy.Keploy) func(http.Handler) http.Handler {
-	if k == nil || keploy.GetMode() == keploy.MODE_OFF {
-		return func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				next.ServeHTTP(w, r)
-			})
-		}
-	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			writer, r, resBody, reqBody, err := keploy.ProcessRequest(w, r, k)
-			if err != nil {
-				return
-			}
-			w = writer
-
-			// Store the responses
-			next.ServeHTTP(w, r)
-			resp := models.HttpResp{
-				//Status
-				StatusCode: writer.Status,
-				Header:     w.Header(),
-				Body:       resBody.String(),
-			}
-
-			id := r.Header.Get("KEPLOY_TEST_ID")
-			if id != "" {
-				k.PutResp(id, resp)
-				return
-			}
-
-			params := urlParamsChi(chi.RouteContext(r.Context()), k)
-			keploy.CaptureTestcase(k, r, reqBody, resp, params)
+			keploy.Middleware(k, &chiV5{
+				writer: w,
+				req:    r,
+				next:   next,
+				k:      k,
+			})
 		})
 	}
 }
@@ -56,4 +31,40 @@ func urlParamsChi(c *chi.Context, k *keploy.Keploy) map[string]string {
 		paramsMap[j] = val
 	}
 	return paramsMap
+}
+
+type chiV5 struct {
+	writer http.ResponseWriter
+	req    *http.Request
+	next   http.Handler
+	k      *keploy.Keploy
+}
+
+func (w *chiV5) GetRequest() *http.Request {
+	return w.req
+}
+
+func (w *chiV5) GetResponseWriter() http.ResponseWriter {
+	return w.writer
+}
+
+func (w *chiV5) SetRequest(r *http.Request) {
+	w.req = r
+}
+
+func (w *chiV5) SetResponseWriter(writer http.ResponseWriter) {
+	w.writer = writer
+}
+
+func (w *chiV5) Context() context.Context {
+	return w.req.Context()
+}
+
+func (w *chiV5) Next() error {
+	w.next.ServeHTTP(w.writer, w.req)
+	return nil
+}
+
+func (w *chiV5) GetURLParams() map[string]string {
+	return urlParamsChi(chi.RouteContext(w.req.Context()), w.k)
 }

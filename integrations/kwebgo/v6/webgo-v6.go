@@ -1,10 +1,10 @@
 package kwebgo
 
 import (
+	"context"
+	"net/http"
 	"github.com/bnkamalesh/webgo/v6"
 	"github.com/keploy/go-sdk/keploy"
-	"go.keploy.io/server/pkg/models"
-	"net/http"
 )
 
 // WebgoMiddlewareV6 adds keploy instrumentation for WebGo V6 router.
@@ -12,37 +12,46 @@ import (
 //
 // k is the Keploy instance
 func WebgoMiddlewareV6(k *keploy.Keploy) func(http.ResponseWriter, *http.Request, http.HandlerFunc) {
-	if k == nil || keploy.GetMode() == keploy.MODE_OFF {
-		return func(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
-			k.Log.Warn("keploy is nil.")
-			next(w, r)
-		}
-	}
 	return func(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
-		writer, r, resBody, reqBody, err := keploy.ProcessRequest(w, r, k)
-		if err != nil {
-			return
-		}
-		w = writer
-
-		// Store the responses
-		next(w, r)
-		resp := models.HttpResp{
-			//Status
-			StatusCode: writer.Status,
-			Header:     w.Header(),
-			Body:       resBody.String(),
-		}
-
-		id := r.Header.Get("KEPLOY_TEST_ID")
-		if id != "" {
-			// id is only present during simulation
-			// run it similar to how testcases would run
-			k.PutResp(id, resp)
-			return
-		}
-		params := webgo.Context(r).Params()
-		keploy.CaptureTestcase(k, r, reqBody, resp, params)
-
+		keploy.Middleware(k, &webgoV6{
+			req:    r,
+			writer: w,
+			next:   next,
+		})
 	}
+}
+
+type webgoV6 struct {
+	writer http.ResponseWriter
+	req    *http.Request
+	next   http.HandlerFunc
+}
+
+func (w *webgoV6) GetRequest() *http.Request {
+	return w.req
+}
+
+func (w *webgoV6) GetResponseWriter() http.ResponseWriter {
+	return w.writer
+}
+
+func (w *webgoV6) SetRequest(r *http.Request) {
+	w.req = r
+}
+
+func (w *webgoV6) SetResponseWriter(writer http.ResponseWriter) {
+	w.writer = writer
+}
+
+func (w *webgoV6) Context() context.Context {
+	return w.req.Context()
+}
+
+func (w *webgoV6) Next() error {
+	w.next(w.writer, w.req)
+	return nil
+}
+
+func (w *webgoV6) GetURLParams() map[string]string {
+	return webgo.Context(w.req).Params()
 }
