@@ -72,7 +72,7 @@ git pull upstream main
 6 . Configure the pre-commit hook by running the following path.
 
 ```
-git config core.hooksPath .githooks
+git config core.hooksPath .githooks && chmod +x .githooks/*
 ```
 
 7 . create a new branch
