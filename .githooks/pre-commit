@@ -1,0 +1,13 @@
+#!/bin/sh
+echo "Checking for changes!"
+
+GO_FILES=$(git diff --cached --name-only -- '*.go')
+
+if [[ $GO_FILES == "" ]]; then
+    echo "No Go Files to Update"
+else
+    for file in $GO_FILES; do
+        go fmt $file
+        git add $file
+    done
+fi
