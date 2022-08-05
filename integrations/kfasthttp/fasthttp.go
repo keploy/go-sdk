@@ -46,7 +46,7 @@ func setContextValFast(c *fasthttp.RequestCtx, val interface{}) {
 	c.SetUserValue(string(keploy.KCTX), val)
 
 }
-func FastHttpMiddlware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp.RequestHandler {
+func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp.RequestHandler {
 	if k == nil || keploy.GetMode() == keploy.MODE_OFF {
 		return func(next fasthttp.RequestHandler) fasthttp.RequestHandler {
 			return next
