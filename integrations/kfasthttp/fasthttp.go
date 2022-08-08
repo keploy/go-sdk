@@ -9,12 +9,11 @@ import (
 
 	//"github.com/fasthttp/router"
 	"github.com/keploy/go-sdk/keploy"
-	
+
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/fasthttp/fasthttpadaptor"
 	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
-	
 )
 
 func captureResp(c *fasthttp.RequestCtx, next fasthttp.RequestHandler) models.HttpResp {
