@@ -9,12 +9,11 @@ import (
 
 	//"github.com/fasthttp/router"
 	"github.com/keploy/go-sdk/keploy"
-	
+
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/fasthttp/fasthttpadaptor"
 	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
-	
 )
 
 func captureResp(c *fasthttp.RequestCtx, next fasthttp.RequestHandler) models.HttpResp {
@@ -46,7 +45,7 @@ func setContextValFast(c *fasthttp.RequestCtx, val interface{}) {
 	c.SetUserValue(string(keploy.KCTX), val)
 
 }
-func FastHttpMiddlware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp.RequestHandler {
+func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp.RequestHandler {
 	if k == nil || keploy.GetMode() == keploy.MODE_OFF {
 		return func(next fasthttp.RequestHandler) fasthttp.RequestHandler {
 			return next
