@@ -68,9 +68,9 @@ export KEPLOY_MODE="test"
 ```
 ### KEPLOY_MODE
 There are 3 modes:
- - **Record**: Sets to record mode.
- - **Test**: Sets to test mode. 
- - **Off**: Turns off all the functionality provided by the API
+ - **record**: Sets to record mode.
+ - **test**: Sets to test mode. 
+ - **off**: Turns off all the functionality provided by the API
 
 **Note:** `KEPLOY_MODE` value is case sensitive. 
 
