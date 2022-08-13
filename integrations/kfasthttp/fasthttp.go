@@ -17,14 +17,6 @@ import (
 )
 
 func captureResp(c *fasthttp.RequestCtx, next fasthttp.RequestHandler) models.HttpResp {
-	resBody := new(bytes.Buffer)
-	w := c.Response.BodyWriter()
-	mw := io.MultiWriter(w, resBody)
-	c.Response.WriteTo(mw)
-	writer := &bodyDumpResponseWriterFast{
-		Writer:   mw,
-		Response: c.Response,
-	}
 
 	header := http.Header{}
 	c.Response.Header.VisitAll(func(key, value []byte) {
@@ -33,10 +25,13 @@ func captureResp(c *fasthttp.RequestCtx, next fasthttp.RequestHandler) models.Ht
 
 	})
 	next(c)
+
+	var resBody []byte = c.Response.Body()
+
 	return models.HttpResp{
-		StatusCode: writer.Response.StatusCode(),
+		StatusCode: c.Response.StatusCode(),
 		Header:     header,
-		Body:       resBody.String(),
+		Body:       string(resBody),
 	}
 
 }
