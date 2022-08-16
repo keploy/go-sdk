@@ -1,6 +1,9 @@
 package ksql
 
-import "database/sql/driver"
+import (
+	"database/sql/driver"
+	"io"
+)
 
 func convertKError(err error) error {
 	if err == nil {
@@ -15,6 +18,8 @@ func convertKError(err error) error {
 		return driver.ErrRemoveArgument
 	case driver.ErrSkip.Error():
 		return driver.ErrSkip
+	case io.EOF.Error():
+		return io.EOF
 	default:
 		return err
 	}
