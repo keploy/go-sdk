@@ -36,7 +36,9 @@ func (t Tx) Commit() error {
 	case "test":
 		// don't run
 	case "capture":
-		err = t.Tx.Commit()
+		if t.Tx != nil {
+			err = t.Tx.Commit()
+		}
 	default:
 		return errors.New("integrations: Not in a valid sdk mode")
 	}
@@ -79,7 +81,9 @@ func (t Tx) Rollback() error {
 	case "test":
 		// don't run
 	case "capture":
-		err = t.Tx.Rollback()
+		if t.Tx != nil {
+			err = t.Tx.Rollback()
+		}
 	default:
 		return errors.New("integrations: Not in a valid sdk mode")
 	}
