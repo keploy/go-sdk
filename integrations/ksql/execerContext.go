@@ -61,17 +61,19 @@ func (c Conn) ExecContext(ctx context.Context, query string, args []driver.Named
 		//don't call Find method
 	case "capture":
 		result, err = execerContext.ExecContext(ctx, query, args)
-		// calls LastInsertId to capture their outputs
-		li, e := result.LastInsertId()
-		driverResult.LastInserted = li
-		if e != nil {
-			driverResult.LError = e.Error()
-		}
-		// calls RowsAffected to capture their outputs
-		ra, e := result.RowsAffected()
-		driverResult.RowsAff = ra
-		if e != nil {
-			driverResult.RError = e.Error()
+		if result != nil {
+			// calls LastInsertId to capture their outputs
+			li, e := result.LastInsertId()
+			driverResult.LastInserted = li
+			if e != nil {
+				driverResult.LError = e.Error()
+			}
+			// calls RowsAffected to capture their outputs
+			ra, e := result.RowsAffected()
+			driverResult.RowsAff = ra
+			if e != nil {
+				driverResult.RError = e.Error()
+			}
 		}
 	default:
 		return result, err
