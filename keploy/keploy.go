@@ -5,13 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
 	"github.com/creasty/defaults"
 	"github.com/go-playground/validator/v10"
+	"google.golang.org/grpc"
+
 	// "github.com/benbjohnson/clock"
-	"go.keploy.io/server/http/regression"
-	"go.keploy.io/server/pkg/models"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -20,12 +19,19 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"go.keploy.io/server/http/regression"
+	"go.keploy.io/server/pkg/models"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 var result = make(chan bool, 1)
 
 // mode is set to record, if unset
 var mode = MODE_RECORD
+
+var grpcClient *grpc.ClientConn
 
 func init() {
 	m := Mode(os.Getenv("KEPLOY_MODE"))
@@ -35,6 +41,11 @@ func init() {
 	err := SetMode(m)
 	if err != nil {
 		fmt.Println("warning: ", err)
+	}
+
+	grpcClient, err = grpc.Dial("localhost:8081", grpc.WithInsecure())
+	if err != nil {
+		fmt.Println("failed to connect to keploy server", err)
 	}
 }
 
@@ -290,7 +301,7 @@ func (k *Keploy) simulate(tc models.TestCase) (*models.HttpResp, error) {
 		k.Log.Error("failed reading simulated response from app", zap.Error(err))
 		return nil, err
 	}
-  
+
 	if (resp.StatusCode < 300 || resp.StatusCode >= 400) && resp.Body != string(body) {
 		resp.Body = string(body)
 		resp.Header = httpresp.Header
@@ -350,36 +361,36 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 // isValidHeader checks the valid header to filter out testcases
 // It returns true when any of the header matches with regular expression and returns false when it doesn't match.
 func (k *Keploy) isValidHeader(tcs regression.TestCaseReq) bool {
-    var fil = k.cfg.App.Filter
-    var t = tcs.HttpReq.Header
-    var valid bool = false
-    for _, v := range fil.HeaderRegex {
-        headReg := regexp.MustCompile(v)
-        for key := range t {
-            if headReg.FindString(key) != "" {
-                valid = true
-                break
-            }
-        }
-        if valid {
-            break
-        }
-    }
-    if !valid {
-        return false
-    }
-    return true
+	var fil = k.cfg.App.Filter
+	var t = tcs.HttpReq.Header
+	var valid bool = false
+	for _, v := range fil.HeaderRegex {
+		headReg := regexp.MustCompile(v)
+		for key := range t {
+			if headReg.FindString(key) != "" {
+				valid = true
+				break
+			}
+		}
+		if valid {
+			break
+		}
+	}
+	if !valid {
+		return false
+	}
+	return true
 }
 
 func (k *Keploy) put(tcs regression.TestCaseReq) {
 
 	var fil = k.cfg.App.Filter
-	
+
 	if fil.HeaderRegex != nil {
-        if k.isValidHeader(tcs) == false {
-            return
-        }
-    }
+		if k.isValidHeader(tcs) == false {
+			return
+		}
+	}
 
 	reg := regexp.MustCompile(fil.UrlRegex)
 	if fil.UrlRegex != "" && reg.FindString(tcs.URI) == "" {
