@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	proto "go.keploy.io/server/grpc/regression"
 	"go.keploy.io/server/http/regression"
 	"go.keploy.io/server/pkg/models"
 
@@ -78,36 +79,50 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 	// capture the object
 	switch kctx.Mode {
 	case "test":
-		if kctx.Deps == nil || len(kctx.Deps) == 0 {
-			log.Error("dependency mocking failed: incorrect number of dependencies in keploy context", zap.String("test id", kctx.TestID))
-			return false, nil
-		}
-		if len(kctx.Deps[0].Data) != len(outputs) {
-			log.Error("dependency mocking failed: incorrect number of dependencies in keploy context", zap.String("test id", kctx.TestID))
-			return false, nil
-		}
-		var res []interface{}
-		for i, t := range outputs {
-			r, err := Decode(kctx.Deps[0].Data[i], t)
-			if err != nil {
-				log.Error("dependency mocking failed: failed to decode object", zap.String("type", reflect.TypeOf(r).String()), zap.String("test id", kctx.TestID))
+		switch kctx.Deps {
+		case nil:
+			if len(kctx.Deps) == 0 {
+				log.Error("dependency mocking failed: incorrect number of dependencies in keploy context", zap.String("test id", kctx.TestID))
 				return false, nil
 			}
-			res = append(res, r)
+			if len(kctx.Deps[0].Data) != len(outputs) {
+				log.Error("dependency mocking failed: incorrect number of dependencies in keploy context", zap.String("test id", kctx.TestID))
+				return false, nil
+			}
+			var res []interface{}
+			for i, t := range outputs {
+				r, err := Decode(kctx.Deps[0].Data[i], t)
+				if err != nil {
+					log.Error("dependency mocking failed: failed to decode object", zap.String("type", reflect.TypeOf(r).String()), zap.String("test id", kctx.TestID))
+					return false, nil
+				}
+				res = append(res, r)
+			}
+
+			kctx.Deps = kctx.Deps[1:]
+			return true, res
+		default:
+			if len(kctx.Deps) == 0 {
+				log.Error("dependency mocking failed: incorrect number of dependencies in keploy context", zap.String("test id", kctx.TestID))
+				return false, nil
+			}
+			if len(kctx.Deps[0].Data) != len(outputs) {
+				log.Error("dependency mocking failed: incorrect number of dependencies in keploy context", zap.String("test id", kctx.TestID))
+				return false, nil
+			}
+			var res []interface{}
+			for i, t := range outputs {
+				r, err := Decode(kctx.Deps[0].Data[i], t)
+				if err != nil {
+					log.Error("dependency mocking failed: failed to decode object", zap.String("type", reflect.TypeOf(r).String()), zap.String("test id", kctx.TestID))
+					return false, nil
+				}
+				res = append(res, r)
+			}
+
+			kctx.Deps = kctx.Deps[1:]
+			return true, res
 		}
-		//res, err := keploy.Decode(deps.Deps[0][0], &dynamodb.QueryOutput{})
-		//if err != nil {
-		//	log.Error("failed to decode ddb resp", zap.String("test id", id))
-		//	return nil
-		//}
-		//var err1h error
-		//err1, err := keploy.Decode(deps.Deps[0][1], err1h)
-		//if err != nil {
-		//	log.Error("failed to decode ddb error object", zap.String("test id", id))
-		//	return nil
-		//}
-		kctx.Deps = kctx.Deps[1:]
-		return true, res
 
 	case "capture":
 		res := make([][]byte, len(outputs))
@@ -129,6 +144,27 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 			Data: res,
 			Meta: meta,
 		})
+		if grpcClient != nil {
+			c := proto.NewRegressionServiceClient(grpcClient)
+			_, err := c.PutMock(ctx, &proto.PutMockReq{
+				Mock: &proto.Mock{
+					Version: "api.keploy.io/v2",
+					Kind:    "Mock",
+					Name:    kctx.TestID,
+					Spec: &proto.Mock_SpecSchema{
+						Type:     meta["type"],
+						Metadata: map[string]string{"foo1": "bar1"},
+						Objects: []*proto.Mock_Object{{
+							Type: meta["type"],
+							Data: res,
+						}},
+					},
+				},
+			})
+			if err != nil {
+				log.Error("failed to call the putMock method", zap.Error(err))
+			}
+		}
 	}
 	return false, nil
 }
