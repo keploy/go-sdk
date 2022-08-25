@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/keploy/go-sdk/keploy"
 	proto "go.keploy.io/server/grpc/regression"
 	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
@@ -38,10 +39,32 @@ func CreateMockFile(path string) {
 	}
 }
 
-func PostMock(ctx context.Context, req *proto.PutMockReq) {
+func PostMock(ctx context.Context, path string, mock models.Mock) {
 	c := proto.NewRegressionServiceClient(grpcClient)
 
-	_, err := c.PutMock(ctx, req)
+	_, err := c.PutMock(ctx, &proto.PutMockReq{Path: path, Mock: &proto.Mock{
+		Version: string(keploy.V1_BETA1),
+		Kind:    string(keploy.KIND_MOCK),
+		Name:    mock.Name,
+		Spec: &proto.Mock_SpecSchema{
+			Type:     mock.Spec.Type,
+			Metadata: mock.Spec.Metadata,
+			Objects:  []*proto.Mock_Object{},
+			Req: &proto.Mock_Request{
+				Method:     string(mock.Spec.Request.Method),
+				ProtoMajor: int64(mock.Spec.Request.ProtoMajor),
+				ProtoMinor: int64(mock.Spec.Request.ProtoMinor),
+				URL:        mock.Spec.Request.URL,
+				Headers:    GetProtoMap(mock.Spec.Request.Header),
+				Body:       string(mock.Spec.Request.Body),
+			},
+			Res: &proto.Mock_Response{
+				StatusCode: int64(mock.Spec.Response.StatusCode),
+				Headers:    GetProtoMap(mock.Spec.Response.Header),
+				Body:       string(mock.Spec.Response.Body),
+			},
+		},
+	}})
 	if err != nil {
 		logger.Error("failed to call the putMock method", zap.Error(err))
 	}

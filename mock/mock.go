@@ -68,9 +68,10 @@ func NewContext(conf Config) context.Context {
 	}
 
 	k := &keploy.Context{
-		TestID: conf.Name,
-		Mock:   mocks,
-		Mode:   mode,
+		TestID:     conf.Name,
+		Mock:       mocks,
+		Mode:       mode,
+		FileExport: true,
 	}
 	ctx := conf.CTX
 	if ctx == nil {

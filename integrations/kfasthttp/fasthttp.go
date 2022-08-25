@@ -51,7 +51,7 @@ func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp
 			id := string(c.Request.Header.Peek("KEPLOY_TEST_ID"))
 			if id != "" {
 				setContextValFast(c, &keploy.Context{
-					Mode:   "test",
+					Mode:   keploy.MODE_TEST,
 					TestID: id,
 					Deps:   k.GetDependencies(id),
 				})
@@ -61,7 +61,7 @@ func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp
 
 			}
 			setContextValFast(c, &keploy.Context{
-				Mode: "record",
+				Mode: keploy.MODE_RECORD,
 			})
 			var reqBody []byte
 			var err error
