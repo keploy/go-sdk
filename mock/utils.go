@@ -2,6 +2,7 @@ package mock
 
 import (
 	"context"
+	"encoding/base64"
 	"os"
 	"path/filepath"
 
@@ -46,6 +47,18 @@ func PostMock(ctx context.Context, req *proto.PutMockReq) {
 	}
 }
 
+func toModelObjects(objs []*proto.Mock_Object) []models.Object {
+	res := []models.Object{}
+	for _, j := range objs {
+		res = append(res, models.Object{
+			Type: j.Type,
+			Data: base64.StdEncoding.EncodeToString(j.Data),
+			// j.Data,
+		})
+	}
+	return res
+}
+
 func GetAllMocks(ctx context.Context, req *proto.GetMockReq) ([]models.Mock, error) {
 	c := proto.NewRegressionServiceClient(grpcClient)
 
@@ -62,7 +75,7 @@ func GetAllMocks(ctx context.Context, req *proto.GetMockReq) ([]models.Mock, err
 			Spec: models.SpecSchema{
 				Type:     j.Spec.Type,
 				Metadata: j.Spec.Metadata,
-				Objects:  []models.Object{},
+				Objects:  toModelObjects(j.Spec.Objects),
 				Request: models.HttpReq{
 					Method:     models.Method(j.Spec.Req.Method),
 					ProtoMajor: int(j.Spec.Req.ProtoMajor),

@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"go.keploy.io/server/pkg/models"
 	"reflect"
+
+	"go.keploy.io/server/pkg/models"
 
 	"github.com/keploy/go-sdk/keploy"
 	"go.uber.org/zap"
@@ -49,7 +50,7 @@ func clientInterceptor(k *keploy.Keploy) func(
 		switch mode {
 		case "test":
 			//dont run invoker
-		case "capture":
+		case "record":
 			err = invoker(ctx, method, req, reply, cc, opts...)
 		default:
 			return errors.New("integrations: Not in a valid sdk mode")
@@ -114,7 +115,7 @@ func streamClientInterceptor(k *keploy.Keploy) func(ctx context.Context, desc *g
 			//dont run invoker
 			clientStreamAdd := new(grpc.ClientStream)
 			clientStream = *clientStreamAdd
-		case "capture":
+		case "record":
 			clientStream, err = streamer(ctx, desc, cc, method, opts...)
 		}
 
@@ -150,7 +151,7 @@ func (s *tracedClientStream) CloseSend() error {
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "capture":
+	case "record":
 		err = s.ClientStream.CloseSend()
 	case "test":
 		// don't call CloseSend
@@ -191,7 +192,7 @@ func (s *tracedClientStream) SendMsg(m interface{}) error {
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "capture":
+	case "record":
 		err = s.ClientStream.SendMsg(m)
 	case "test":
 		// don't call SendMsg
@@ -230,7 +231,7 @@ func (s *tracedClientStream) Context() context.Context {
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "capture":
+	case "record":
 		ctxOutput = s.ClientStream.Context()
 	case "test":
 		// don't call Context
@@ -267,7 +268,7 @@ func (s *tracedClientStream) RecvMsg(m interface{}) error {
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "capture":
+	case "record":
 		err = s.ClientStream.RecvMsg(m)
 	case "test":
 		// don't call RecvMsg

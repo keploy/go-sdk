@@ -4,14 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"testing"
+
 	"github.com/keploy/go-sdk/keploy"
 	"go.keploy.io/server/pkg/models"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	"log"
-	"testing"
 )
 
 type Trainer struct {
@@ -105,7 +106,7 @@ func TestFindOne(t *testing.T) {
 		// capture mode document present in client DB
 		{
 			ctx: context.WithValue(context.TODO(), keploy.KCTX, &keploy.Context{
-				Mode:   "capture",
+				Mode:   "record",
 				TestID: "",
 				Deps:   []models.Dependency{},
 			}),
@@ -120,7 +121,7 @@ func TestFindOne(t *testing.T) {
 		// capture mode document not present in client DB
 		{
 			ctx: context.WithValue(context.TODO(), keploy.KCTX, &keploy.Context{
-				Mode:   "capture",
+				Mode:   "record",
 				TestID: "",
 				Deps:   []models.Dependency{},
 			}),
@@ -213,7 +214,7 @@ func TestInsertOne(t *testing.T) {
 		//capture mode
 		{
 			ctx: context.WithValue(context.TODO(), keploy.KCTX, &keploy.Context{
-				Mode:   "capture",
+				Mode:   "record",
 				TestID: "",
 				Deps:   []models.Dependency{},
 			}),

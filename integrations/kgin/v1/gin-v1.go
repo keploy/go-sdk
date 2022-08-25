@@ -5,8 +5,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"go.keploy.io/server/pkg/models"
 	"io/ioutil"
+
+	"go.keploy.io/server/pkg/models"
 
 	// "fmt"
 	"io"
@@ -76,7 +77,7 @@ func mw(k *keploy.Keploy) gin.HandlerFunc {
 			return
 		}
 
-		setContextValGin(c, &keploy.Context{Mode: "capture"})
+		setContextValGin(c, &keploy.Context{Mode: "record"})
 
 		// Request
 		var reqBody []byte
@@ -117,7 +118,7 @@ func urlParamsGin(c *gin.Context, k *keploy.Keploy) map[string]string {
 		j := k.(map[string]interface{})
 		key := j["Key"].(string)
 		val := j["Value"].(string)
-		if len(val)>0 && val[0] == '/' {
+		if len(val) > 0 && val[0] == '/' {
 			params[key] = val[1:]
 		} else {
 			params[key] = val

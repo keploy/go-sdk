@@ -26,12 +26,21 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-var result = make(chan bool, 1)
+var (
+	// mode is set to record, if unset
+	mode       = MODE_RECORD
+	result     = make(chan bool, 1)
+	grpcClient *grpc.ClientConn
+	Path       string
+)
 
-// mode is set to record, if unset
-var mode = MODE_RECORD
-
-var grpcClient *grpc.ClientConn
+// avoids circular dependency between mock and keploy packages
+func SetGrpcClient(c *grpc.ClientConn) {
+	grpcClient = c
+}
+func SetPath(path string) {
+	Path = path
+}
 
 func init() {
 	m := Mode(os.Getenv("KEPLOY_MODE"))
@@ -41,11 +50,6 @@ func init() {
 	err := SetMode(m)
 	if err != nil {
 		fmt.Println("warning: ", err)
-	}
-
-	grpcClient, err = grpc.Dial("localhost:8081", grpc.WithInsecure())
-	if err != nil {
-		fmt.Println("failed to connect to keploy server", err)
 	}
 }
 
@@ -376,10 +380,7 @@ func (k *Keploy) isValidHeader(tcs regression.TestCaseReq) bool {
 			break
 		}
 	}
-	if !valid {
-		return false
-	}
-	return true
+	return valid
 }
 
 func (k *Keploy) put(tcs regression.TestCaseReq) {
@@ -387,7 +388,7 @@ func (k *Keploy) put(tcs regression.TestCaseReq) {
 	var fil = k.cfg.App.Filter
 
 	if fil.HeaderRegex != nil {
-		if k.isValidHeader(tcs) == false {
+		if !k.isValidHeader(tcs) {
 			return
 		}
 	}

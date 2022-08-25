@@ -35,6 +35,7 @@ func init() {
 	if err != nil {
 		logger.Error("failed to connect to keploy server", zap.Error(err))
 	}
+	keploy.SetGrpcClient(grpcClient)
 }
 
 func NewContext(conf Config) context.Context {
@@ -52,10 +53,12 @@ func NewContext(conf Config) context.Context {
 			logger.Error("failed to get the path of current directory", zap.Error(err))
 		}
 	}
+	keploy.SetPath(path)
 
 	if keploy.Mode(os.Getenv("KEPLOY_MODE")).Valid() {
 		mode = keploy.Mode(os.Getenv("KEPLOY_MODE"))
 	}
+	keploy.SetMode(mode)
 
 	if mode == keploy.MODE_TEST {
 		mocks, err = GetAllMocks(context.Background(), &proto.GetMockReq{Path: path, Name: conf.Name})

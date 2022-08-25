@@ -23,9 +23,9 @@ func (c *Collection) DeleteOne(ctx context.Context, filter interface{},
 
 	var (
 		output = &mongo.DeleteResult{}
-		err error
-		kerr = &keploy.KError{}
-		data []interface{}
+		err    error
+		kerr   = &keploy.KError{}
+		data   []interface{}
 	)
 	data = append(data, filter)
 	for _, j := range opts {
@@ -70,7 +70,7 @@ func (c *Collection) DeleteOne(ctx context.Context, filter interface{},
 	return output, err
 }
 
-// DeleteMany method mocks Collection.DeleteMany of mongo inorder to call it only in "capture" or "off" mode.
+// DeleteMany method mocks Collection.DeleteMany of mongo inorder to call it only in "record" or "off" mode.
 //
 // See https://pkg.go.dev/go.mongodb.org/mongo-driver@v1.8.0/mongo#Collection.DeleteMany for information about Collection.DeleteMany.
 func (c *Collection) DeleteMany(ctx context.Context, filter interface{},
@@ -81,9 +81,9 @@ func (c *Collection) DeleteMany(ctx context.Context, filter interface{},
 	}
 	var (
 		output *mongo.DeleteResult = &mongo.DeleteResult{}
-		err error
-		kerr = &keploy.KError{}
-		data []interface{}
+		err    error
+		kerr   = &keploy.KError{}
+		data   []interface{}
 	)
 	data = append(data, filter)
 	for _, j := range opts {
