@@ -14,7 +14,7 @@ import (
 //
 // See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Collection.FindOne for information about Collection.FindOne.
 func (c *Collection) FindOne(ctx context.Context, filter interface{}, opts ...*options.FindOneOptions) *SingleResult {
-	
+
 	derivedOpts := []options.FindOneOptions{}
 	for _, j := range opts {
 		derivedOpts = append(derivedOpts, *j)
@@ -28,7 +28,7 @@ func (c *Collection) FindOne(ctx context.Context, filter interface{}, opts ...*o
 
 	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
 		sr := c.Collection.FindOne(ctx, filter, opts...)
-		if sr!=nil{
+		if sr != nil {
 			singleResult.SingleResult = *sr
 		}
 		return singleResult
@@ -44,9 +44,9 @@ func (c *Collection) FindOne(ctx context.Context, filter interface{}, opts ...*o
 	switch mode {
 	case "test":
 		return singleResult
-	case "capture":
+	case "record":
 		sr = c.Collection.FindOne(ctx, filter, opts...)
-		if sr!=nil{
+		if sr != nil {
 			singleResult.SingleResult = *sr
 		}
 	default:
@@ -57,7 +57,7 @@ func (c *Collection) FindOne(ctx context.Context, filter interface{}, opts ...*o
 }
 
 // Find creates and returns the instance of pointer to  keploy Cursor struct which have overridden methods of mongo.Cursor.
-// Actual Collection.Find is called only in "capture" or "off" mode.
+// Actual Collection.Find is called only in "record" or "off" mode.
 //
 // For information about Collection.Find, See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Collection.Find.
 func (c *Collection) Find(ctx context.Context, filter interface{},
@@ -68,15 +68,15 @@ func (c *Collection) Find(ctx context.Context, filter interface{},
 		derivedOpts = append(derivedOpts, *j)
 	}
 	var result = &Cursor{
-		filter  :   filter,
-		findOpts:   derivedOpts,
-		log     :   c.log,
-		ctx     :   ctx,
+		filter:   filter,
+		findOpts: derivedOpts,
+		log:      c.log,
+		ctx:      ctx,
 	}
 
 	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
 		cursor, err := c.Collection.Find(ctx, filter, opts...)
-		if cursor!=nil{
+		if cursor != nil {
 			result.Cursor = *cursor
 		}
 		return result, err
@@ -91,14 +91,14 @@ func (c *Collection) Find(ctx context.Context, filter interface{},
 		cursor *mongo.Cursor
 		err    error
 	)
-	
+
 	switch mode {
 	case "test":
 		//don't call method in test mode
 		return result, err
-	case "capture":
+	case "record":
 		cursor, err = c.Collection.Find(ctx, filter, opts...)
-		if cursor!=nil{
+		if cursor != nil {
 			result.Cursor = *cursor
 		}
 		return result, err

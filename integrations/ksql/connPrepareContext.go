@@ -44,7 +44,7 @@ func (s Stmt) Exec(args []driver.Value) (driver.Result, error) {
 	switch mode {
 	case "test":
 		//don't call method
-	case "capture":
+	case "record":
 		result, err = s.Stmt.Exec(args)
 		l, e := result.LastInsertId()
 		drResult.LastInserted = l
@@ -93,7 +93,7 @@ func (s Stmt) Query(args []driver.Value) (driver.Rows, error) {
 	switch mode {
 	case "test":
 		// don't run
-	case "capture":
+	case "record":
 		rows, err = s.Stmt.Query(args)
 		drRows.Rows = rows
 	default:
@@ -137,7 +137,7 @@ func (s Stmt) NumInput() int {
 	switch mode {
 	case "test":
 		// don't run
-	case "capture":
+	case "record":
 		o := s.Stmt.NumInput()
 		output = &o
 	default:
@@ -170,7 +170,7 @@ func (s Stmt) Close() error {
 	switch mode {
 	case "test":
 		// don't run
-	case "capture":
+	case "record":
 		err = s.Stmt.Close()
 	default:
 		return errors.New("integrations: Not in a valid sdk mode")
@@ -223,7 +223,7 @@ func (c Conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, er
 	switch mode {
 	case "test":
 		// don't run
-	case "capture":
+	case "record":
 		stmt, err = pc.PrepareContext(ctx, query)
 		drStmt.Stmt = stmt
 	default:

@@ -3,6 +3,7 @@ package ksql
 import (
 	"context"
 	"database/sql/driver"
+
 	// "encoding/gob"
 	// "encoding/json"
 	"errors"
@@ -111,7 +112,7 @@ func (c Conn) Ping(ctx context.Context) error {
 	switch mode {
 	case "test":
 		// don't run
-	case "capture":
+	case "record":
 		err = pc.Ping(ctx)
 	default:
 		return errors.New("integrations: Not in a valid sdk mode")
