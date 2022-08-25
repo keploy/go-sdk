@@ -40,8 +40,10 @@ func (r Rows) Columns() []string {
 	case "test":
 		// don't run
 	case "record":
-		o := r.Rows.Columns()
-		output = &o
+		if r.Rows != nil {
+			o := r.Rows.Columns()
+			output = &o
+		}
 	default:
 		return nil
 	}
@@ -80,7 +82,9 @@ func (r Rows) Close() error {
 			return nil
 		}
 	case "record":
-		err = r.Rows.Close()
+		if r.Rows != nil {
+			err = r.Rows.Close()
+		}
 	default:
 		return errors.New("integrations: Not in a valid sdk mode")
 	}
@@ -237,8 +241,10 @@ func (r Rows) Next(dest []driver.Value) error {
 	case "test":
 		// don't run
 	case "record":
-		err = r.Rows.Next(dest)
-		output.Value = dest
+		if r.Rows != nil {
+			err = r.Rows.Next(dest)
+			output.Value = dest
+		}
 	default:
 		return errors.New("integrations: Not in a valid sdk mode")
 	}

@@ -45,13 +45,17 @@ func (s Stmt) Exec(args []driver.Value) (driver.Result, error) {
 	case "test":
 		//don't call method
 	case "record":
-		result, err = s.Stmt.Exec(args)
-		l, e := result.LastInsertId()
-		drResult.LastInserted = l
-		drResult.LError = e.Error()
-		ra, e := result.RowsAffected()
-		drResult.RowsAff = ra
-		drResult.RError = e.Error()
+		if s.Stmt != nil {
+			result, err = s.Stmt.Exec(args)
+			if result != nil {
+				l, e := result.LastInsertId()
+				drResult.LastInserted = l
+				drResult.LError = e.Error()
+				ra, e := result.RowsAffected()
+				drResult.RowsAff = ra
+				drResult.RError = e.Error()
+			}
+		}
 	default:
 		return nil, err
 	}
@@ -94,8 +98,10 @@ func (s Stmt) Query(args []driver.Value) (driver.Rows, error) {
 	case "test":
 		// don't run
 	case "record":
-		rows, err = s.Stmt.Query(args)
-		drRows.Rows = rows
+		if s.Stmt != nil {
+			rows, err = s.Stmt.Query(args)
+			drRows.Rows = rows
+		}
 	default:
 		return nil, errors.New("integrations: Not in a valid sdk mode")
 	}
@@ -138,8 +144,10 @@ func (s Stmt) NumInput() int {
 	case "test":
 		// don't run
 	case "record":
-		o := s.Stmt.NumInput()
-		output = &o
+		if s.Stmt != nil {
+			o := s.Stmt.NumInput()
+			output = &o
+		}
 	default:
 		return 0
 	}
@@ -171,7 +179,9 @@ func (s Stmt) Close() error {
 	case "test":
 		// don't run
 	case "record":
-		err = s.Stmt.Close()
+		if s.Stmt != nil {
+			err = s.Stmt.Close()
+		}
 	default:
 		return errors.New("integrations: Not in a valid sdk mode")
 	}
