@@ -33,9 +33,9 @@ func (t Tx) Commit() error {
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		// don't run
-	case "record":
+	case keploy.MODE_RECORD:
 		if t.Tx != nil {
 			err = t.Tx.Commit()
 		}
@@ -78,9 +78,9 @@ func (t Tx) Rollback() error {
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		// don't run
-	case "record":
+	case keploy.MODE_RECORD:
 		if t.Tx != nil {
 			err = t.Tx.Rollback()
 		}
@@ -132,9 +132,9 @@ func (c Conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, er
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		// don't run
-	case "record":
+	case keploy.MODE_RECORD:
 		tx, err = bc.BeginTx(ctx, opts)
 		drTx.Tx = tx
 	default:

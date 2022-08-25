@@ -37,9 +37,9 @@ func (r Rows) Columns() []string {
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		// don't run
-	case "record":
+	case keploy.MODE_RECORD:
 		if r.Rows != nil {
 			o := r.Rows.Columns()
 			output = &o
@@ -75,13 +75,13 @@ func (r Rows) Close() error {
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		// don't run actual rows.Close
 		// ignore the rows.Close which is not done manually.
 		if kctx.Deps == nil || len(kctx.Deps) == 0 || len(kctx.Deps[0].Data) != 1 {
 			return nil
 		}
-	case "record":
+	case keploy.MODE_RECORD:
 		if r.Rows != nil {
 			err = r.Rows.Close()
 		}
@@ -238,9 +238,9 @@ func (r Rows) Next(dest []driver.Value) error {
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		// don't run
-	case "record":
+	case keploy.MODE_RECORD:
 		if r.Rows != nil {
 			err = r.Rows.Next(dest)
 			output.Value = dest
@@ -300,9 +300,9 @@ func (c Conn) QueryContext(ctx context.Context, query string, args []driver.Name
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		// don't run
-	case "record":
+	case keploy.MODE_RECORD:
 		rows, err = queryerContext.QueryContext(ctx, query, args)
 		driverRows.Rows = rows
 	default:

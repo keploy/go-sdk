@@ -39,10 +39,10 @@ func (cr *Cursor) Err() error {
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		//dont run mongo query as it is stored in context
 		err = nil
-	case "record":
+	case keploy.MODE_RECORD:
 		err = cr.Cursor.Err()
 	default:
 		return errors.New("integrations: Not in a valid sdk mode")
@@ -95,10 +95,10 @@ func (cr *Cursor) Close(ctx context.Context) error {
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		//dont run mongo query as it is stored in context
 		err = nil
-	case "record":
+	case keploy.MODE_RECORD:
 		err = cr.Cursor.Close(ctx)
 	default:
 		return errors.New("integrations: Not in a valid sdk mode")
@@ -149,11 +149,11 @@ func (cr *Cursor) TryNext(ctx context.Context) bool {
 	var output *bool
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		//dont run mongo query as it is stored in context
 		n := false
 		output = &n
-	case "record":
+	case keploy.MODE_RECORD:
 		n := cr.Cursor.TryNext(ctx)
 		output = &n
 	default:
@@ -201,10 +201,10 @@ func (cr *Cursor) All(ctx context.Context, results interface{}) error {
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		//dont run mongo query as it is stored in context
 		err = nil
-	case "record":
+	case keploy.MODE_RECORD:
 		err = cr.Cursor.All(ctx, results)
 	default:
 		return errors.New("integrations: Not in a valid sdk mode")
@@ -255,11 +255,11 @@ func (cr *Cursor) Next(ctx context.Context) bool {
 	var output *bool
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		//dont run mongo query as it is stored in context
 		n := false
 		output = &n
-	case "record":
+	case keploy.MODE_RECORD:
 		n := cr.Cursor.Next(ctx)
 		output = &n
 	default:
@@ -307,10 +307,10 @@ func (cr *Cursor) Decode(v interface{}) error {
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		//dont run mongo query as it is stored in context
 		err = nil
-	case "record":
+	case keploy.MODE_RECORD:
 		err = cr.Cursor.Decode(v)
 	default:
 		return errors.New("integrations: Not in a valid sdk mode")
@@ -348,7 +348,7 @@ func (cr *Cursor) Decode(v interface{}) error {
 }
 
 // // Find creates and returns the instance of pointer to Cursor which have overridden methods of mongo.Cursor.
-// // Actual Collection.Find is called only in "record" or "off" mode.
+// // Actual Collection.Find is called only in keploy.MODE_RECORD or "off" mode.
 // //
 // // For information about Collection.Find, See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Collection.Find.
 // func (c *Collection) Find(ctx context.Context, filter interface{},
@@ -382,7 +382,7 @@ func (cr *Cursor) Decode(v interface{}) error {
 // 		err    error
 // 	)
 // 	switch mode {
-// 	case "test":
+// 	case keploy.MODE_TEST:
 // 		//don't call method in test mode
 // 		return &Cursor{
 // 			filter: filter,
@@ -390,7 +390,7 @@ func (cr *Cursor) Decode(v interface{}) error {
 // 			log:    c.log,
 // 			ctx:    ctx,
 // 		}, err
-// 	case "record":
+// 	case keploy.MODE_RECORD:
 // 		cursor, err = c.Collection.Find(ctx, filter, opts...)
 // 		return &Cursor{
 // 			Cursor: *cursor,
