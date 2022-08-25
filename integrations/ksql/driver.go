@@ -31,7 +31,7 @@ func (ksql *Driver) Open(dsn string) (driver.Conn, error) {
 	)
 	conn, err := ksql.Driver.Open(dsn)
 
-	// if ksql.Mode == "test" {
+	// if ksql.Mode == keploy.MODE_TEST {
 	if keploy.GetMode() == keploy.MODE_TEST {
 		err = nil
 		conn = Conn{}
@@ -56,7 +56,7 @@ type Conn struct {
 }
 
 func (c Conn) Begin() (driver.Tx, error) {
-	// if c.mode == "test" {
+	// if c.mode == keploy.MODE_TEST {
 	if keploy.GetMode() == keploy.MODE_TEST {
 
 		return Tx{}, nil
@@ -65,7 +65,7 @@ func (c Conn) Begin() (driver.Tx, error) {
 }
 
 func (c Conn) Close() error {
-	// if c.mode == "test" {
+	// if c.mode == keploy.MODE_TEST {
 	if keploy.GetMode() == keploy.MODE_TEST {
 
 		return nil
@@ -74,7 +74,7 @@ func (c Conn) Close() error {
 }
 
 func (c Conn) Prepare(query string) (driver.Stmt, error) {
-	// if c.mode == "test" {
+	// if c.mode == keploy.MODE_TEST {
 	if keploy.GetMode() == keploy.MODE_TEST {
 
 		return Stmt{}, nil
@@ -110,9 +110,9 @@ func (c Conn) Ping(ctx context.Context) error {
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		// don't run
-	case "record":
+	case keploy.MODE_RECORD:
 		err = pc.Ping(ctx)
 	default:
 		return errors.New("integrations: Not in a valid sdk mode")

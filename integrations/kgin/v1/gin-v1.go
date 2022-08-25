@@ -68,7 +68,7 @@ func mw(k *keploy.Keploy) gin.HandlerFunc {
 			// id is only present during simulation
 			// run it similar to how testcases would run
 			setContextValGin(c, &keploy.Context{
-				Mode:   "test",
+				Mode:   keploy.MODE_TEST,
 				TestID: id,
 				Deps:   k.GetDependencies(id),
 			})
@@ -77,7 +77,7 @@ func mw(k *keploy.Keploy) gin.HandlerFunc {
 			return
 		}
 
-		setContextValGin(c, &keploy.Context{Mode: "record"})
+		setContextValGin(c, &keploy.Context{Mode: keploy.MODE_RECORD})
 
 		// Request
 		var reqBody []byte

@@ -70,7 +70,7 @@ func (c *Collection) DeleteOne(ctx context.Context, filter interface{},
 	return output, err
 }
 
-// DeleteMany method mocks Collection.DeleteMany of mongo inorder to call it only in "record" or "off" mode.
+// DeleteMany method mocks Collection.DeleteMany of mongo inorder to call it only in keploy.MODE_RECORD or "off" mode.
 //
 // See https://pkg.go.dev/go.mongodb.org/mongo-driver@v1.8.0/mongo#Collection.DeleteMany for information about Collection.DeleteMany.
 func (c *Collection) DeleteMany(ctx context.Context, filter interface{},
