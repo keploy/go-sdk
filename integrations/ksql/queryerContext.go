@@ -39,7 +39,7 @@ func (r Rows) Columns() []string {
 	switch mode {
 	case "test":
 		// don't run
-	case "capture":
+	case "record":
 		o := r.Rows.Columns()
 		output = &o
 	default:
@@ -79,7 +79,7 @@ func (r Rows) Close() error {
 		if kctx.Deps == nil || len(kctx.Deps) == 0 || len(kctx.Deps[0].Data) != 1 {
 			return nil
 		}
-	case "capture":
+	case "record":
 		err = r.Rows.Close()
 	default:
 		return errors.New("integrations: Not in a valid sdk mode")
@@ -236,7 +236,7 @@ func (r Rows) Next(dest []driver.Value) error {
 	switch mode {
 	case "test":
 		// don't run
-	case "capture":
+	case "record":
 		err = r.Rows.Next(dest)
 		output.Value = dest
 	default:
@@ -296,7 +296,7 @@ func (c Conn) QueryContext(ctx context.Context, query string, args []driver.Name
 	switch mode {
 	case "test":
 		// don't run
-	case "capture":
+	case "record":
 		rows, err = queryerContext.QueryContext(ctx, query, args)
 		driverRows.Rows = rows
 	default:

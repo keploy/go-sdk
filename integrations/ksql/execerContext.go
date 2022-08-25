@@ -59,7 +59,7 @@ func (c Conn) ExecContext(ctx context.Context, query string, args []driver.Named
 	switch mode {
 	case "test":
 		//don't call Find method
-	case "capture":
+	case "record":
 		result, err = execerContext.ExecContext(ctx, query, args)
 		// calls LastInsertId to capture their outputs
 		li, e := result.LastInsertId()
