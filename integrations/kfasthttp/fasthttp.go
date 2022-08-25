@@ -61,7 +61,7 @@ func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp
 
 			}
 			setContextValFast(c, &keploy.Context{
-				Mode: "capture",
+				Mode: "record",
 			})
 			var reqBody []byte
 			var err error

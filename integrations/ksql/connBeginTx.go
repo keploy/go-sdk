@@ -35,7 +35,7 @@ func (t Tx) Commit() error {
 	switch mode {
 	case "test":
 		// don't run
-	case "capture":
+	case "record":
 		if t.Tx != nil {
 			err = t.Tx.Commit()
 		}
@@ -80,7 +80,7 @@ func (t Tx) Rollback() error {
 	switch mode {
 	case "test":
 		// don't run
-	case "capture":
+	case "record":
 		if t.Tx != nil {
 			err = t.Tx.Rollback()
 		}
@@ -134,7 +134,7 @@ func (c Conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, er
 	switch mode {
 	case "test":
 		// don't run
-	case "capture":
+	case "record":
 		tx, err = bc.BeginTx(ctx, opts)
 		drTx.Tx = tx
 	default:

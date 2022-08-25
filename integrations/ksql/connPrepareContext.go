@@ -44,7 +44,7 @@ func (s Stmt) Exec(args []driver.Value) (driver.Result, error) {
 	switch mode {
 	case "test":
 		//don't call method
-	case "capture":
+	case "record":
 		if s.Stmt != nil {
 			result, err = s.Stmt.Exec(args)
 			if result != nil {
@@ -97,7 +97,7 @@ func (s Stmt) Query(args []driver.Value) (driver.Rows, error) {
 	switch mode {
 	case "test":
 		// don't run
-	case "capture":
+	case "record":
 		if s.Stmt != nil {
 			rows, err = s.Stmt.Query(args)
 			drRows.Rows = rows
@@ -143,7 +143,7 @@ func (s Stmt) NumInput() int {
 	switch mode {
 	case "test":
 		// don't run
-	case "capture":
+	case "record":
 		if s.Stmt != nil {
 			o := s.Stmt.NumInput()
 			output = &o
@@ -178,7 +178,7 @@ func (s Stmt) Close() error {
 	switch mode {
 	case "test":
 		// don't run
-	case "capture":
+	case "record":
 		if s.Stmt != nil {
 			err = s.Stmt.Close()
 		}
@@ -233,7 +233,7 @@ func (c Conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, er
 	switch mode {
 	case "test":
 		// don't run
-	case "capture":
+	case "record":
 		stmt, err = pc.PrepareContext(ctx, query)
 		drStmt.Stmt = stmt
 	default:
