@@ -69,8 +69,8 @@ func GetState(ctx context.Context) (*Context, error) {
 }
 
 // ProcessDep is a generic method to encode and decode the outputs of external dependecies.
-// If request is on "test" mode, it returns (true, decoded outputs of stored binaries in keploy context).
-// Else in "record" mode, it encodes the outputs of external dependencies and stores in keploy context. Returns (false, nil).
+// If request is on keploy.MODE_TEST mode, it returns (true, decoded outputs of stored binaries in keploy context).
+// Else in keploy.MODE_RECORD mode, it encodes the outputs of external dependencies and stores in keploy context. Returns (false, nil).
 func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, outputs ...interface{}) (bool, []interface{}) {
 	kctx, err := GetState(ctx)
 	if err != nil {
@@ -79,8 +79,12 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 	}
 	// capture the object
 	switch kctx.Mode {
-	case "test":
-		if kctx.Deps != nil && len(kctx.Deps) > 0 {
+	case MODE_TEST:
+		if !kctx.FileExport {
+			if kctx.Deps == nil || len(kctx.Deps) == 0 {
+				log.Error("dependency mocking failed: incorrect number of dependencies in keploy context", zap.String("test id", kctx.TestID))
+				return false, nil
+			}
 			if len(kctx.Deps[0].Data) != len(outputs) {
 				log.Error("dependency mocking failed: incorrect number of dependencies in keploy context", zap.String("test id", kctx.TestID))
 				return false, nil
@@ -125,7 +129,7 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 		kctx.Mock = kctx.Mock[1:]
 		return true, res
 
-	case "record":
+	case MODE_RECORD:
 		res := make([][]byte, len(outputs))
 		for i, t := range outputs {
 			err = Encode(t, res, i)
@@ -148,12 +152,12 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 			Data: res,
 			Meta: meta,
 		})
-		if grpcClient != nil {
+		if kctx.FileExport {
 			c := proto.NewRegressionServiceClient(grpcClient)
 			_, err := c.PutMock(ctx, &proto.PutMockReq{
 				Mock: &proto.Mock{
-					Version: "api.keploy.io/v2",
-					Kind:    "Mock",
+					Version: string(V1_BETA1),
+					Kind:    string(KIND_MOCK),
 					Name:    kctx.TestID,
 					Spec: &proto.Mock_SpecSchema{
 						Type:     meta["type"],
@@ -278,7 +282,7 @@ func ProcessRequest(rw http.ResponseWriter, r *http.Request, k *Keploy) (*BodyDu
 		// id is only present during simulation
 		// run it similar to how testcases would run
 		ctx := context.WithValue(r.Context(), KCTX, &Context{
-			Mode:   "test",
+			Mode:   MODE_TEST,
 			TestID: id,
 			Deps:   k.GetDependencies(id),
 		})
@@ -286,7 +290,7 @@ func ProcessRequest(rw http.ResponseWriter, r *http.Request, k *Keploy) (*BodyDu
 		return writer, r, resBody, nil, nil
 	}
 	ctx := context.WithValue(r.Context(), KCTX, &Context{
-		Mode: "record",
+		Mode: MODE_RECORD,
 	})
 	r = r.WithContext(ctx)
 

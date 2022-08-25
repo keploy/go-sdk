@@ -48,7 +48,7 @@ func TestFindOne(t *testing.T) {
 		// test mode document present in client DB
 		{
 			ctx: context.WithValue(context.TODO(), keploy.KCTX, &keploy.Context{
-				Mode:   "test",
+				Mode:   keploy.MODE_TEST,
 				TestID: "8f7f6705-87eb-4c56-a096-85ba47071080",
 				Deps: []models.Dependency{
 					{
@@ -77,7 +77,7 @@ func TestFindOne(t *testing.T) {
 		// test mode document not present in client DB
 		{
 			ctx: context.WithValue(context.TODO(), keploy.KCTX, &keploy.Context{
-				Mode:   "test",
+				Mode:   keploy.MODE_TEST,
 				TestID: "8f7f6705-87eb-4c56-a096-85ba47071080",
 				Deps: []models.Dependency{
 					{
@@ -106,7 +106,7 @@ func TestFindOne(t *testing.T) {
 		// capture mode document present in client DB
 		{
 			ctx: context.WithValue(context.TODO(), keploy.KCTX, &keploy.Context{
-				Mode:   "record",
+				Mode:   keploy.MODE_RECORD,
 				TestID: "",
 				Deps:   []models.Dependency{},
 			}),
@@ -121,7 +121,7 @@ func TestFindOne(t *testing.T) {
 		// capture mode document not present in client DB
 		{
 			ctx: context.WithValue(context.TODO(), keploy.KCTX, &keploy.Context{
-				Mode:   "record",
+				Mode:   keploy.MODE_RECORD,
 				TestID: "",
 				Deps:   []models.Dependency{},
 			}),
@@ -183,7 +183,7 @@ func TestInsertOne(t *testing.T) {
 		//test mode insertOne successful
 		{
 			ctx: context.WithValue(context.TODO(), keploy.KCTX, &keploy.Context{
-				Mode:   "test",
+				Mode:   keploy.MODE_TEST,
 				TestID: "8f7f6705-87eb-4c56-a096-85ba47071080",
 				Deps: []models.Dependency{
 					{
@@ -214,7 +214,7 @@ func TestInsertOne(t *testing.T) {
 		//capture mode
 		{
 			ctx: context.WithValue(context.TODO(), keploy.KCTX, &keploy.Context{
-				Mode:   "record",
+				Mode:   keploy.MODE_RECORD,
 				TestID: "",
 				Deps:   []models.Dependency{},
 			}),
@@ -264,7 +264,7 @@ func TestInsertOne(t *testing.T) {
 		deps, ok := d.(*keploy.Context)
 
 		//compare returned output and expected output only in test mode
-		if !ok || deps.Mode != "test" || (deps.Mode == "test" &&
+		if !ok || deps.Mode != keploy.MODE_TEST || (deps.Mode == keploy.MODE_TEST &&
 			res.InsertedID.(primitive.ObjectID).Hex() == ti.result.InsertedID.(primitive.ObjectID).Hex()) {
 
 			fmt.Printf(" Testcase %v Passed\n", index)

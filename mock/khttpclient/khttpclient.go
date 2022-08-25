@@ -12,7 +12,7 @@ import (
 	"github.com/keploy/go-sdk/keploy"
 	"github.com/keploy/go-sdk/mock"
 
-	proto "go.keploy.io/server/grpc/regression"
+	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
 )
 
@@ -65,7 +65,7 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		//don't call i.core.RoundTrip method
 		mock := kctx.Mock
 		if len(mock) > 0 {
@@ -74,11 +74,11 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 			resp.StatusCode = mock[0].Spec.Response.StatusCode
 			mock = mock[1:]
 		}
-	case "record":
+	case keploy.MODE_RECORD:
 		resp, err = i.core.RoundTrip(r)
 		var (
 			respBody   []byte
-			statusCode int64
+			statusCode int
 			respHeader http.Header
 		)
 		if resp != nil {
@@ -93,7 +93,7 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 				}
 			}
 			resp.Body = ioutil.NopCloser(bytes.NewBuffer(respBody)) // Reset
-			statusCode = int64(resp.StatusCode)
+			statusCode = resp.StatusCode
 			respHeader = resp.Header
 		}
 
@@ -102,29 +102,26 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 			i.log.Error("cannot find current directory", zap.Error(err))
 			return nil, err
 		}
-		mock.PostMock(context.Background(), &proto.PutMockReq{Path: path, Mock: &proto.Mock{
-			Version: "api.keploy.io/v2",
-			Kind:    "Mock",
-			Name:    kctx.TestID,
-			Spec: &proto.Mock_SpecSchema{
-				Type:     "Http-Client",
-				Metadata: map[string]string{"foo": "bar"},
-				Objects:  []*proto.Mock_Object{},
-				Req: &proto.Mock_Request{
-					Method:     r.Method,
-					ProtoMajor: int64(r.ProtoMajor),
-					ProtoMinor: int64(r.ProtoMinor),
+		mock.PostMock(context.Background(), path, models.Mock{
+			Name: kctx.TestID,
+			Spec: models.SpecSchema{
+				Type: string(models.HttpClient),
+				// Metadata: ,
+				Request: models.HttpReq{
+					Method:     models.Method(r.Method),
+					ProtoMajor: r.ProtoMajor,
+					ProtoMinor: r.ProtoMinor,
 					URL:        r.URL.String(),
-					Headers:    mock.GetProtoMap(r.Header),
+					Header:     r.Header,
 					Body:       string(reqBody),
 				},
-				Res: &proto.Mock_Response{
-					StatusCode: int64(statusCode),
-					Headers:    mock.GetProtoMap(respHeader),
+				Response: models.HttpResp{
+					StatusCode: statusCode,
+					Header:     respHeader,
 					Body:       string(respBody),
 				},
 			},
-		}})
+		})
 	default:
 		return nil, errors.New("integrations: Not in a valid sdk mode")
 	}

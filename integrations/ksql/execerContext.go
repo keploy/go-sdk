@@ -57,9 +57,9 @@ func (c Conn) ExecContext(ctx context.Context, query string, args []driver.Named
 		"arguments": fmt.Sprint(args),
 	}
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		//don't call Find method
-	case "record":
+	case keploy.MODE_RECORD:
 		result, err = execerContext.ExecContext(ctx, query, args)
 		if result != nil {
 			// calls LastInsertId to capture their outputs

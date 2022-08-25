@@ -64,7 +64,7 @@ port := "8080"
 ```
 ## Configure
 ```
-export KEPLOY_MODE="test"
+export KEPLOY_MODE=keploy.MODE_TEST
 ```
 ### KEPLOY_MODE
 There are 3 modes:
