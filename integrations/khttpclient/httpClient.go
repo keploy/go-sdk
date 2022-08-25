@@ -9,13 +9,14 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
-	"github.com/keploy/go-sdk/keploy"
-	"go.keploy.io/server/pkg/models"
-	"go.uber.org/zap"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"strconv"
+
+	"github.com/keploy/go-sdk/keploy"
+	"go.keploy.io/server/pkg/models"
+	"go.uber.org/zap"
 )
 
 // ReadCloser is used so that gob could encode-decode http.Response.
@@ -140,7 +141,7 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 	switch mode {
 	case "test":
 		//don't call i.core.RoundTrip method
-	case "capture":
+	case "record":
 		resp, err = i.core.RoundTrip(r)
 		if resp == nil {
 			isRespNil = true

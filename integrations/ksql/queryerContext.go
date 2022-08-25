@@ -39,7 +39,7 @@ func (r Rows) Columns() []string {
 	switch mode {
 	case "test":
 		// don't run
-	case "capture":
+	case "record":
 		if r.Rows != nil {
 			o := r.Rows.Columns()
 			output = &o
@@ -81,7 +81,7 @@ func (r Rows) Close() error {
 		if kctx.Deps == nil || len(kctx.Deps) == 0 || len(kctx.Deps[0].Data) != 1 {
 			return nil
 		}
-	case "capture":
+	case "record":
 		if r.Rows != nil {
 			err = r.Rows.Close()
 		}
@@ -240,7 +240,7 @@ func (r Rows) Next(dest []driver.Value) error {
 	switch mode {
 	case "test":
 		// don't run
-	case "capture":
+	case "record":
 		if r.Rows != nil {
 			err = r.Rows.Next(dest)
 			output.Value = dest
@@ -302,7 +302,7 @@ func (c Conn) QueryContext(ctx context.Context, query string, args []driver.Name
 	switch mode {
 	case "test":
 		// don't run
-	case "capture":
+	case "record":
 		rows, err = queryerContext.QueryContext(ctx, query, args)
 		driverRows.Rows = rows
 	default:

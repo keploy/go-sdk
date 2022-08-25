@@ -6,4 +6,5 @@ type Context struct {
 	Mode   Mode
 	TestID string
 	Deps   []models.Dependency
+	Mock   []models.Mock
 }
