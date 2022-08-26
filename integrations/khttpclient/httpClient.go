@@ -12,9 +12,11 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"strconv"
 
 	"github.com/keploy/go-sdk/keploy"
+	"github.com/keploy/go-sdk/mock"
 	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
 )
@@ -94,6 +96,10 @@ func (i *Interceptor) setRequestContext(ctx context.Context) context.Context {
 // RoundTrip is the custom method which is called before making http client calls to
 // capture or replay the outputs of external http service.
 func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
+	if keploy.GetModeFromContext(r.Context()) == keploy.MODE_OFF {
+		return i.core.RoundTrip(r)
+	}
+
 	// Read the request body to store in meta
 	var reqBody []byte
 	if r.Body != nil { // Read
@@ -113,9 +119,6 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 		r = r.WithContext(ctx)
 	}
 
-	if keploy.GetModeFromContext(r.Context()) == keploy.MODE_OFF {
-		return i.core.RoundTrip(r)
-	}
 	var (
 		err       error
 		kerr      *keploy.KError = &keploy.KError{}
@@ -139,10 +142,69 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 		"ProtoMinor": strconv.Itoa(r.ProtoMinor),
 	}
 	switch mode {
-	case "test":
-		//don't call i.core.RoundTrip method
-	case "record":
+	case keploy.MODE_TEST:
+		//don't call i.core.RoundTrip method when not in file export
+		if kctx.FileExport {
+			mock := kctx.Mock
+			if len(mock) > 0 {
+				resp.Body = ioutil.NopCloser(bytes.NewBuffer([]byte(mock[0].Spec.Response.Body)))
+				resp.Header = mock[0].Spec.Response.Header
+				resp.StatusCode = mock[0].Spec.Response.StatusCode
+				kctx.Mock = mock[1:]
+			}
+			return resp, err
+		}
+	case keploy.MODE_RECORD:
 		resp, err = i.core.RoundTrip(r)
+		if kctx.FileExport {
+			var (
+				respBody   []byte
+				statusCode int
+				respHeader http.Header
+			)
+			if resp != nil {
+				// Read the response body to capture
+				if resp.Body != nil { // Read
+					var err error
+					respBody, err = ioutil.ReadAll(resp.Body)
+					if err != nil {
+						// TODO right way to log errors
+						i.log.Error("Unable to read request body", zap.Error(err))
+						return nil, err
+					}
+				}
+				resp.Body = ioutil.NopCloser(bytes.NewBuffer(respBody)) // Reset
+				statusCode = resp.StatusCode
+				respHeader = resp.Header
+			}
+
+			path, err := os.Getwd()
+			if err != nil {
+				i.log.Error("cannot find current directory", zap.Error(err))
+				return nil, err
+			}
+			mock.PostMock(context.Background(), path, models.Mock{
+				Name: kctx.TestID,
+				Spec: models.SpecSchema{
+					Type:     string(models.HttpClient),
+					Metadata: meta,
+					Request: models.HttpReq{
+						Method:     models.Method(r.Method),
+						ProtoMajor: r.ProtoMajor,
+						ProtoMinor: r.ProtoMinor,
+						URL:        r.URL.String(),
+						Header:     r.Header,
+						Body:       string(reqBody),
+					},
+					Response: models.HttpResp{
+						StatusCode: statusCode,
+						Header:     respHeader,
+						Body:       string(respBody),
+					},
+				},
+			})
+			return resp, err
+		}
 		if resp == nil {
 			isRespNil = true
 			resp = &http.Response{}

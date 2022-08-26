@@ -42,9 +42,9 @@ func (s Stmt) Exec(args []driver.Value) (driver.Result, error) {
 		"arguments": fmt.Sprint(args),
 	}
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		//don't call method
-	case "record":
+	case keploy.MODE_RECORD:
 		if s.Stmt != nil {
 			result, err = s.Stmt.Exec(args)
 			if result != nil {
@@ -95,9 +95,9 @@ func (s Stmt) Query(args []driver.Value) (driver.Rows, error) {
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		// don't run
-	case "record":
+	case keploy.MODE_RECORD:
 		if s.Stmt != nil {
 			rows, err = s.Stmt.Query(args)
 			drRows.Rows = rows
@@ -141,9 +141,9 @@ func (s Stmt) NumInput() int {
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		// don't run
-	case "record":
+	case keploy.MODE_RECORD:
 		if s.Stmt != nil {
 			o := s.Stmt.NumInput()
 			output = &o
@@ -176,9 +176,9 @@ func (s Stmt) Close() error {
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		// don't run
-	case "record":
+	case keploy.MODE_RECORD:
 		if s.Stmt != nil {
 			err = s.Stmt.Close()
 		}
@@ -231,9 +231,9 @@ func (c Conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, er
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		// don't run
-	case "record":
+	case keploy.MODE_RECORD:
 		stmt, err = pc.PrepareContext(ctx, query)
 		drStmt.Stmt = stmt
 	default:

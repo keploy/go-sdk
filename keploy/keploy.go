@@ -26,6 +26,19 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+type Kind string
+
+var (
+	V1_BETA1 Version = Version("api.keploy.io/v1beta1")
+)
+
+type Version string
+
+var (
+	KIND_MOCK Kind = Kind("Mock")
+	KIND_TEST Kind = Kind("Test")
+)
+
 var (
 	// mode is set to record, if unset
 	mode       = MODE_RECORD
