@@ -50,10 +50,14 @@ func (s Stmt) Exec(args []driver.Value) (driver.Result, error) {
 			if result != nil {
 				l, e := result.LastInsertId()
 				drResult.LastInserted = l
-				drResult.LError = e.Error()
+				if e != nil {
+					drResult.LError = e.Error()
+				}
 				ra, e := result.RowsAffected()
 				drResult.RowsAff = ra
-				drResult.RError = e.Error()
+				if e != nil {
+					drResult.RError = e.Error()
+				}
 			}
 		}
 	default:
