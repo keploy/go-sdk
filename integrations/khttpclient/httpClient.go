@@ -6,13 +6,14 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rsa"
+	"encoding/base64"
 	"encoding/gob"
 	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
-	"os"
+	"reflect"
 	"strconv"
 
 	"github.com/keploy/go-sdk/keploy"
@@ -146,10 +147,17 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 		//don't call i.core.RoundTrip method when not in file export
 		if kctx.FileExport {
 			mock := kctx.Mock
-			if len(mock) > 0 {
+			if len(mock) > 0 && len(mock[0].Spec.Objects) > 0 {
+				bin, er := base64.StdEncoding.DecodeString(mock[0].Spec.Objects[0].Data)
+				if er != nil {
+					i.log.Error("failed to decode the base64 encode error", zap.Error(er))
+				}
 				resp.Body = ioutil.NopCloser(bytes.NewBuffer([]byte(mock[0].Spec.Response.Body)))
 				resp.Header = mock[0].Spec.Response.Header
 				resp.StatusCode = mock[0].Spec.Response.StatusCode
+				if bin != nil && string(bin) != "" {
+					err = errors.New(string(bin))
+				}
 				kctx.Mock = mock[1:]
 			}
 			return resp, err
@@ -161,6 +169,7 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 				respBody   []byte
 				statusCode int
 				respHeader http.Header
+				errStr     string = ""
 			)
 			if resp != nil {
 				// Read the response body to capture
@@ -168,7 +177,6 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 					var err error
 					respBody, err = ioutil.ReadAll(resp.Body)
 					if err != nil {
-						// TODO right way to log errors
 						i.log.Error("Unable to read request body", zap.Error(err))
 						return nil, err
 					}
@@ -178,12 +186,10 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 				respHeader = resp.Header
 			}
 
-			path, err := os.Getwd()
 			if err != nil {
-				i.log.Error("cannot find current directory", zap.Error(err))
-				return nil, err
+				errStr = err.Error()
 			}
-			mock.PostMock(context.Background(), path, models.Mock{
+			mock.PostMock(context.Background(), keploy.Path, models.Mock{
 				Name: kctx.TestID,
 				Spec: models.SpecSchema{
 					Type:     string(models.HttpClient),
@@ -201,6 +207,10 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 						Header:     respHeader,
 						Body:       string(respBody),
 					},
+					Objects: []models.Object{{
+						Type: reflect.TypeOf(kerr).String(),
+						Data: base64.StdEncoding.EncodeToString([]byte(errStr)),
+					}},
 				},
 			})
 			return resp, err
