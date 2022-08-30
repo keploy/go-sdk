@@ -32,7 +32,11 @@ func GetHttpHeader(m map[string]*proto.StrArr) map[string][]string {
 
 func CreateMockFile(path string) {
 	if _, err := os.Stat(filepath.Join(path, "mock.yaml")); err != nil {
-		_, err := os.Create(filepath.Join(path, "mock.yaml"))
+		err := os.MkdirAll(filepath.Join(path), os.ModePerm)
+		if err != nil {
+			logger.Error("failed to create a mock dir", zap.Error(err))
+		}
+		_, err = os.Create(filepath.Join(path, "mock.yaml"))
 		if err != nil {
 			logger.Error("failed to create a yaml file", zap.Error(err))
 		}
@@ -49,7 +53,7 @@ func PostMock(ctx context.Context, path string, mock models.Mock) {
 		Spec: &proto.Mock_SpecSchema{
 			Type:     mock.Spec.Type,
 			Metadata: mock.Spec.Metadata,
-			Objects:  []*proto.Mock_Object{},
+			Objects:  toProtoObjects(mock.Spec.Objects),
 			Req: &proto.Mock_Request{
 				Method:     string(mock.Spec.Request.Method),
 				ProtoMajor: int64(mock.Spec.Request.ProtoMajor),
@@ -70,13 +74,28 @@ func PostMock(ctx context.Context, path string, mock models.Mock) {
 	}
 }
 
+func toProtoObjects(objs []models.Object) []*proto.Mock_Object {
+	res := []*proto.Mock_Object{}
+	for _, j := range objs {
+		bin, err := base64.StdEncoding.DecodeString(j.Data)
+		if err != nil {
+			logger.Error("failed to decode base64 data from yaml file into byte array", zap.Error(err))
+			continue
+		}
+		res = append(res, &proto.Mock_Object{
+			Type: j.Type,
+			Data: bin,
+		})
+	}
+	return res
+}
+
 func toModelObjects(objs []*proto.Mock_Object) []models.Object {
 	res := []models.Object{}
 	for _, j := range objs {
 		res = append(res, models.Object{
 			Type: j.Type,
 			Data: base64.StdEncoding.EncodeToString(j.Data),
-			// j.Data,
 		})
 	}
 	return res
