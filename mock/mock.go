@@ -19,7 +19,7 @@ var (
 )
 
 type Config struct {
-	Mode string
+	Mode keploy.Mode
 	Name string
 	CTX  context.Context
 	Path string
@@ -35,7 +35,7 @@ func init() {
 	var err error
 	grpcClient, err = grpc.Dial("localhost:8081", grpc.WithInsecure())
 	if err != nil {
-		logger.Error("failed to connect to keploy server", zap.Error(err))
+		logger.Error("🚨 Failed to connect to keploy server via grpc. Please ensure that keploy server is running", zap.Error(err))
 	}
 	keploy.SetGrpcClient(grpcClient)
 }
@@ -52,12 +52,12 @@ func NewContext(conf Config) context.Context {
 	if conf.Path == "" {
 		path, err = os.Getwd()
 		if err != nil {
-			logger.Error("failed to get the path of current directory", zap.Error(err))
+			logger.Error("Failed to get the path of current directory", zap.Error(err))
 		}
 	} else if conf.Path[0] != '/' {
 		path, err = filepath.Abs(conf.Path)
 		if err != nil {
-			logger.Error("failed to get the absolute path from relative conf.path", zap.Error(err))
+			logger.Error("Failed to get the absolute path from relative conf.path", zap.Error(err))
 		}
 	}
 	path += "/mocks"
@@ -74,11 +74,11 @@ func NewContext(conf Config) context.Context {
 
 	if mode == keploy.MODE_TEST {
 		if conf.Name == "" {
-			logger.Error("Please enter the auto generated name to mock the dependencies using Keploy.")
+			logger.Error("🚨 Please enter the auto generated name to mock the dependencies using Keploy.")
 		}
 		mocks, err = GetAllMocks(context.Background(), &proto.GetMockReq{Path: path, Name: conf.Name})
 		if err != nil {
-			logger.Error("failed to get the mocks from keploy server", zap.Error(err))
+			logger.Error("🚨 Failed to get the mocks from keploy server. Please ensure that keploy server is running.", zap.Error(err))
 		}
 	}
 
@@ -93,8 +93,6 @@ func NewContext(conf Config) context.Context {
 		ctx = context.Background()
 	}
 
-	// create mock yaml file if not present
-	CreateMockFile(path)
-	fmt.Println("\nKeploy created new context for mocking. Please ensure that dependencies are integerated with Keploy")
+	fmt.Println("\n💡⚡️ Keploy created new mocking context for ", conf.Name, ". Please ensure that dependencies are integerated with Keploy")
 	return context.WithValue(ctx, keploy.KCTX, k)
 }

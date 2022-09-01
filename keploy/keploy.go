@@ -35,8 +35,8 @@ var (
 type Version string
 
 var (
-	KIND_MOCK Kind = Kind("Mock")
-	KIND_TEST Kind = Kind("Test")
+	HTTP_EXPORT    Kind = "Http"
+	GENERIC_EXPORT Kind = "Generic"
 )
 
 var (

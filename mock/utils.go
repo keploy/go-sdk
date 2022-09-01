@@ -3,8 +3,6 @@ package mock
 import (
 	"context"
 	"encoding/base64"
-	"os"
-	"path/filepath"
 
 	"github.com/keploy/go-sdk/keploy"
 	proto "go.keploy.io/server/grpc/regression"
@@ -30,41 +28,32 @@ func GetHttpHeader(m map[string]*proto.StrArr) map[string][]string {
 	return res
 }
 
-func CreateMockFile(path string) {
-	if _, err := os.Stat(filepath.Join(path, "mock.yaml")); err != nil {
-		err := os.MkdirAll(filepath.Join(path), os.ModePerm)
-		if err != nil {
-			logger.Error("failed to create a mock dir", zap.Error(err))
-		}
-		_, err = os.Create(filepath.Join(path, "mock.yaml"))
-		if err != nil {
-			logger.Error("failed to create a yaml file", zap.Error(err))
-		}
-	}
-}
-
-func PostMock(ctx context.Context, path string, mock models.Mock) {
+func PostHttpMock(ctx context.Context, path string, mock models.Mock) {
 	c := proto.NewRegressionServiceClient(grpcClient)
 
 	_, err := c.PutMock(ctx, &proto.PutMockReq{Path: path, Mock: &proto.Mock{
 		Version: string(keploy.V1_BETA1),
-		Kind:    string(keploy.KIND_MOCK),
+		Kind:    string(keploy.HTTP_EXPORT),
 		Name:    mock.Name,
 		Spec: &proto.Mock_SpecSchema{
 			Type:     mock.Spec.Type,
 			Metadata: mock.Spec.Metadata,
-			Objects:  toProtoObjects(mock.Spec.Objects),
+			// Objects:  toProtoObjects(mock.Spec.Objects),
+			Objects: []*proto.Mock_Object{&proto.Mock_Object{
+				Type: mock.Spec.Objects[0].Type,
+				Data: []byte(mock.Spec.Objects[0].Data),
+			}},
 			Req: &proto.Mock_Request{
 				Method:     string(mock.Spec.Request.Method),
 				ProtoMajor: int64(mock.Spec.Request.ProtoMajor),
 				ProtoMinor: int64(mock.Spec.Request.ProtoMinor),
 				URL:        mock.Spec.Request.URL,
-				Headers:    GetProtoMap(mock.Spec.Request.Header),
+				Header:     GetProtoMap(mock.Spec.Request.Header),
 				Body:       string(mock.Spec.Request.Body),
 			},
-			Res: &proto.Mock_Response{
+			Res: &proto.HttpResp{
 				StatusCode: int64(mock.Spec.Response.StatusCode),
-				Headers:    GetProtoMap(mock.Spec.Response.Header),
+				Header:     GetProtoMap(mock.Spec.Response.Header),
 				Body:       string(mock.Spec.Response.Body),
 			},
 		},
@@ -110,29 +99,43 @@ func GetAllMocks(ctx context.Context, req *proto.GetMockReq) ([]models.Mock, err
 		return mocks, err
 	}
 	for _, j := range resp.Mocks {
-		mocks = append(mocks, models.Mock{
+		mock := models.Mock{
 			Version: j.Version,
 			Kind:    j.Kind,
 			Name:    j.Name,
 			Spec: models.SpecSchema{
 				Type:     j.Spec.Type,
 				Metadata: j.Spec.Metadata,
-				Objects:  toModelObjects(j.Spec.Objects),
+				// Objects:  toModelObjects(j.Spec.Objects),
 				Request: models.HttpReq{
 					Method:     models.Method(j.Spec.Req.Method),
 					ProtoMajor: int(j.Spec.Req.ProtoMajor),
 					ProtoMinor: int(j.Spec.Req.ProtoMinor),
 					URL:        j.Spec.Req.URL,
-					Header:     GetHttpHeader(j.Spec.Req.Headers),
+					Header:     GetHttpHeader(j.Spec.Req.Header),
 					Body:       j.Spec.Req.Body,
 				},
 				Response: models.HttpResp{
 					StatusCode: int(j.Spec.Res.StatusCode),
-					Header:     GetHttpHeader(j.Spec.Res.Headers),
+					Header:     GetHttpHeader(j.Spec.Res.Header),
 					Body:       j.Spec.Res.Body,
 				},
 			},
-		})
+		}
+
+		switch mock.Kind {
+		case string(keploy.HTTP_EXPORT):
+			mock.Spec.Objects = []models.Object{models.Object{
+				Type: j.Spec.Objects[0].Type,
+				Data: string(j.Spec.Objects[0].Data),
+			}}
+		case string(keploy.GENERIC_EXPORT):
+			mock.Spec.Objects = toModelObjects(j.Spec.Objects)
+		default:
+			logger.Error("Mock is not of a vaild kind.")
+		}
+
+		mocks = append(mocks, mock)
 	}
 	return mocks, err
 }

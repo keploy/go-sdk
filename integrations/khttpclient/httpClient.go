@@ -6,7 +6,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rsa"
-	"encoding/base64"
 	"encoding/gob"
 	"errors"
 	"fmt"
@@ -148,14 +147,14 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 		if kctx.FileExport {
 			mock := kctx.Mock
 			if len(mock) > 0 && len(mock[0].Spec.Objects) > 0 {
-				bin, er := base64.StdEncoding.DecodeString(mock[0].Spec.Objects[0].Data)
+				bin := mock[0].Spec.Objects[0].Data
 				if er != nil {
 					i.log.Error("failed to decode the base64 encode error", zap.Error(er))
 				}
 				resp.Body = ioutil.NopCloser(bytes.NewBuffer([]byte(mock[0].Spec.Response.Body)))
 				resp.Header = mock[0].Spec.Response.Header
 				resp.StatusCode = mock[0].Spec.Response.StatusCode
-				if bin != nil && string(bin) != "" {
+				if bin != "" {
 					err = errors.New(string(bin))
 				}
 				kctx.Mock = mock[1:]
@@ -189,7 +188,8 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 			if err != nil {
 				errStr = err.Error()
 			}
-			mock.PostMock(context.Background(), keploy.Path, models.Mock{
+			errStr = "no mock"
+			mock.PostHttpMock(context.Background(), keploy.Path, models.Mock{
 				Name: kctx.TestID,
 				Spec: models.SpecSchema{
 					Type:     string(models.HttpClient),
@@ -209,7 +209,7 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 					},
 					Objects: []models.Object{{
 						Type: reflect.TypeOf(kerr).String(),
-						Data: base64.StdEncoding.EncodeToString([]byte(errStr)),
+						Data: errStr,
 					}},
 				},
 			})
