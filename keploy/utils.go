@@ -156,8 +156,8 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 			c := proto.NewRegressionServiceClient(grpcClient)
 			_, err := c.PutMock(ctx, &proto.PutMockReq{
 				Mock: &proto.Mock{
-					Version: string(V1_BETA1),
-					Kind:    string(GENERIC_EXPORT),
+					Version: string(models.V1_BETA1),
+					Kind:    string(models.GENERIC_EXPORT),
 					Name:    kctx.TestID,
 					Spec: &proto.Mock_SpecSchema{
 						Type:     meta["type"],

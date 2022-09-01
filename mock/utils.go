@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 
-	"github.com/keploy/go-sdk/keploy"
 	proto "go.keploy.io/server/grpc/regression"
 	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
@@ -32,8 +31,8 @@ func PostHttpMock(ctx context.Context, path string, mock models.Mock) {
 	c := proto.NewRegressionServiceClient(grpcClient)
 
 	_, err := c.PutMock(ctx, &proto.PutMockReq{Path: path, Mock: &proto.Mock{
-		Version: string(keploy.V1_BETA1),
-		Kind:    string(keploy.HTTP_EXPORT),
+		Version: string(models.V1_BETA1),
+		Kind:    string(models.HTTP_EXPORT),
 		Name:    mock.Name,
 		Spec: &proto.Mock_SpecSchema{
 			Type:     mock.Spec.Type,
@@ -124,12 +123,12 @@ func GetAllMocks(ctx context.Context, req *proto.GetMockReq) ([]models.Mock, err
 		}
 
 		switch mock.Kind {
-		case string(keploy.HTTP_EXPORT):
+		case string(models.HTTP_EXPORT):
 			mock.Spec.Objects = []models.Object{models.Object{
 				Type: j.Spec.Objects[0].Type,
 				Data: string(j.Spec.Objects[0].Data),
 			}}
-		case string(keploy.GENERIC_EXPORT):
+		case string(models.GENERIC_EXPORT):
 			mock.Spec.Objects = toModelObjects(j.Spec.Objects)
 		default:
 			logger.Error("Mock is not of a vaild kind.")
