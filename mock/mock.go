@@ -92,6 +92,11 @@ func NewContext(conf Config) context.Context {
 		ctx = context.Background()
 	}
 
-	fmt.Println("\n💡⚡️ Keploy created new mocking context for ", conf.Name, ". Please ensure that dependencies are integerated with Keploy")
+	name := ""
+	if conf.Name != "" {
+		name = " for " + conf.Name
+	}
+
+	fmt.Printf("\n💡⚡️ Keploy created new mocking context in %v mode %v.\n If you dont see any logs about your dependencies below, your dependency/s are NOT wrapped.\n", mode, name)
 	return context.WithValue(ctx, keploy.KCTX, k)
 }
