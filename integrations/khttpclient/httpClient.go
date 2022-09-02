@@ -158,7 +158,7 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 				if bin != "" {
 					err = errors.New(string(bin))
 				}
-				fmt.Println("🟠 Returned the mocked outputs for Http dependency call with meta: ", meta)
+				fmt.Println("🤡 Returned the mocked outputs for Http dependency call with meta: ", meta)
 				kctx.Mock = mocks[1:]
 			}
 			return resp, err

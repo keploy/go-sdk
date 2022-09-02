@@ -125,7 +125,7 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 			res = append(res, r)
 		}
 
-		fmt.Println("🟠 Returned the mocked outputs for Generic dependency call with meta: ", meta)
+		fmt.Println("🤡 Returned the mocked outputs for Generic dependency call with meta: ", meta)
 		kctx.Mock = kctx.Mock[1:]
 		return true, res
 
