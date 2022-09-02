@@ -8,7 +8,6 @@ import (
 
 	"github.com/keploy/go-sdk/keploy"
 	proto "go.keploy.io/server/grpc/regression"
-	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -43,7 +42,7 @@ func init() {
 func NewContext(conf Config) context.Context {
 	var (
 		mode  = keploy.MODE_TEST
-		mocks []models.Mock
+		mocks []*proto.Mock
 		err   error
 		path  string = conf.Path
 	)
