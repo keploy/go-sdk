@@ -165,7 +165,7 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 		}
 	case keploy.MODE_RECORD:
 		resp, err = i.core.RoundTrip(r)
-		if kctx.FileExport {
+		if kctx.FileExport && !keploy.IsMockExists(kctx.TestID) {
 			var (
 				respBody   []byte
 				statusCode int

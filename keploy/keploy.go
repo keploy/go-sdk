@@ -8,7 +8,6 @@ import (
 
 	"github.com/creasty/defaults"
 	"github.com/go-playground/validator/v10"
-	"google.golang.org/grpc"
 
 	// "github.com/benbjohnson/clock"
 	"io"
@@ -20,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	proto "go.keploy.io/server/grpc/regression"
 	"go.keploy.io/server/http/regression"
 	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
@@ -30,16 +30,25 @@ var (
 	// mode is set to record, if unset
 	mode       = MODE_RECORD
 	result     = make(chan bool, 1)
-	grpcClient *grpc.ClientConn
+	grpcClient proto.RegressionServiceClient
 	Path       string
+	MockExists sync.Map
 )
 
 // avoids circular dependency between mock and keploy packages
-func SetGrpcClient(c *grpc.ClientConn) {
+func SetGrpcClient(c proto.RegressionServiceClient) {
 	grpcClient = c
 }
 func SetPath(path string) {
 	Path = path
+}
+
+func IsMockExists(name string) bool {
+	_, ok := MockExists.Load(name)
+	return ok
+}
+func MockDoesExists(name string) {
+	MockExists.Store(name, true)
 }
 
 func init() {

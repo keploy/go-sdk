@@ -152,9 +152,8 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 			Data: res,
 			Meta: meta,
 		})
-		if kctx.FileExport {
-			c := proto.NewRegressionServiceClient(grpcClient)
-			_, err := c.PutMock(ctx, &proto.PutMockReq{
+		if kctx.FileExport && !IsMockExists(kctx.TestID) {
+			_, err := grpcClient.PutMock(ctx, &proto.PutMockReq{
 				Mock: &proto.Mock{
 					Version: string(models.V1_BETA1),
 					Kind:    string(models.GENERIC_EXPORT),

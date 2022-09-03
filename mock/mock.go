@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	grpcClient *grpc.ClientConn
+	grpcClient proto.RegressionServiceClient
 	logger     *zap.Logger
 )
 
@@ -26,16 +26,17 @@ type Config struct {
 
 func init() {
 	// Initialize a logger
-	logger, _ = zap.NewProduction()
+	logger, _ = zap.NewDevelopment()
 	defer func() {
 		_ = logger.Sync() // flushes buffer, if any
 	}()
 
 	var err error
-	grpcClient, err = grpc.Dial("localhost:8081", grpc.WithInsecure())
+	conn, err := grpc.Dial("localhost:8081", grpc.WithInsecure())
 	if err != nil {
-		logger.Error("🚨 Failed to connect to keploy server via grpc. Please ensure that keploy server is running", zap.Error(err))
+		logger.Error("❌ Failed to connect to keploy server via grpc. Please ensure that keploy server is running", zap.Error(err))
 	}
+	grpcClient = proto.NewRegressionServiceClient(conn)
 	keploy.SetGrpcClient(grpcClient)
 }
 
@@ -77,7 +78,7 @@ func NewContext(conf Config) context.Context {
 		}
 		mocks, err = GetAllMocks(context.Background(), &proto.GetMockReq{Path: path, Name: conf.Name})
 		if err != nil {
-			logger.Error("🚨 Failed to get the mocks from keploy server. Please ensure that keploy server is running.", zap.Error(err))
+			logger.Error("❌ Failed to get the mocks from keploy server. Please ensure that keploy server is running.", zap.Error(err))
 		}
 	}
 
@@ -98,5 +99,11 @@ func NewContext(conf Config) context.Context {
 	}
 
 	fmt.Printf("\n💡⚡️ Keploy created new mocking context in %v mode %v.\n If you dont see any logs about your dependencies below, your dependency/s are NOT wrapped.\n", mode, name)
+	exists := StartRecordingMocks(context.Background(), path+"/"+conf.Name+".yaml", string(mode), name)
+	if exists {
+		logger.Error(fmt.Sprintf("🚨 Keploy failed to record dependencies because yaml file already exists%v in directory: %v.\n", name, path))
+		// fmt.Printf("🚨 Keploy failed to record dependencies because yaml file already exists%v in directory: %v.\n", name, path)
+		keploy.MockDoesExists(conf.Name)
+	}
 	return context.WithValue(ctx, keploy.KCTX, k)
 }
