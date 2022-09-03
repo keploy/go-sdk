@@ -2,7 +2,7 @@ module github.com/keploy/go-sdk
 
 go 1.17
 
-replace go.keploy.io/server => ../keploy
+// replace go.keploy.io/server => ../keploy
 
 require (
 	github.com/aws/aws-sdk-go v1.42.23
@@ -20,7 +20,7 @@ require (
 require (
 	github.com/benbjohnson/clock v1.1.0
 	github.com/go-chi/chi v1.5.4
-	go.keploy.io/server v0.5.0
+	go.keploy.io/server v0.5.2
 )
 
 require (
@@ -43,7 +43,6 @@ require (
 	golang.org/x/mod v0.5.1 // indirect
 	golang.org/x/tools v0.1.9 // indirect
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
 require (
