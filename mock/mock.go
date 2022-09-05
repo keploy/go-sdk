@@ -8,18 +8,17 @@ import (
 
 	"github.com/keploy/go-sdk/keploy"
 	proto "go.keploy.io/server/grpc/regression"
-	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
 var (
-	grpcClient *grpc.ClientConn
+	grpcClient proto.RegressionServiceClient
 	logger     *zap.Logger
 )
 
 type Config struct {
-	Mode string
+	Mode keploy.Mode
 	Name string
 	CTX  context.Context
 	Path string
@@ -27,23 +26,24 @@ type Config struct {
 
 func init() {
 	// Initialize a logger
-	logger, _ = zap.NewProduction()
+	logger, _ = zap.NewDevelopment()
 	defer func() {
 		_ = logger.Sync() // flushes buffer, if any
 	}()
 
 	var err error
-	grpcClient, err = grpc.Dial("localhost:8081", grpc.WithInsecure())
+	conn, err := grpc.Dial("localhost:8081", grpc.WithInsecure())
 	if err != nil {
-		logger.Error("failed to connect to keploy server", zap.Error(err))
+		logger.Error("❌ Failed to connect to keploy server via grpc. Please ensure that keploy server is running", zap.Error(err))
 	}
+	grpcClient = proto.NewRegressionServiceClient(conn)
 	keploy.SetGrpcClient(grpcClient)
 }
 
 func NewContext(conf Config) context.Context {
 	var (
 		mode  = keploy.MODE_TEST
-		mocks []models.Mock
+		mocks []*proto.Mock
 		err   error
 		path  string = conf.Path
 	)
@@ -52,12 +52,12 @@ func NewContext(conf Config) context.Context {
 	if conf.Path == "" {
 		path, err = os.Getwd()
 		if err != nil {
-			logger.Error("failed to get the path of current directory", zap.Error(err))
+			logger.Error("Failed to get the path of current directory", zap.Error(err))
 		}
 	} else if conf.Path[0] != '/' {
 		path, err = filepath.Abs(conf.Path)
 		if err != nil {
-			logger.Error("failed to get the absolute path from relative conf.path", zap.Error(err))
+			logger.Error("Failed to get the absolute path from relative conf.path", zap.Error(err))
 		}
 	}
 	path += "/mocks"
@@ -74,11 +74,11 @@ func NewContext(conf Config) context.Context {
 
 	if mode == keploy.MODE_TEST {
 		if conf.Name == "" {
-			logger.Error("Please enter the auto generated name to mock the dependencies using Keploy.")
+			logger.Error("🚨 Please enter the auto generated name to mock the dependencies using Keploy.")
 		}
 		mocks, err = GetAllMocks(context.Background(), &proto.GetMockReq{Path: path, Name: conf.Name})
 		if err != nil {
-			logger.Error("failed to get the mocks from keploy server", zap.Error(err))
+			logger.Error("❌ Failed to get the mocks from keploy server. Please ensure that keploy server is running.", zap.Error(err))
 		}
 	}
 
@@ -93,8 +93,17 @@ func NewContext(conf Config) context.Context {
 		ctx = context.Background()
 	}
 
-	// create mock yaml file if not present
-	CreateMockFile(path)
-	fmt.Println("\nKeploy created new context for mocking. Please ensure that dependencies are integerated with Keploy")
+	name := ""
+	if conf.Name != "" {
+		name = " for " + conf.Name
+	}
+
+	fmt.Printf("\n💡⚡️ Keploy created new mocking context in %v mode %v.\n If you dont see any logs about your dependencies below, your dependency/s are NOT wrapped.\n", mode, name)
+	exists := StartRecordingMocks(context.Background(), path+"/"+conf.Name+".yaml", string(mode), name)
+	if exists {
+		logger.Error(fmt.Sprintf("🚨 Keploy failed to record dependencies because yaml file already exists%v in directory: %v.\n", name, path))
+		// fmt.Printf("🚨 Keploy failed to record dependencies because yaml file already exists%v in directory: %v.\n", name, path)
+		keploy.MockDoesExists(conf.Name)
+	}
 	return context.WithValue(ctx, keploy.KCTX, k)
 }

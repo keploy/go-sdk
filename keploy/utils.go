@@ -4,9 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/gob"
 	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
@@ -98,7 +98,6 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 				}
 				res = append(res, r)
 			}
-
 			kctx.Deps = kctx.Deps[1:]
 			return true, res
 		}
@@ -113,7 +112,7 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 		}
 		var res []interface{}
 		for i, t := range outputs {
-			bin, err := base64.StdEncoding.DecodeString(kctx.Mock[0].Spec.Objects[i].Data)
+			bin := kctx.Mock[0].Spec.Objects[i].Data
 			if err != nil {
 				log.Error("failed to decode base64 data from yaml file into byte array", zap.Error(err))
 				return false, nil
@@ -126,6 +125,7 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 			res = append(res, r)
 		}
 
+		fmt.Println("🤡 Returned the mocked outputs for Generic dependency call with meta: ", meta)
 		kctx.Mock = kctx.Mock[1:]
 		return true, res
 
@@ -152,15 +152,13 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 			Data: res,
 			Meta: meta,
 		})
-		if kctx.FileExport {
-			c := proto.NewRegressionServiceClient(grpcClient)
-			_, err := c.PutMock(ctx, &proto.PutMockReq{
+		if kctx.FileExport && !IsMockExists(kctx.TestID) {
+			_, err := grpcClient.PutMock(ctx, &proto.PutMockReq{
 				Mock: &proto.Mock{
-					Version: string(V1_BETA1),
-					Kind:    string(KIND_MOCK),
+					Version: string(models.V1_BETA1),
+					Kind:    string(models.GENERIC_EXPORT),
 					Name:    kctx.TestID,
 					Spec: &proto.Mock_SpecSchema{
-						Type:     meta["type"],
 						Metadata: meta,
 						Objects:  resToProto,
 					},
@@ -171,6 +169,8 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 				log.Error("failed to call the putMock method", zap.Error(err))
 				return false, nil
 			}
+			fmt.Println("🟠 Captured the mocked outputs for Generic dependency call with meta: ", meta)
+
 		}
 	}
 	return false, nil

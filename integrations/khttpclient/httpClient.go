@@ -6,7 +6,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rsa"
-	"encoding/base64"
 	"encoding/gob"
 	"errors"
 	"fmt"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/keploy/go-sdk/keploy"
 	"github.com/keploy/go-sdk/mock"
+	proto "go.keploy.io/server/grpc/regression"
 	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
 )
@@ -146,25 +146,26 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 	case keploy.MODE_TEST:
 		//don't call i.core.RoundTrip method when not in file export
 		if kctx.FileExport {
-			mock := kctx.Mock
-			if len(mock) > 0 && len(mock[0].Spec.Objects) > 0 {
-				bin, er := base64.StdEncoding.DecodeString(mock[0].Spec.Objects[0].Data)
+			mocks := kctx.Mock
+			if len(mocks) > 0 && len(mocks[0].Spec.Objects) > 0 {
+				bin := string(mocks[0].Spec.Objects[0].Data)
 				if er != nil {
 					i.log.Error("failed to decode the base64 encode error", zap.Error(er))
 				}
-				resp.Body = ioutil.NopCloser(bytes.NewBuffer([]byte(mock[0].Spec.Response.Body)))
-				resp.Header = mock[0].Spec.Response.Header
-				resp.StatusCode = mock[0].Spec.Response.StatusCode
-				if bin != nil && string(bin) != "" {
+				resp.Body = ioutil.NopCloser(bytes.NewBuffer([]byte(mocks[0].Spec.Res.Body)))
+				resp.Header = mock.GetHttpHeader(mocks[0].Spec.Res.Header)
+				resp.StatusCode = int(mocks[0].Spec.Res.StatusCode)
+				if bin != "" {
 					err = errors.New(string(bin))
 				}
-				kctx.Mock = mock[1:]
+				fmt.Println("🤡 Returned the mocked outputs for Http dependency call with meta: ", meta)
+				kctx.Mock = mocks[1:]
 			}
 			return resp, err
 		}
 	case keploy.MODE_RECORD:
 		resp, err = i.core.RoundTrip(r)
-		if kctx.FileExport {
+		if kctx.FileExport && !keploy.IsMockExists(kctx.TestID) {
 			var (
 				respBody   []byte
 				statusCode int
@@ -189,30 +190,38 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 			if err != nil {
 				errStr = err.Error()
 			}
-			mock.PostMock(context.Background(), keploy.Path, models.Mock{
-				Name: kctx.TestID,
-				Spec: models.SpecSchema{
-					Type:     string(models.HttpClient),
+			recorded := mock.PostHttpMock(context.Background(), keploy.Path, &proto.Mock{
+				Version: string(models.V1_BETA1),
+				Name:    kctx.TestID,
+				Kind:    string(models.HTTP_EXPORT),
+				Spec: &proto.Mock_SpecSchema{
 					Metadata: meta,
-					Request: models.HttpReq{
-						Method:     models.Method(r.Method),
-						ProtoMajor: r.ProtoMajor,
-						ProtoMinor: r.ProtoMinor,
+					Objects: []*proto.Mock_Object{
+						{
+							Type: reflect.TypeOf(kerr).String(),
+							Data: []byte(errStr),
+						},
+					},
+					Req: &proto.HttpReq{
+						Method:     r.Method,
+						ProtoMajor: int64(r.ProtoMajor),
+						ProtoMinor: int64(r.ProtoMinor),
 						URL:        r.URL.String(),
-						Header:     r.Header,
+						Header:     mock.GetProtoMap(r.Header),
 						Body:       string(reqBody),
 					},
-					Response: models.HttpResp{
-						StatusCode: statusCode,
-						Header:     respHeader,
+					Res: &proto.HttpResp{
+						StatusCode: int64(statusCode),
+						Header:     mock.GetProtoMap(respHeader),
 						Body:       string(respBody),
 					},
-					Objects: []models.Object{{
-						Type: reflect.TypeOf(kerr).String(),
-						Data: base64.StdEncoding.EncodeToString([]byte(errStr)),
-					}},
 				},
 			})
+
+			if recorded {
+				fmt.Println("🟠 Captured the mocked outputs for Http dependency call with meta: ", meta)
+			}
+
 			return resp, err
 		}
 		if resp == nil {

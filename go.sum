@@ -247,8 +247,8 @@ github.com/yuin/goldmark v1.1.32/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9de
 github.com/yuin/goldmark v1.3.5/go.mod h1:mwnBkeHKe2W/ZEtQ+71ViKU8L12m81fl3OWwC1Zlc8k=
 github.com/yuin/goldmark v1.4.1/go.mod h1:mwnBkeHKe2W/ZEtQ+71ViKU8L12m81fl3OWwC1Zlc8k=
 go.keploy.io/server v0.1.8/go.mod h1:ZqhwTZOBb+dzx5t30Wt6eUGI6kO5QizvPg6coNPtbow=
-go.keploy.io/server v0.5.0 h1:v+ANurnBL2E6YfPp+HhT23IsxiKidPDHTxtK7+rssX0=
-go.keploy.io/server v0.5.0/go.mod h1:2TRP7hLdlvif2H8AYek3+becr20SY+l/Fs/hkDwDjLU=
+go.keploy.io/server v0.5.1 h1:5WPJTGa9MzIpu71/TtEmu9mKZIyJ0FeekP55Z3yn4Bw=
+go.keploy.io/server v0.5.1/go.mod h1:2TRP7hLdlvif2H8AYek3+becr20SY+l/Fs/hkDwDjLU=
 go.mongodb.org/mongo-driver v1.8.0/go.mod h1:0sQWfOeY63QTntERDJJ/0SuKK0T1uVSgKCuAROlKEPY=
 go.mongodb.org/mongo-driver v1.8.1/go.mod h1:0sQWfOeY63QTntERDJJ/0SuKK0T1uVSgKCuAROlKEPY=
 go.mongodb.org/mongo-driver v1.8.3 h1:TDKlTkGDKm9kkJVUOAXDK5/fkqKHJVwYQSpoRfB43R4=
