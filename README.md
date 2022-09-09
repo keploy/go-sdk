@@ -1,4 +1,5 @@
 # Keploy Go-SDK
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/keploy/go-sdk#readme-contents)](https://pkg.go.dev/github.com/keploy/go-sdk#readme-contents)
 
 This is the client SDK for Keploy API testing platform. There are 2 modes:
 1. **Record mode**
