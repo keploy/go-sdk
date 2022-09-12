@@ -1,4 +1,5 @@
 # Keploy Go-SDK
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/keploy/go-sdk#readme-contents)](https://pkg.go.dev/github.com/keploy/go-sdk#readme-contents)
 
 This is the client SDK for Keploy API testing platform. There are 2 modes:
 1. **Record mode**
@@ -391,6 +392,30 @@ Example for gORM with GCP-Postgres driver:
             x := pSQL_DB.Find(&people)
         }))
     }
+```
+### 4. Elasticsearch
+The elastic-search client uses http client to do CRUD operations. There is a Transport field in *elasticsearch.config* which allows you to completely replace the default HTTP client used by the package.So, we use *khttp* as an interceptor and assign it to the Transport field.
+Here is an example -
+```go
+import (
+	"net/http"
+	"github.com/elastic/go-elasticsearch/v8"
+	"github.com/keploy/go-sdk/integrations/khttpclient"
+)
+
+func ConnectWithElasticsearch(ctx context.Context) context.Context {
+	interceptor := khttpclient.NewInterceptor(http.DefaultTransport)
+	newClient, err := elasticsearch.NewClient(elasticsearch.Config{
+		Addresses: []string{
+			"http://localhost:9200",
+		},
+		Transport: interceptor,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return context.WithValue(ctx, domain.ClientKey, newClient)
+}
 ```
 ## Supported Clients
 ### net/http
