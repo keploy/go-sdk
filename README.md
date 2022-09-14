@@ -417,6 +417,30 @@ func ConnectWithElasticsearch(ctx context.Context) context.Context {
 	return context.WithValue(ctx, domain.ClientKey, newClient)
 }
 ```
+### 5. Redis
+```go
+import("github.com/keploy/go-sdk/integrations/kredis")
+
+type redisCache struct {
+	host    string
+	db      int
+	expires time.Duration
+}
+
+func (cache *redisCache) getClient() *kredis.RedisClient {
+	client := redis.NewClient(&redis.Options{
+		Addr:     cache.host,
+		Password: "",
+		DB:       cache.db,
+	})
+	return kredis.NewRedisClient(client)
+}
+```
+Following operations are supported:<br>
+- Get
+- Set
+- Del
+
 ## Supported Clients
 ### net/http
 ```go
