@@ -57,12 +57,10 @@ func (rc *RedisClient) Set(ctx context.Context, key string, value interface{}, e
 	mock, _ := keploy.ProcessDep(ctx, rc.log, meta, output)
 	if mock {
 		resp = rc.Client.Set(ctx, key, value, expiration)
-		// res := redis.NewStatusCmd(ctx, "set", key)
 		if output.Err != "" {
 			resp.SetErr(errors.New(output.Err))
 		}
 		resp.SetVal(output.Val)
-		// return res
 	}
 	return resp
 }
