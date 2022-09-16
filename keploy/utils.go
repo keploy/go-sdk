@@ -80,7 +80,7 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 	// capture the object
 	switch kctx.Mode {
 	case MODE_TEST:
-		if !kctx.FileExport {
+		if len(kctx.Mock) == 0 {
 			if kctx.Deps == nil || len(kctx.Deps) == 0 {
 				log.Error("dependency mocking failed: incorrect number of dependencies in keploy context", zap.String("test id", kctx.TestID))
 				return false, nil
@@ -125,7 +125,9 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 			res = append(res, r)
 		}
 
-		fmt.Println("🤡 Returned the mocked outputs for Generic dependency call with meta: ", meta)
+		if kctx.FileExport {
+			fmt.Println("🤡 Returned the mocked outputs for Generic dependency call with meta: ", meta)
+		}
 		kctx.Mock = kctx.Mock[1:]
 		return true, res
 
@@ -138,21 +140,24 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 				return false, nil
 			}
 		}
-		resToProto := []*proto.Mock_Object{}
+		protoObjs := []*proto.Mock_Object{}
 		for i, j := range res {
-			resToProto = append(resToProto, &proto.Mock_Object{
+			protoObjs = append(protoObjs, &proto.Mock_Object{
 				Type: reflect.TypeOf(outputs[i]).String(),
 				Data: j,
 			})
 		}
 
-		kctx.Deps = append(kctx.Deps, models.Dependency{
-			Name: meta["name"],
-			Type: models.DependencyType(meta["type"]),
-			Data: res,
-			Meta: meta,
-		})
-		if kctx.FileExport && !IsMockExists(kctx.TestID) {
+		// if !kctx.FileExport {
+		// 	kctx.Deps = append(kctx.Deps, models.Dependency{
+		// 		Name: meta["name"],
+		// 		Type: models.DependencyType(meta["type"]),
+		// 		Data: res,
+		// 		Meta: meta,
+		// 	})
+		// 	return false, nil
+		// }
+		if grpcClient != nil && kctx.FileExport && !IsMockExists(kctx.TestID) {
 			_, err := grpcClient.PutMock(ctx, &proto.PutMockReq{
 				Mock: &proto.Mock{
 					Version: string(models.V1_BETA1),
@@ -160,18 +165,33 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 					Name:    kctx.TestID,
 					Spec: &proto.Mock_SpecSchema{
 						Metadata: meta,
-						Objects:  resToProto,
+						Objects:  protoObjs,
 					},
 				},
-				Path: Path,
+				Path: MockPath,
 			})
 			if err != nil {
-				log.Error("failed to call the putMock method", zap.Error(err))
+				log.Error("failed to call the grpc PutMock method of keploy", zap.Error(err))
 				return false, nil
 			}
 			fmt.Println("🟠 Captured the mocked outputs for Generic dependency call with meta: ", meta)
-
+			return false, nil
 		}
+		kctx.Deps = append(kctx.Deps, models.Dependency{
+			Name: meta["name"],
+			Type: models.DependencyType(meta["type"]),
+			Data: res,
+			Meta: meta,
+		})
+		kctx.Mock = append(kctx.Mock, &proto.Mock{
+			Version: string(models.V1_BETA1),
+			Kind:    string(models.GENERIC_EXPORT),
+			Name:    "",
+			Spec: &proto.Mock_SpecSchema{
+				Metadata: meta,
+				Objects:  protoObjs,
+			},
+		})
 	}
 	return false, nil
 }
@@ -205,8 +225,11 @@ func CaptureTestcase(k *Keploy, r *http.Request, reqBody []byte, resp models.Htt
 			Header:     r.Header,
 			Body:       string(reqBody),
 		},
-		HttpResp: resp,
-		Deps:     deps.Deps,
+		HttpResp:     resp,
+		Deps:         deps.Deps,
+		TestCasePath: k.cfg.App.TestPath,
+		MockPath:     k.cfg.App.MockPath,
+		Mocks:        deps.Mock,
 	})
 
 }
@@ -285,12 +308,15 @@ func ProcessRequest(rw http.ResponseWriter, r *http.Request, k *Keploy) (*BodyDu
 			Mode:   MODE_TEST,
 			TestID: id,
 			Deps:   k.GetDependencies(id),
+			Mock:   k.GetMocks(id),
+			// FileExport: k.cfg.App.Path != "",
 		})
 		r = r.WithContext(ctx)
 		return writer, r, resBody, nil, nil
 	}
 	ctx := context.WithValue(r.Context(), KCTX, &Context{
 		Mode: MODE_RECORD,
+		// FileExport: k.cfg.App.Path != "",
 	})
 	r = r.WithContext(ctx)
 

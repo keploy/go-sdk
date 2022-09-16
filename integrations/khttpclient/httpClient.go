@@ -145,7 +145,7 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 	switch mode {
 	case keploy.MODE_TEST:
 		//don't call i.core.RoundTrip method when not in file export
-		if kctx.FileExport {
+		if len(kctx.Mock) > 0 && kctx.Mock[0].Kind == string(models.HTTP_EXPORT) {
 			mocks := kctx.Mock
 			if len(mocks) > 0 && len(mocks[0].Spec.Objects) > 0 {
 				bin := string(mocks[0].Spec.Objects[0].Data)
@@ -158,88 +158,104 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 				if bin != "" {
 					err = errors.New(string(bin))
 				}
-				fmt.Println("🤡 Returned the mocked outputs for Http dependency call with meta: ", meta)
+				if kctx.FileExport {
+					fmt.Println("🤡 Returned the mocked outputs for Http dependency call with meta: ", meta)
+				}
 				kctx.Mock = mocks[1:]
 			}
 			return resp, err
 		}
 	case keploy.MODE_RECORD:
 		resp, err = i.core.RoundTrip(r)
-		if kctx.FileExport && !keploy.IsMockExists(kctx.TestID) {
-			var (
-				respBody   []byte
-				statusCode int
-				respHeader http.Header
-				errStr     string = ""
-			)
-			if resp != nil {
-				// Read the response body to capture
-				if resp.Body != nil { // Read
-					var err error
-					respBody, err = ioutil.ReadAll(resp.Body)
-					if err != nil {
-						i.log.Error("Unable to read request body", zap.Error(err))
-						return nil, err
-					}
+		var (
+			respBody   []byte
+			statusCode int
+			respHeader http.Header
+			errStr     string = ""
+		)
+		if resp != nil {
+			// Read the response body to capture
+			if resp.Body != nil { // Read
+				var err error
+				respBody, err = ioutil.ReadAll(resp.Body)
+				if err != nil {
+					i.log.Error("Unable to read request body", zap.Error(err))
+					return nil, err
 				}
-				resp.Body = ioutil.NopCloser(bytes.NewBuffer(respBody)) // Reset
-				statusCode = resp.StatusCode
-				respHeader = resp.Header
 			}
+			resp.Body = ioutil.NopCloser(bytes.NewBuffer(respBody)) // Reset
+			statusCode = resp.StatusCode
+			respHeader = resp.Header
+		}
 
-			if err != nil {
-				errStr = err.Error()
-			}
-			recorded := mock.PostHttpMock(context.Background(), keploy.Path, &proto.Mock{
-				Version: string(models.V1_BETA1),
-				Name:    kctx.TestID,
-				Kind:    string(models.HTTP_EXPORT),
-				Spec: &proto.Mock_SpecSchema{
-					Metadata: meta,
-					Objects: []*proto.Mock_Object{
-						{
-							Type: reflect.TypeOf(kerr).String(),
-							Data: []byte(errStr),
-						},
-					},
-					Req: &proto.HttpReq{
-						Method:     r.Method,
-						ProtoMajor: int64(r.ProtoMajor),
-						ProtoMinor: int64(r.ProtoMinor),
-						URL:        r.URL.String(),
-						Header:     mock.GetProtoMap(r.Header),
-						Body:       string(reqBody),
-					},
-					Res: &proto.HttpResp{
-						StatusCode: int64(statusCode),
-						Header:     mock.GetProtoMap(respHeader),
-						Body:       string(respBody),
+		if err != nil {
+			errStr = err.Error()
+		}
+		httpMock := &proto.Mock{
+			Version: string(models.V1_BETA1),
+			Name:    kctx.TestID,
+			Kind:    string(models.HTTP_EXPORT),
+			Spec: &proto.Mock_SpecSchema{
+				Metadata: meta,
+				Objects: []*proto.Mock_Object{
+					{
+						Type: "error",
+						Data: []byte(errStr),
 					},
 				},
-			})
-
+				Req: &proto.HttpReq{
+					Method:     r.Method,
+					ProtoMajor: int64(r.ProtoMajor),
+					ProtoMinor: int64(r.ProtoMinor),
+					URL:        r.URL.String(),
+					Header:     mock.GetProtoMap(r.Header),
+					Body:       string(reqBody),
+				},
+				Res: &proto.HttpResp{
+					StatusCode: int64(statusCode),
+					Header:     mock.GetProtoMap(respHeader),
+					Body:       string(respBody),
+				},
+			},
+		}
+		if keploy.GetGrpcClient() != nil && kctx.FileExport && !keploy.IsMockExists(kctx.TestID) {
+			recorded := mock.PostHttpMock(context.Background(), keploy.MockPath, httpMock)
 			if recorded {
 				fmt.Println("🟠 Captured the mocked outputs for Http dependency call with meta: ", meta)
 			}
-
 			return resp, err
 		}
+		kctx.Mock = append(kctx.Mock, httpMock)
+
 		if resp == nil {
 			isRespNil = true
 			resp = &http.Response{}
 		}
+		kerr, resp = toGobType(err, resp)
+		outputs := []interface{}{resp, kerr}
+		res := make([][]byte, len(outputs))
+		for indx, t := range outputs {
+			err = keploy.Encode(t, res, indx)
+			if err != nil {
+				i.log.Error("dependency capture failed: failed to encode object", zap.String("type", reflect.TypeOf(t).String()), zap.String("test id", kctx.TestID), zap.Error(err))
+			}
+		}
+		kctx.Deps = append(kctx.Deps, models.Dependency{
+			Name: meta["name"],
+			Type: models.DependencyType(meta["type"]),
+			Data: res,
+			Meta: meta,
+		})
+		if isRespNil {
+			return nil, err
+		}
+
+		return resp, err
 	default:
 		return nil, errors.New("integrations: Not in a valid sdk mode")
 	}
 
-	if err != nil {
-		kerr = &keploy.KError{Err: err}
-	}
-
-	resp.Body = &ReadCloser{Body: resp.Body}
-	if resp.Request != nil {
-		resp.Request.Body = &ReadCloser{Body: resp.Request.Body}
-	}
+	kerr, resp = toGobType(err, resp)
 
 	mock, res := keploy.ProcessDep(r.Context(), i.log, meta, resp, kerr)
 	if mock {

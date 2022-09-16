@@ -38,7 +38,7 @@ func (s Stmt) Exec(args []driver.Value) (driver.Result, error) {
 		"name":      "SQL",
 		"type":      string(models.SqlDB),
 		"operation": "PrepareContext.Exec",
-		"query":     s.query,
+		"query":     fmt.Sprintf(`"%v"`, s.query),
 		"arguments": fmt.Sprint(args),
 	}
 	switch mode {
@@ -113,7 +113,7 @@ func (s Stmt) Query(args []driver.Value) (driver.Rows, error) {
 		"name":      "SQL",
 		"type":      string(models.SqlDB),
 		"operation": "PrepareContext.Query",
-		"query":     s.query,
+		"query":     fmt.Sprintf(`"%v"`, s.query),
 		"arguments": fmt.Sprint(args),
 	}
 	if err != nil {
@@ -247,7 +247,7 @@ func (c Conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, er
 		"name":      "SQL",
 		"type":      string(models.SqlDB),
 		"operation": "PrepareContext",
-		"query":     query,
+		"query":     fmt.Sprintf(`"%v"`, query),
 	}
 	if err != nil {
 		kerr = &keploy.KError{Err: err}

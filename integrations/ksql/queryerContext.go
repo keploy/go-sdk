@@ -312,7 +312,7 @@ func (c Conn) QueryContext(ctx context.Context, query string, args []driver.Name
 		"name":      "SQL",
 		"type":      string(models.SqlDB),
 		"operation": "QueryContext",
-		"query":     query,
+		"query":     fmt.Sprintf(`"%v"`, query),
 		"arguments": fmt.Sprint(args),
 	}
 	if err != nil {
