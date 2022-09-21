@@ -1,18 +1,26 @@
 # Keploy Go-SDK
 [![PkgGoDev](https://pkg.go.dev/badge/github.com/keploy/go-sdk#readme-contents)](https://pkg.go.dev/github.com/keploy/go-sdk#readme-contents)
 
-This is the client SDK for Keploy API testing platform. There are 2 modes:
-1. **Record mode**
-    1. Record requests, response and all external calls and sends to Keploy server.
-    2. After keploy server removes duplicates, it then runs the request on the API again to identify noisy fields.
-    3. Sends the noisy fields to the keploy server to be saved along with the testcase. 
-2. **Test mode**
-    1. Fetches testcases for the app from keploy server. 
-    2. Calls the API with same request payload in testcase.
-    3. Mocks external calls based on data stored in the testcase. 
-    4. Validates the respones and uploads results to the keploy server 
+This is the client SDK for Keploy API testing platform. 
+## Features
+* **API testing**: Keploy can record API calls along with their external dependency calls and replay them in testing environment.
+	### Mechanism 
+		There are 2 modes:
+			1. Record mode
+				1. Record requests, response and all external calls and sends to Keploy server.
+				2. After removing duplicates, it runs the request on the API again to identify noisy fields.
+				3. Sends the noisy fields to the keploy server to be saved along with the testcase. 
+			2. Test mode
+				1. Fetches testcases for the app from keploy server. 
+				2. Calls the API with same request payload in testcase.
+				3. Mocks external calls based on data stored in the testcase. 
+				4. Validates the respones and uploads results to the keploy server.
+* **Mock library**: It removes the necessity to write mocks manually in your unit-tests.
+	### Mechanism
+		1. During Record, it captures the outputs of integerated dependencies and stores them in yaml file locally.
+		2. During Test, fetches and returns the stored outputs of dependency calls to respective unit-tests.
 
-
+Just by recording the external calls from unit tests and returning the mocked outputs during testing. 
 ## Contents
 
 1. [Installation](#installation)
@@ -28,7 +36,7 @@ This is the client SDK for Keploy API testing platform. There are 2 modes:
 go get -u github.com/keploy/go-sdk
 ```
 ## Usage
-
+### API testing
 ```go
 import(
     "github.com/keploy/go-sdk/keploy"
@@ -40,15 +48,24 @@ Create your app instance
 ```go
 k := keploy.New(keploy.Config{
      App: keploy.AppConfig{
-         Name: "<app_name>",
-         Port: "<app_port>",
+		Name   "<app_name>",         // required field. app_id for grouping testcases.
+		Host    "<api_server_host>", // optional. `default:"0.0.0.0"`
+		Port    "<api_server_port>", // required.
+		Delay   <delay_testing_for>, // optional. `default:"5s"`
+		Timeout <context_deadline_for_simulate>, // optional. `default:"60s"`
+		Filter  keploy.Filter{
+			UrlRegex: "<regular_expression>", // api routes to be tested and recorded
+		}, // optional.
+		TestPath "", // `optional. default: <absolute-path>/keploy-tests`
+		MockPath "", // `optional. default: <absolute-path>/keploy-tests/mocks`
      },
      Server: keploy.ServerConfig{
-         URL: "<keploy_host>", 
-         LicenseKey: "<license_key>", //optional for managed services
+         URL: "<keploy_host>",        // optional. `default:"https://api.keploy.io"`
+         LicenseKey: "<license_key>", // optional. for managed services
      },
     })
 ```
+**Note**: Testcases can be stored on either mongoDB or in yaml files locally. By default, testcases are generated in yaml files locally.
 For example: 
 ```go
 port := "8080"
@@ -63,6 +80,24 @@ port := "8080"
  })
  
 ```
+
+### Mock Library
+```go
+import(
+    "github.com/keploy/go-sdk/keploy"
+    "github.com/keploy/go-sdk/mock"
+)
+```
+Create your context instance containing keployContext and pass it to dependency calls. 
+```go
+ctx := mock.NewContext(mock.Config{
+	Name: "<name_for_mocks>", // unique for every mock 
+	Mode: keploy.MODE_RECORD, // Or keploy.MODE_TEST, Or keploy.MODE_OFF
+	Path: "<local_path_for_yaml>", // relative(./internals) or absolute(/users/xyz/...)
+})
+```
+Integerate the dependency according to the following docs and pass the ctx context to them for mocking in unit-tests.
+
 ## Configure
 ```
 export KEPLOY_MODE=keploy.MODE_TEST
