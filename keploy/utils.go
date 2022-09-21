@@ -309,14 +309,12 @@ func ProcessRequest(rw http.ResponseWriter, r *http.Request, k *Keploy) (*BodyDu
 			TestID: id,
 			Deps:   k.GetDependencies(id),
 			Mock:   k.GetMocks(id),
-			// FileExport: k.cfg.App.Path != "",
 		})
 		r = r.WithContext(ctx)
 		return writer, r, resBody, nil, nil
 	}
 	ctx := context.WithValue(r.Context(), KCTX, &Context{
 		Mode: MODE_RECORD,
-		// FileExport: k.cfg.App.Path != "",
 	})
 	r = r.WithContext(ctx)
 

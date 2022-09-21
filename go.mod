@@ -2,7 +2,7 @@ module github.com/keploy/go-sdk
 
 go 1.17
 
-replace go.keploy.io/server => ../keploy
+// replace go.keploy.io/server => ../keploy
 
 require (
 	github.com/aws/aws-sdk-go v1.42.23
@@ -20,13 +20,20 @@ require (
 require (
 	github.com/benbjohnson/clock v1.1.0
 	github.com/go-chi/chi v1.5.4
-	go.keploy.io/server v0.1.8
 )
 
 require (
 	github.com/gorilla/mux v1.8.0
 	github.com/lestrrat-go/jwx v1.2.20
 	github.com/valyala/fasthttp v1.35.0
+)
+
+require (
+	github.com/k0kubun/pp/v3 v3.1.0 // indirect
+	github.com/tidwall/gjson v1.14.0 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.0 // indirect
+	github.com/wI2L/jsondiff v0.2.0 // indirect
 )
 
 require (
@@ -74,6 +81,7 @@ require (
 	github.com/xdg-go/scram v1.1.0 // indirect
 	github.com/xdg-go/stringprep v1.0.2 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20201027041543-1326539a0a0a // indirect
+	go.keploy.io/server v0.5.6
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.7.0 // indirect
 	golang.org/x/crypto v0.0.0-20220622213112-05595931fe9d // indirect
