@@ -10,7 +10,7 @@ type RedisClient struct {
 	log *zap.Logger
 }
 
-func NewRedisClient(c *redis.Client) *RedisClient {
+func NewRedisClient(c *redis.Client) redis.UniversalClient {
 	// Initialize a logger
 	logger, _ := zap.NewProduction()
 	defer func() {
