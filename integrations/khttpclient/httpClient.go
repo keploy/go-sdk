@@ -218,7 +218,7 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 				},
 			},
 		}
-		if keploy.GetGrpcClient() != nil && kctx.FileExport && !keploy.IsMockExists(kctx.TestID) {
+		if keploy.GetGrpcClient() != nil && kctx.FileExport && keploy.MockId.Unique(kctx.TestID) {
 			recorded := mock.PostHttpMock(context.Background(), keploy.MockPath, httpMock)
 			if recorded {
 				fmt.Println("🟠 Captured the mocked outputs for Http dependency call with meta: ", meta)

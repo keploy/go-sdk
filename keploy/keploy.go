@@ -33,8 +33,12 @@ var (
 	result     = make(chan bool, 1)
 	grpcClient proto.RegressionServiceClient // decoupled from keploy instance to use it in unit-test mocking infrastructure
 	MockPath   string
-	MockExists sync.Map
+	MockId     = MockLib{mockIds: sync.Map{}}
 )
+
+type MockLib struct {
+	mockIds sync.Map
+}
 
 // avoids circular dependency between mock and keploy packages
 func SetGrpcClient(c proto.RegressionServiceClient) {
@@ -48,20 +52,12 @@ func SetPath(path string) {
 }
 
 // To avoid creating the duplicate mock yaml file
-func IsMockExists(name string) bool {
-	_, ok := MockExists.Load(name)
-	return ok
+func (m *MockLib) Unique(name string) bool {
+	_, ok := m.mockIds.Load(name)
+	return !ok
 }
-func MockDoesExists(name string) {
-	MockExists.Store(name, true)
-}
-
-func IsMockExists(name string) bool {
-	_, ok := MockExists.Load(name)
-	return ok
-}
-func MockDoesExists(name string) {
-	MockExists.Store(name, true)
+func (m *MockLib) Load(name string) {
+	m.mockIds.Store(name, true)
 }
 
 func init() {

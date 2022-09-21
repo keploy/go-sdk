@@ -157,7 +157,7 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 		// 	})
 		// 	return false, nil
 		// }
-		if grpcClient != nil && kctx.FileExport && !IsMockExists(kctx.TestID) {
+		if grpcClient != nil && kctx.FileExport && MockId.Unique(kctx.TestID) {
 			_, err := grpcClient.PutMock(ctx, &proto.PutMockReq{
 				Mock: &proto.Mock{
 					Version: string(models.V1_BETA1),
