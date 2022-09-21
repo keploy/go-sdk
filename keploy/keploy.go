@@ -56,6 +56,14 @@ func MockDoesExists(name string) {
 	MockExists.Store(name, true)
 }
 
+func IsMockExists(name string) bool {
+	_, ok := MockExists.Load(name)
+	return ok
+}
+func MockDoesExists(name string) {
+	MockExists.Store(name, true)
+}
+
 func init() {
 	m := Mode(os.Getenv("KEPLOY_MODE"))
 	if m == "" {

@@ -176,6 +176,7 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 			}
 			fmt.Println("🟠 Captured the mocked outputs for Generic dependency call with meta: ", meta)
 			return false, nil
+
 		}
 		kctx.Deps = append(kctx.Deps, models.Dependency{
 			Name: meta["name"],
