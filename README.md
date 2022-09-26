@@ -3,27 +3,6 @@
 
 This is the client SDK for the [Keploy](https://github.com/keploy/keploy) testing platform. You can use this to generate realistic mock files or entire e2e tests for your applications. The **HTTP mocks and tests are the same format** are are inter-exchangeable.  
 
-## Usecases
-
-
-* **API testing**: Keploy can record API calls along with their external dependency calls and replay them in testing environment.
-	### Mechanism 
-		There are 2 modes:
-			1. Record mode
-				1. Record requests, response and all external calls and sends to Keploy server.
-				2. After removing duplicates, it runs the request on the API again to identify noisy fields.
-				3. Sends the noisy fields to the keploy server to be saved along with the testcase. 
-			2. Test mode
-				1. Fetches testcases for the app from keploy server. 
-				2. Calls the API with same request payload in testcase.
-				3. Mocks external calls based on data stored in the testcase. 
-				4. Validates the respones and uploads results to the keploy server.
-* **Mock library**: It removes the necessity to write mocks manually in your unit-tests.
-	### Mechanism
-		1. During Record, it captures the outputs of integerated dependencies and stores them in yaml file locally.
-		2. During Test, fetches and returns the stored outputs of dependency calls to respective unit-tests.
-
-Just by recording the external calls from unit tests and returning the mocked outputs during testing. 
 ## Contents
 
 1. [Installation](#installation)
