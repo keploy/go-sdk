@@ -103,7 +103,7 @@ func NewContext(conf Config) context.Context {
 	if exists {
 		logger.Error(fmt.Sprintf("🚨 Keploy failed to record dependencies because yaml file already exists%v in directory: %v.\n", name, path))
 		// fmt.Printf("🚨 Keploy failed to record dependencies because yaml file already exists%v in directory: %v.\n", name, path)
-		keploy.MockDoesExists(conf.Name)
+		keploy.MockId.Load(conf.Name)
 	}
 	return context.WithValue(ctx, keploy.KCTX, k)
 }
