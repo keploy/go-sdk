@@ -34,11 +34,11 @@ func (rc *RedisClient) Del(ctx context.Context, keys ...string) *redis.IntCmd {
 		"name":      "redis",
 		"type":      string(models.NoSqlDB),
 		"operation": "Del",
-		"keys":       fmt.Sprintf("%v", keys),
+		"keys":      fmt.Sprintf("%v", keys),
 	}
 	switch mode {
 	case keploy.MODE_TEST:
-		// don't call the actual get method of redis
+		// don't call the actual del method of redis
 	case keploy.MODE_RECORD:
 		resp = rc.Client.Del(ctx, keys...)
 		x, er := resp.Result()

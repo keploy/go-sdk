@@ -42,7 +42,7 @@ func (rc *RedisClient) Set(ctx context.Context, key string, value interface{}, e
 	}
 	switch mode {
 	case keploy.MODE_TEST:
-		// don't call the actual get method of redis
+		// don't call the actual set method of redis
 	case keploy.MODE_RECORD:
 		resp = rc.Client.Set(ctx, key, value, expiration)
 		x, er := resp.Result()
