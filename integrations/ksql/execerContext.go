@@ -53,7 +53,7 @@ func (c Conn) ExecContext(ctx context.Context, query string, args []driver.Named
 		"name":      "SQL",
 		"type":      string(models.SqlDB),
 		"operation": "ExecContext",
-		"query":     query,
+		"query":     fmt.Sprintf(`"%v"`, query),
 		"arguments": fmt.Sprint(args),
 	}
 	switch mode {

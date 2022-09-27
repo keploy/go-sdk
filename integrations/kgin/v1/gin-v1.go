@@ -71,6 +71,7 @@ func mw(k *keploy.Keploy) gin.HandlerFunc {
 				Mode:   keploy.MODE_TEST,
 				TestID: id,
 				Deps:   k.GetDependencies(id),
+				Mock:   k.GetMocks(id),
 			})
 			resp := captureRespGin(c)
 			k.PutResp(id, resp)

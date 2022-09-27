@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/creasty/defaults"
 	"github.com/go-playground/validator/v10"
@@ -30,25 +31,33 @@ var (
 	// mode is set to record, if unset
 	mode       = MODE_RECORD
 	result     = make(chan bool, 1)
-	grpcClient proto.RegressionServiceClient
-	Path       string
-	MockExists sync.Map
+	grpcClient proto.RegressionServiceClient // decoupled from keploy instance to use it in unit-test mocking infrastructure
+	MockPath   string
+	MockId     = MockLib{mockIds: sync.Map{}}
 )
+
+type MockLib struct {
+	mockIds sync.Map
+}
 
 // avoids circular dependency between mock and keploy packages
 func SetGrpcClient(c proto.RegressionServiceClient) {
 	grpcClient = c
 }
+func GetGrpcClient() proto.RegressionServiceClient {
+	return grpcClient
+}
 func SetPath(path string) {
-	Path = path
+	MockPath = path
 }
 
-func IsMockExists(name string) bool {
-	_, ok := MockExists.Load(name)
-	return ok
+// To avoid creating the duplicate mock yaml file
+func (m *MockLib) Unique(name string) bool {
+	_, ok := m.mockIds.Load(name)
+	return !ok
 }
-func MockDoesExists(name string) {
-	MockExists.Store(name, true)
+func (m *MockLib) Load(name string) {
+	m.mockIds.Store(name, true)
 }
 
 func init() {
@@ -87,12 +96,14 @@ type Config struct {
 }
 
 type AppConfig struct {
-	Name    string        `validate:"required"`
-	Host    string        `default:"0.0.0.0"`
-	Port    string        `validate:"required"`
-	Delay   time.Duration `default:"5s"`
-	Timeout time.Duration `default:"60s"`
-	Filter  Filter
+	Name     string        `validate:"required"`
+	Host     string        `default:"0.0.0.0"`
+	Port     string        `validate:"required"`
+	Delay    time.Duration `default:"5s"`
+	Timeout  time.Duration `default:"60s"`
+	Filter   Filter
+	TestPath string `default:""`
+	MockPath string `default:""`
 }
 
 type Filter struct {
@@ -129,6 +140,33 @@ func New(cfg Config) *Keploy {
 		logger.Error("conf missing important field", zap.Error(err))
 	}
 
+	if len(cfg.App.TestPath) > 0 && cfg.App.TestPath[0] != '/' {
+		path, err := filepath.Abs(cfg.App.TestPath)
+		if err != nil {
+			logger.Error("Failed to get the absolute path from relative conf.path", zap.Error(err))
+		}
+		cfg.App.TestPath = path
+	} else if len(cfg.App.TestPath) == 0 {
+		path, err := os.Getwd()
+		if err != nil {
+			logger.Error("Failed to get the path of current directory", zap.Error(err))
+		}
+		cfg.App.TestPath = path + "/keploy-tests"
+	}
+	if len(cfg.App.MockPath) > 0 && cfg.App.MockPath[0] != '/' {
+		path, err := filepath.Abs(cfg.App.MockPath)
+		if err != nil {
+			logger.Error("Failed to get the absolute path from relative conf.path", zap.Error(err))
+		}
+		cfg.App.MockPath = path
+	} else if len(cfg.App.MockPath) == 0 {
+		// path, err := cfg.App.TestPath+"/mocks"
+		if cfg.App.TestPath == "" {
+			logger.Error("Failed to get the path of current directory", zap.Error(err))
+		}
+		cfg.App.MockPath = cfg.App.TestPath + "/mocks"
+	}
+
 	k := &Keploy{
 		cfg: cfg,
 		Log: logger,
@@ -154,6 +192,20 @@ type Keploy struct {
 	resp sync.Map
 	//Resp map[string]models.HttpResp
 	mocktime sync.Map
+	mocks    sync.Map
+}
+
+func (k *Keploy) GetMocks(id string) []*proto.Mock {
+	val, ok := k.mocks.Load(id)
+	if !ok {
+		return nil
+	}
+	mocks, ok := val.([]*proto.Mock)
+	if !ok {
+		k.Log.Error("failed fetching dependencies for testcases", zap.String("test case id", id))
+		return nil
+	}
+	return mocks
 }
 
 func (k *Keploy) GetDependencies(id string) []models.Dependency {
@@ -202,6 +254,7 @@ func (k *Keploy) PutResp(id string, resp models.HttpResp) {
 
 // Capture will capture request, response and output of external dependencies by making Call to keploy server.
 func (k *Keploy) Capture(req regression.TestCaseReq) {
+	// req.Path, _ = os.Getwd()
 	go k.put(req)
 }
 
@@ -254,7 +307,7 @@ func (k *Keploy) Test() {
 }
 
 func (k *Keploy) start(total int) (string, error) {
-	url := fmt.Sprintf("%s/regression/start?app=%s&total=%d", k.cfg.Server.URL, k.cfg.App.Name, total)
+	url := fmt.Sprintf("%s/regression/start?app=%s&total=%d&testCasePath=%s&mockPath=%s", k.cfg.Server.URL, k.cfg.App.Name, total, k.cfg.App.TestPath, k.cfg.App.MockPath)
 	body, err := k.newGet(url)
 	if err != nil {
 		return "", err
@@ -282,6 +335,11 @@ func (k *Keploy) simulate(tc models.TestCase) (*models.HttpResp, error) {
 	// add dependencies to shared context
 	k.deps.Store(tc.ID, tc.Deps)
 	defer k.deps.Delete(tc.ID)
+
+	// add mocks to shared context
+	k.mocks.Store(tc.ID, tc.Mocks)
+	defer k.mocks.Delete(tc.ID)
+
 	// mock := clock.NewMock()
 	// t:=tc.Captured
 	// mock.Add(time.Duration(t) * time.Second)
@@ -331,10 +389,12 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 		return false
 	}
 	bin, err := json.Marshal(&regression.TestReq{
-		ID:    tc.ID,
-		AppID: k.cfg.App.Name,
-		RunID: runId,
-		Resp:  *resp,
+		ID:           tc.ID,
+		AppID:        k.cfg.App.Name,
+		RunID:        runId,
+		Resp:         *resp,
+		TestCasePath: k.cfg.App.TestPath,
+		MockPath:     k.cfg.App.MockPath,
 	})
 	if err != nil {
 		k.Log.Error("failed to marshal testcase request", zap.String("url", tc.URI), zap.Error(err))
@@ -459,6 +519,7 @@ func (k *Keploy) denoise(id string, tcs regression.TestCaseReq) {
 		URI:      tcs.URI,
 		HttpReq:  tcs.HttpReq,
 		Deps:     tcs.Deps,
+		Mocks:    tcs.Mocks,
 	})
 	if err != nil {
 		k.Log.Error("failed to simulate request on local server", zap.Error(err))
@@ -466,9 +527,11 @@ func (k *Keploy) denoise(id string, tcs regression.TestCaseReq) {
 	}
 
 	bin2, err := json.Marshal(&regression.TestReq{
-		ID:    id,
-		AppID: k.cfg.App.Name,
-		Resp:  *resp2,
+		ID:           id,
+		AppID:        k.cfg.App.Name,
+		Resp:         *resp2,
+		TestCasePath: k.cfg.App.TestPath,
+		MockPath:     k.cfg.App.MockPath,
 	})
 
 	if err != nil {
@@ -535,8 +598,26 @@ func (k *Keploy) fetch() []models.TestCase {
 	var tcs []models.TestCase = []models.TestCase{}
 
 	for i := 0; ; i += 25 {
-		url := fmt.Sprintf("%s/regression/testcase?app=%s&offset=%d&limit=%d", k.cfg.Server.URL, k.cfg.App.Name, i, 25)
-		body, err := k.newGet(url)
+		url := fmt.Sprintf("%s/regression/testcase?app=%s&offset=%d&limit=%d&testCasePath=%s&mockPath=%s", k.cfg.Server.URL, k.cfg.App.Name, i, 25, k.cfg.App.TestPath, k.cfg.App.MockPath)
+
+		req, err := http.NewRequest("GET", url, http.NoBody)
+		if err != nil {
+			k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
+			return nil
+		}
+		k.setKey(req)
+		resp, err := k.client.Do(req)
+		if err != nil {
+			k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
+			return nil
+		}
+		if resp.StatusCode != http.StatusOK {
+			k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(errors.New("failed to send get request: "+resp.Status)))
+			return nil
+		}
+
+		defer resp.Body.Close()
+		body, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
 			return nil
@@ -552,6 +633,10 @@ func (k *Keploy) fetch() []models.TestCase {
 			break
 		}
 		tcs = append(tcs, res...)
+		eof := resp.Header.Get("EOF")
+		if eof == "true" {
+			break
+		}
 	}
 	return tcs
 }

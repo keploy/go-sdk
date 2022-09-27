@@ -1,54 +1,80 @@
 # Keploy Go-SDK
 [![PkgGoDev](https://pkg.go.dev/badge/github.com/keploy/go-sdk#readme-contents)](https://pkg.go.dev/github.com/keploy/go-sdk#readme-contents)
 
-This is the client SDK for Keploy API testing platform. There are 2 modes:
-1. **Record mode**
-    1. Record requests, response and all external calls and sends to Keploy server.
-    2. After keploy server removes duplicates, it then runs the request on the API again to identify noisy fields.
-    3. Sends the noisy fields to the keploy server to be saved along with the testcase. 
-2. **Test mode**
-    1. Fetches testcases for the app from keploy server. 
-    2. Calls the API with same request payload in testcase.
-    3. Mocks external calls based on data stored in the testcase. 
-    4. Validates the respones and uploads results to the keploy server 
-
+This is the client SDK for the [Keploy](https://github.com/keploy/keploy) testing platform. You can use this to generate realistic mock files or entire e2e tests for your applications. The **HTTP mocks and tests are the same format** are are inter-exchangeable.  
 
 ## Contents
 
 1. [Installation](#installation)
 2. [Usage](#usage)
-3. [Configure](#configure)
-4. [Supported Routers](#supported-routers)
-5. [Supported Databases](#supported-databases)
-6. [Support Clients](#supported-clients)
-7. [Supported JWT Middlewares](#supported-jwt-middlewares)
+3. [Supported Routers](#supported-routers)
+4. [Supported Databases](#supported-databases)
+5. [Support Clients](#supported-clients)
+6. [Supported JWT Middlewares](#supported-jwt-middlewares)
 
 ## Installation
 ```bash
 go get -u github.com/keploy/go-sdk
 ```
 ## Usage
-
+### Create mocks by recording external calls (APIs, DBs..)
+These mocks are realistic and frees you up from writing mocks manually. Keploy creates files which can be referenced in any of your tests. 
+1. **Wrap your depedency**: To record your depdencies, you need to wrap their clients with the supported keploy wrapper as metioned below. If your dependency is not supported please open a [feature request.](https://github.com/keploy/go-sdk/issues/new?assignees=&labels=&template=feature_request.md&title=)
+2. **Record**: To record you can import the keploy mocking library and set the mode to record mode. This should generate a file containing the mocks. 
 ```go
 import(
     "github.com/keploy/go-sdk/keploy"
-    "github.com/keploy/go-sdk/integrations/<package_name>"
+    "github.com/keploy/go-sdk/mock"
 )
+
+// inside your test
+...
+ctx := mock.NewContext(mock.Config{
+	Name: "<name_for_mocks>", // unique for every mock. if you dont provide during record it would be generated. Its compulsory during tests. 
+	Mode: keploy.MODE_RECORD, // Or keploy.MODE_TEST, Or keploy.MODE_OFF. Default is keploy.MODE_TEST
+	Path: "<local_path_for_yaml>", // optional. relative(./internals) or absolute(/users/xyz/...)
+	CTX: <existing context>, // optional. can be used to pass existing running context. 
+})
+...
+```
+3. **Mock**: To mock dependency as per the content of the generated file (during testing) - just set the `Mode` config to `keploy.MODE_TEST` or remove the variable all together (default is test mode). eg: 
+```go
+ctx := mock.NewContext(mock.Config{
+	Name: "<name_for_mocks>", // unique for every mock. if you dont provide during record it would be generated. Its compulsory during tests. 
+	Mode: keploy.MODE_TEST, // Or keploy.MODE_TEST, Or keploy.MODE_OFF. Default is keploy.MODE_TEST
+	Path: "<local_path_for_yaml>", // optional. relative(./internals) or absolute(/users/xyz/...)
+	CTX: <existing context>, // optional. can be used to pass existing running context. 
+})
 ```
 
-Create your app instance
+
+### Generate E2E tests (with mocks)
+These tests can be run alongside your manually written `go-tests`and adds coverage to them. This way you can focus on only writing those tests that are hard to e2e test with keploy. Mocks are also generated and linked to their respective tests. As mentioned above, the tests can also be shared with the clients for mocking (and vice versa!).    
+1. **Wrap your depedency**: (same as above)
+2. **Intialize SDK**: You would need to initialize the keploy SDK
 ```go
+import"github.com/keploy/go-sdk/keploy"
+
 k := keploy.New(keploy.Config{
      App: keploy.AppConfig{
-         Name: "<app_name>",
-         Port: "<app_port>",
+		Name   "<app_name>",         // required field. app_id for grouping testcases.
+		Host    "<api_server_host>", // optional. `default:"0.0.0.0"`
+		Port    "<api_server_port>", // required.
+		Delay   <delay_testing_for>, // optional. `default:"5s"`
+		Timeout <context_deadline_for_simulate>, // optional. `default:"60s"`
+		Filter  keploy.Filter{
+			UrlRegex: "<regular_expression>", // api routes to be tested and recorded
+		}, // optional.
+		TestPath "", // `optional. default: <absolute-path>/keploy-tests`
+		MockPath "", // `optional. default: <absolute-path>/keploy-tests/mocks`
      },
      Server: keploy.ServerConfig{
-         URL: "<keploy_host>", 
-         LicenseKey: "<license_key>", //optional for managed services
+         URL: "<keploy_host>",        // optional. `default:"https://api.keploy.io"`
+         LicenseKey: "<license_key>", // optional. for managed services
      },
     })
 ```
+**Note**: Testcases can be stored on either mongoDB or in yaml files locally. By default, testcases are generated in yaml files locally.
 For example: 
 ```go
 port := "8080"
@@ -63,11 +89,10 @@ port := "8080"
  })
  
 ```
-## Configure
+3. **Record or Test**: You can use the `KEPLOY_MODE` to record or test your application. Eg:
 ```
 export KEPLOY_MODE=keploy.MODE_TEST
 ```
-### KEPLOY_MODE
 There are 3 modes:
  - **Record**: Sets to record mode.
  - **Test**: Sets to test mode. 
