@@ -29,7 +29,7 @@ import (
 
 var (
 	// mode is set to record, if unset
-	mode       = MODE_RECORD
+	mode       = MODE_OFF
 	result     = make(chan bool, 1)
 	grpcClient proto.RegressionServiceClient // decoupled from keploy instance to use it in unit-test mocking infrastructure
 	MockPath   string

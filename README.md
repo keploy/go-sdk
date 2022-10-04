@@ -31,7 +31,7 @@ import(
 ...
 ctx := mock.NewContext(mock.Config{
 	Name: "<name_for_mocks>", // unique for every mock. if you dont provide during record it would be generated. Its compulsory during tests. 
-	Mode: keploy.MODE_RECORD, // Or keploy.MODE_TEST, Or keploy.MODE_OFF. Default is keploy.MODE_TEST
+	Mode: keploy.MODE_RECORD, // Or keploy.MODE_TEST, Or keploy.MODE_OFF. Default is keploy.MODE_OFF
 	Path: "<local_path_for_yaml>", // optional. relative(./internals) or absolute(/users/xyz/...)
 	CTX: <existing context>, // optional. can be used to pass existing running context. 
 })
@@ -41,7 +41,7 @@ ctx := mock.NewContext(mock.Config{
 ```go
 ctx := mock.NewContext(mock.Config{
 	Name: "<name_for_mocks>", // unique for every mock. if you dont provide during record it would be generated. Its compulsory during tests. 
-	Mode: keploy.MODE_TEST, // Or keploy.MODE_TEST, Or keploy.MODE_OFF. Default is keploy.MODE_TEST
+	Mode: keploy.MODE_TEST, // Or keploy.MODE_TEST, Or keploy.MODE_OFF. Default is keploy.MODE_OFF
 	Path: "<local_path_for_yaml>", // optional. relative(./internals) or absolute(/users/xyz/...)
 	CTX: <existing context>, // optional. can be used to pass existing running context. 
 })
