@@ -84,7 +84,7 @@ port := "8080"
          Port: port,
      },
      Server: keploy.ServerConfig{
-         URL: "http://localhost:8081/api",
+         URL: "http://localhost:6789/api",
      },
  })
  
@@ -123,7 +123,7 @@ func main(){
                 Port: port,
             },
             Server: keploy.ServerConfig{
-                URL: "http://localhost:8081/api",
+                URL: "http://localhost:6789/api",
             },
             })
     r.Use(kchi.ChiMiddlewareV5(k))
@@ -151,7 +151,7 @@ func main(){
 	      Port: port,
 	  },
 	  Server: keploy.ServerConfig{
-	      URL: "http://localhost:8081/api",
+	      URL: "http://localhost:6789/api",
 	  },
 	})
 	kgin.GinV1(k, r)
@@ -180,7 +180,7 @@ func main(){
           Port: port,
       },
       Server: keploy.ServerConfig{
-          URL: "http://localhost:8081/api",
+          URL: "http://localhost:6789/api",
       },
     })
     e.Use(kecho.EchoMiddlewareV4(k))
@@ -216,7 +216,7 @@ func main(){
           Port: port,
       },
       Server: keploy.ServerConfig{
-          URL: "http://localhost:8081/api",
+          URL: "http://localhost:6789/api",
       },
     })
     router := webgo.NewRouter(&webgo.Config{
@@ -252,7 +252,7 @@ func main(){
           Port: port,
       },
       Server: keploy.ServerConfig{
-          URL: "http://localhost:8081/api",
+          URL: "http://localhost:6789/api",
       },
     })
     r.Use(kmux.MuxMiddleware(k))
@@ -278,7 +278,7 @@ func main() {
 			Port: "8080",
 		},
 		Server: keploy.ServerConfig{
-			URL: "http://localhost:8081/api",
+			URL: "http://localhost:6789/api",
 		},
 	})
 
@@ -494,7 +494,7 @@ func main(){
 			Port: port,
 		},
 		Server: keploy.ServerConfig{
-			URL: "http://localhost:8081/api",
+			URL: "http://localhost:6789/api",
 		},
 	})
 	// configure mux for integeration with keploy
@@ -578,7 +578,7 @@ k := keploy.New(keploy.Config{
       Port: port,
   },
   Server: keploy.ServerConfig{
-      URL: "http://localhost:8081/api",
+      URL: "http://localhost:6789/api",
   },
 })
 
@@ -622,7 +622,7 @@ func init() {
 			Port: port,
 		},
 		Server: keploy.ServerConfig{
-			URL: "http://localhost:8081/api",
+			URL: "http://localhost:6789/api",
 		},
 	})
         // Generate a JWTConfig

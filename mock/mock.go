@@ -32,7 +32,7 @@ func init() {
 	}()
 
 	var err error
-	conn, err := grpc.Dial("localhost:8081", grpc.WithInsecure())
+	conn, err := grpc.Dial("localhost:6789", grpc.WithInsecure())
 	if err != nil {
 		logger.Error("❌ Failed to connect to keploy server via grpc. Please ensure that keploy server is running", zap.Error(err))
 	}

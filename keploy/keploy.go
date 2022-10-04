@@ -112,7 +112,7 @@ type Filter struct {
 }
 
 type ServerConfig struct {
-	URL        string `default:"https://api.keploy.io"`
+	URL        string `default:"http://localhost:6789/api"`
 	LicenseKey string
 }
 
