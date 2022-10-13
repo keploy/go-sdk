@@ -1,11 +1,11 @@
-package ksql
+package v2
 
 import (
 	"database/sql/driver"
 	"io"
 )
 
-func convertKError(err error) error {
+func ConvertKError(err error) error {
 	if err == nil {
 		return nil
 	}

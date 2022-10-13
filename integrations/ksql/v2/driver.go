@@ -1,16 +1,9 @@
-package ksql
+package v2
 
 import (
 	"context"
 	"database/sql/driver"
-	v2 "github.com/keploy/go-sdk/integrations/ksql/v2"
-
-	// "encoding/gob"
-	// "encoding/json"
 	"errors"
-	// "fmt"
-	// "reflect"
-	// "time"
 	"github.com/keploy/go-sdk/keploy"
 	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
@@ -133,7 +126,7 @@ func (c Conn) Ping(ctx context.Context) error {
 		if x.Err != nil {
 			mockErr = x.Err
 		}
-		mockErr = v2.ConvertKError(mockErr)
+		mockErr = convertKError(mockErr)
 		return mockErr
 	}
 	return err
