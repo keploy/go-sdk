@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/creasty/defaults"
@@ -179,6 +180,7 @@ func New(cfg Config) *Keploy {
 	}
 	if mode == MODE_TEST {
 		go k.Test()
+		// go k.TestGrpc()
 	}
 	return k
 }
@@ -248,7 +250,24 @@ func (k *Keploy) GetResp(id string) models.HttpResp {
 	return resp
 }
 
+func (k *Keploy) GetRespGrpc(id string) string {
+	val, ok := k.resp.Load(id)
+	if !ok {
+		return ""
+	}
+	resp := val.(string)
+	if !ok {
+		k.Log.Error("failed getting response for http request", zap.String("test case id", id))
+		return ""
+	}
+	return resp
+}
+
 func (k *Keploy) PutResp(id string, resp models.HttpResp) {
+	k.resp.Store(id, resp)
+}
+
+func (k *Keploy) PutRespGrpc(id string, resp string) {
 	k.resp.Store(id, resp)
 }
 
@@ -256,6 +275,11 @@ func (k *Keploy) PutResp(id string, resp models.HttpResp) {
 func (k *Keploy) Capture(req regression.TestCaseReq) {
 	// req.Path, _ = os.Getwd()
 	go k.put(req)
+}
+
+func (k *Keploy) CaptureGrpc(req regression.GrpcTestCaseReq) {
+	// req.Path, _ = os.Getwd()
+	go k.putGrpc(req)
 }
 
 // Test fetches the testcases from the keploy server and current response of API. Then, both of the responses are sent back to keploy's server for comparision.
@@ -266,14 +290,14 @@ func (k *Keploy) Test() {
 	tcs := k.fetch()
 	total := len(tcs)
 
-	// start a test run
+	// start a http test run
 	id, err := k.start(total)
 	if err != nil {
-		k.Log.Error("failed to start test run", zap.Error(err))
+		k.Log.Error("failed to start http test run", zap.Error(err))
 		return
 	}
 
-	k.Log.Info("starting test execution", zap.String("id", id), zap.Int("total tests", total))
+	k.Log.Info("starting http test execution", zap.String("id", id), zap.Int("total tests", total))
 	passed := true
 	// call the service for each test case
 	var wg sync.WaitGroup
@@ -296,13 +320,50 @@ func (k *Keploy) Test() {
 	}
 	wg.Wait()
 
+	// end the http test run
+	err = k.end(id, passed)
+	if err != nil {
+		k.Log.Error("failed to end http test run", zap.Error(err))
+		return
+	}
+	k.Log.Info("http test run completed", zap.String("run id", id), zap.Bool("passed overall", passed))
+
+	tcsGrpc := k.fetchGrpc()
+	total = len(tcsGrpc)
+
+	// start a test run
+	id, err = k.start(total)
+	if err != nil {
+		k.Log.Error("failed to start grpc test run", zap.Error(err))
+		return
+	}
+
+	k.Log.Info("starting grpc test execution", zap.String("id", id), zap.Int("total tests", total))
+	maxGoroutines = 10
+	guard = make(chan struct{}, maxGoroutines)
+	for i, tc := range tcsGrpc {
+		k.Log.Info(fmt.Sprintf("testing %d of %d", i+1, total), zap.String("testcase id", tc.ID))
+		guard <- struct{}{}
+		wg.Add(1)
+		tcCopy := tc
+		go func() {
+			ok := k.checkGrpc(id, tcCopy)
+			if !ok {
+				passed = false
+			}
+			k.Log.Info("result", zap.String("testcase id", tcCopy.ID), zap.Bool("passed", ok))
+			<-guard
+			wg.Done()
+		}()
+	}
+	wg.Wait()
 	// end the test run
 	err = k.end(id, passed)
 	if err != nil {
-		k.Log.Error("failed to end test run", zap.Error(err))
+		k.Log.Error("failed to end grpc test run", zap.Error(err))
 		return
 	}
-	k.Log.Info("test run completed", zap.String("run id", id), zap.Bool("passed overall", passed))
+	k.Log.Info("grpc test run completed", zap.String("run id", id), zap.Bool("passed overall", passed))
 	result <- passed
 }
 
@@ -382,6 +443,26 @@ func (k *Keploy) simulate(tc models.TestCase) (*models.HttpResp, error) {
 	return &resp, nil
 }
 
+func (k *Keploy) simulateGrpc(tc models.GrpcTestCase) (string, error) {
+	// add dependencies to shared context
+	k.deps.Store(tc.ID, tc.Deps)
+	defer k.deps.Delete(tc.ID)
+	// add mocks to shared context
+	k.mocks.Store(tc.ID, tc.Mocks)
+	defer k.mocks.Delete(tc.ID)
+	k.mocktime.Store(tc.ID, tc.Captured)
+	defer k.mocktime.Delete(tc.ID)
+	tid := string(tc.ID)
+	cmd := exec.Command("grpcurl", "--plaintext", "-d", tc.GrpcReq, "-H", `id: `+tid, "localhost:"+k.cfg.App.Port, tc.Method)
+	err := cmd.Run()
+	if err != nil {
+		panic(err)
+	}
+	resp := k.GetRespGrpc(tc.ID)
+	defer k.resp.Delete(tc.ID)
+	return resp, nil
+}
+
 func (k *Keploy) check(runId string, tc models.TestCase) bool {
 	resp, err := k.simulate(tc)
 	if err != nil {
@@ -431,6 +512,55 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 	return false
 }
 
+func (k *Keploy) checkGrpc(runId string, tc models.GrpcTestCase) bool {
+	resp, err := k.simulateGrpc(tc)
+	if err != nil {
+		k.Log.Error("failed to simulate request on local server", zap.Error(err))
+		return false
+	}
+	bin, err := json.Marshal(&regression.GrpcTestReq{
+		ID:           tc.ID,
+		AppID:        k.cfg.App.Name,
+		RunID:        runId,
+		Resp:         resp,
+		TestCasePath: k.cfg.App.TestPath,
+		MockPath:     k.cfg.App.MockPath,
+	})
+	if err != nil {
+		k.Log.Error("failed to marshal testcase request", zap.String("url", tc.Method), zap.Error(err))
+		return false
+	}
+
+	// test application reponse
+	r, err := http.NewRequest("POST", k.cfg.Server.URL+"/regression/testGrpc", bytes.NewBuffer(bin))
+	if err != nil {
+		k.Log.Error("failed to create test request request server", zap.String("id", tc.ID), zap.String("url", tc.Method), zap.Error(err))
+		return false
+	}
+	k.setKey(r)
+	r.Header.Set("Content-Type", "application/json")
+
+	resp2, err := k.client.Do(r)
+	if err != nil {
+		k.Log.Error("failed to send test request to backend", zap.String("url", tc.Method), zap.Error(err))
+		return false
+	}
+	var res map[string]bool
+	b, err := ioutil.ReadAll(resp2.Body)
+	if err != nil {
+		k.Log.Error("failed to read response from backend", zap.String("url", tc.Method), zap.Error(err))
+	}
+	err = json.Unmarshal(b, &res)
+	if err != nil {
+		k.Log.Error("failed to read test result from keploy cloud", zap.Error(err))
+		return false
+	}
+	if res["pass"] {
+		return true
+	}
+	return false
+}
+
 // isValidHeader checks the valid header to filter out testcases
 // It returns true when any of the header matches with regular expression and returns false when it doesn't match.
 func (k *Keploy) isValidHeader(tcs regression.TestCaseReq) bool {
@@ -450,6 +580,50 @@ func (k *Keploy) isValidHeader(tcs regression.TestCaseReq) bool {
 		}
 	}
 	return valid
+}
+
+func (k *Keploy) putGrpc(tcs regression.GrpcTestCaseReq) {
+	bin, err := json.Marshal(tcs)
+	if err != nil {
+		k.Log.Error("failed to marshall testcase request", zap.String("AppRequest", tcs.GrpcRequest), zap.String("Method", tcs.Method), zap.Error(err))
+		return
+	}
+	req, err := http.NewRequest("POST", k.cfg.Server.URL+"/regression/testcaseGrpc", bytes.NewBuffer(bin))
+	if err != nil {
+		k.Log.Error("failed to create testcase request", zap.String("AppRequest", tcs.GrpcRequest), zap.String("Method", tcs.Method), zap.Error(err))
+		return
+	}
+	k.setKey(req)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := k.client.Do(req)
+	if err != nil {
+		k.Log.Error("failed to send testcase to backend", zap.String("AppRequest", tcs.GrpcRequest), zap.String("Method", tcs.Method), zap.Error(err))
+		return
+	}
+
+	defer func(Body io.ReadCloser) {
+		err = Body.Close()
+		if err != nil {
+			// a.Log.Error("failed to close connecton reader", zap.String("url", tcs.URI), zap.Error(err))
+			return
+		}
+	}(resp.Body)
+	var res map[string]string
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		k.Log.Error("failed to read response from backend", zap.String("AppRequest", tcs.GrpcRequest), zap.Error(err))
+	}
+	err = json.Unmarshal(body, &res)
+	if err != nil {
+		k.Log.Error("failed to read testcases from keploy cloud", zap.Error(err))
+		return
+	}
+	id := res["id"]
+	if id == "" {
+		return
+	}
+	k.denoiseGrpc(id, tcs)
 }
 
 func (k *Keploy) put(tcs regression.TestCaseReq) {
@@ -555,6 +729,48 @@ func (k *Keploy) denoise(id string, tcs regression.TestCaseReq) {
 	}
 }
 
+func (k *Keploy) denoiseGrpc(id string, tcs regression.GrpcTestCaseReq) {
+	// run the request again to find noisy fields
+	time.Sleep(2 * time.Second)
+	resp2, err := k.simulateGrpc(models.GrpcTestCase{
+		ID:       id,
+		Captured: tcs.Captured,
+		Deps:     tcs.Deps,
+		Method:   tcs.Method,
+		GrpcReq:  tcs.GrpcRequest,
+	})
+	if err != nil {
+		k.Log.Error("failed to simulate request on local server", zap.Error(err))
+		return
+	}
+	bin2, err := json.Marshal(&regression.GrpcTestReq{
+		ID:           id,
+		AppID:        k.cfg.App.Name,
+		Resp:         resp2,
+		TestCasePath: k.cfg.App.TestPath,
+		MockPath:     k.cfg.App.MockPath,
+	})
+	if err != nil {
+		k.Log.Error("failed to marshall testcase request", zap.String("url", tcs.Method), zap.Error(err))
+		return
+	}
+
+	// send de-noise request to server
+	r, err := http.NewRequest("POST", k.cfg.Server.URL+"/regression/denoiseGrpc", bytes.NewBuffer(bin2))
+	if err != nil {
+		k.Log.Error("failed to create de-noise request", zap.String("url", tcs.Method), zap.Error(err))
+		return
+	}
+	k.setKey(r)
+	r.Header.Set("Content-Type", "application/json")
+
+	_, err = k.client.Do(r)
+	if err != nil {
+		k.Log.Error("failed to send de-noise request to backend", zap.String("url", tcs.Method), zap.Error(err))
+		return
+	}
+}
+
 func (k *Keploy) Get(id string) *models.TestCase {
 	url := fmt.Sprintf("%s/regression/testcase/%s", k.cfg.Server.URL, id)
 	body, err := k.newGet(url)
@@ -634,6 +850,53 @@ func (k *Keploy) fetch() []models.TestCase {
 		if len(res) < pageSize {
 			break
 		}
+		eof := resp.Header.Get("EOF")
+		if eof == "true" {
+			break
+		}
+	}
+	return tcs
+}
+
+func (k *Keploy) fetchGrpc() []models.GrpcTestCase {
+	var tcs []models.GrpcTestCase = []models.GrpcTestCase{}
+
+	for i := 0; ; i += 25 {
+		url := fmt.Sprintf("%s/regression/testcaseGrpc?app=%s&offset=%d&limit=%d", k.cfg.Server.URL, k.cfg.App.Name, i, 25)
+
+		req, err := http.NewRequest("GET", url, http.NoBody)
+		if err != nil {
+			k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
+			return nil
+		}
+		k.setKey(req)
+		resp, err := k.client.Do(req)
+		if err != nil {
+			k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
+			return nil
+		}
+		if resp.StatusCode != http.StatusOK {
+			k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(errors.New("failed to send get request: "+resp.Status)))
+			return nil
+		}
+
+		defer resp.Body.Close()
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
+			return nil
+		}
+
+		var res []models.GrpcTestCase
+		err = json.Unmarshal(body, &res)
+		if err != nil {
+			k.Log.Error("failed to reading testcases from keploy cloud", zap.Error(err))
+			return nil
+		}
+		if len(res) == 0 {
+			break
+		}
+		tcs = append(tcs, res...)
 		eof := resp.Header.Get("EOF")
 		if eof == "true" {
 			break

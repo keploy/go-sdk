@@ -231,8 +231,28 @@ func CaptureTestcase(k *Keploy, r *http.Request, reqBody []byte, resp models.Htt
 		TestCasePath: k.cfg.App.TestPath,
 		MockPath:     k.cfg.App.MockPath,
 		Mocks:        deps.Mock,
+		Type:		  "http",
 	})
 
+}
+
+func CaptureTestcaseGrpc(k *Keploy, ctx context.Context, req string, info string, response string) {
+	d := ctx.Value(KCTX)
+	if d == nil {
+		k.Log.Error("failed to get keploy context")
+		return
+	}
+	deps := d.(*Context)
+
+	k.CaptureGrpc(regression.GrpcTestCaseReq{
+		Captured:    time.Now().Unix(),
+		AppID:       k.cfg.App.Name,
+		GrpcRequest: req,
+		Method:      info,
+		Type:        "grpc",
+		Response:    response,
+		Deps:        deps.Deps,
+	})
 }
 
 func urlParams(r *http.Request, params map[string]string) map[string]string {
