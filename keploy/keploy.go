@@ -180,7 +180,6 @@ func New(cfg Config) *Keploy {
 	}
 	if mode == MODE_TEST {
 		go k.Test()
-		// go k.TestGrpc()
 	}
 	return k
 }
