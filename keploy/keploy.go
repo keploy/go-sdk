@@ -453,6 +453,7 @@ func (k *Keploy) simulateGrpc(tc models.GrpcTestCase) (string, error) {
 	k.mocktime.Store(tc.ID, tc.Captured)
 	defer k.mocktime.Delete(tc.ID)
 	tid := string(tc.ID)
+	// The simulate call is done via grpcurl which acts as a grpc client
 	cmd := exec.Command("grpcurl", "--plaintext", "-d", tc.GrpcReq, "-H", `id: `+tid, "localhost:"+k.cfg.App.Port, tc.Method)
 	err := cmd.Run()
 	if err != nil {

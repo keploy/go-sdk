@@ -12,6 +12,9 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
+
+// serverInterceptor is grpc middleware which is used to get the grpc method
+// which is being called and the request data.
 func serverInterceptor(k *keploy.Keploy) func(
 	ctx context.Context,
 	req interface{},
@@ -27,6 +30,7 @@ func serverInterceptor(k *keploy.Keploy) func(
 		if os.Getenv("KEPLOY_MODE") == "off" {
 			return handler(ctx, req)
 		}
+		// requestMeta is used to retrieve the testcase id from the context
 		requestMeta, metaExist := metadata.FromIncomingContext(ctx)
 		if !metaExist {
 			fmt.Println("\nUnable to Start Keploy !!")
@@ -69,6 +73,8 @@ func serverInterceptor(k *keploy.Keploy) func(
 		}
 		serverInfo := grpc.UnaryServerInfo{}
 		json.Unmarshal(infoByte, &serverInfo)
+		// serverInfo.FullMethod contains the method name with "/" character
+		// Here, we remove this redundant character.
 		fullMethod := strings.Split(serverInfo.FullMethod, "/")
 		method := ""
 		for i := 1; i < len(fullMethod); i++ {
