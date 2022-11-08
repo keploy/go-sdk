@@ -65,6 +65,9 @@ func (cs compositeSource) ListServices() ([]string, error) {
 	return cs.reflection.ListServices()
 }
 
+// GrpCurl function acts as a grpc client for the simulate client.
+// It takes grpcRequest json , testcase id, port and request method
+// as its parameter
 func GrpCurl(grpcReq string, id string, port string, method string) error {
 	argsArray := [8]string{"grpcurl", "--plaintext", "-d", grpcReq, "-H", id, port, method}
 	flags.Parse(argsArray[1:])
