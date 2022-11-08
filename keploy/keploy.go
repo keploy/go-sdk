@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
+	"log"
 	"path/filepath"
 
 	"github.com/creasty/defaults"
@@ -457,10 +457,9 @@ func (k *Keploy) simulateGrpc(tc models.GrpcTestCase) (string, error) {
 		port = ":" + port
 	}
 	// The simulate call is done via grpcurl which acts as a grpc client
-	cmd := exec.Command("grpcurl", "--plaintext", "-d", tc.GrpcReq, "-H", `id: `+tid, "localhost"+port, tc.Method)
-	err := cmd.Run()
+	err := GrpCurl(tc.GrpcReq, `id: `+tid, "localhost"+port, tc.Method)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 	resp := k.GetRespGrpc(tc.ID)
 	defer k.resp.Delete(tc.ID)

@@ -14,7 +14,7 @@ require (
 	github.com/labstack/echo/v4 v4.9.0
 	go.mongodb.org/mongo-driver v1.8.3
 	go.uber.org/zap v1.22.0
-	google.golang.org/grpc v1.45.0
+	google.golang.org/grpc v1.48.0
 )
 
 require (
@@ -22,6 +22,7 @@ require (
 	github.com/go-chi/chi v1.5.4
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/gorilla/mux v1.8.0
+	github.com/jhump/protoreflect v1.14.0
 	github.com/lestrrat-go/jwx v1.2.25
 	github.com/valyala/fasthttp v1.40.0
 	go.keploy.io/server v0.5.6
@@ -60,6 +61,7 @@ require (
 require (
 	github.com/99designs/gqlgen v0.15.1 // indirect
 	github.com/agnivade/levenshtein v1.1.1 // indirect
+	github.com/fullstorydev/grpcurl v1.8.7
 	github.com/gin-contrib/sse v0.1.0 // indirect
 	github.com/go-chi/render v1.0.1 // indirect
 	github.com/go-playground/locales v0.14.0 // indirect
@@ -94,6 +96,6 @@ require (
 	golang.org/x/sys v0.0.0-20220227234510-4e6760a101f9 // indirect
 	golang.org/x/text v0.3.7 // indirect
 	google.golang.org/genproto v0.0.0-20200526211855-cb27e3aa2013 // indirect
-	google.golang.org/protobuf v1.28.0 // indirect
+	google.golang.org/protobuf v1.28.1
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
