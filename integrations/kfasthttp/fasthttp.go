@@ -90,7 +90,7 @@ func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp
 
 			r = r.WithContext(ctx)
 
-			keploy.CaptureTestcase(k, r, reqBody, resp, params)
+			keploy.CaptureTestcase(k, r, reqBody, resp, params, context.Background(), "", "", "", "http")
 			return
 		})
 	}

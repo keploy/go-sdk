@@ -8,7 +8,7 @@ import (
 )
 
 type Router interface {
-	// GetRequest provides access to the current http request object. 
+	// GetRequest provides access to the current http request object.
 	// Example: echo.Context.Request()
 	GetRequest() *http.Request
 	// SetRequest sets the http request with given request object parameter.
@@ -57,6 +57,6 @@ func Middleware(k *Keploy, router Router) error {
 	}
 
 	params := router.GetURLParams()
-	CaptureTestcase(k, r, reqBody, resp, params)
+	CaptureTestcase(k, r, reqBody, resp, params, context.Background(), "", "", "", "http")
 	return nil
 }

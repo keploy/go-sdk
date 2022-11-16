@@ -95,7 +95,7 @@ func mw(k *keploy.Keploy) gin.HandlerFunc {
 
 		resp := captureRespGin(c)
 		params := urlParamsGin(c, k)
-		keploy.CaptureTestcase(k, c.Request, reqBody, resp, params)
+		keploy.CaptureTestcase(k, c.Request, reqBody, resp, params, context.Background(), "", "", "", "http")
 	}
 }
 

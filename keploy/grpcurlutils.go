@@ -2,7 +2,6 @@ package keploy
 
 import (
 	"context"
-	"flag"
 	"io"
 	"os"
 	"strconv"
@@ -16,6 +15,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	reflectpb "google.golang.org/grpc/reflection/grpc_reflection_v1alpha"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/runtime/protoiface"
 )
 
 const noVersion = "dev build <no version set>"
@@ -23,25 +23,17 @@ const noVersion = "dev build <no version set>"
 var ver = noVersion
 
 var (
-	isUnixSocket func() bool // nil when run on non-unix platform
-
-	flags              = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-	plaintext          = flags.Bool("plaintext", false, "")
-	key                = flags.String("key", "", "")
+	isUnixSocket       func() bool // nil when run on non-unix platform
 	addlHeaders        multiString
-	data               = flags.String("d", "", "")
-	format             = flags.String("format", "json", "")
-	allowUnknownFields = flags.Bool("allow-unknown-fields", false, "")
-	connectTimeout     = flags.Float64("connect-timeout", 0, "")
-	formatError        = flags.Bool("format-error", false, "")
-	maxMsgSz           = flags.Int("max-msg-sz", 0, "")
-	emitDefaults       = flags.Bool("emit-defaults", false, "")
-	reflection         = optionalBoolFlag{val: true}
+	data               string
+	format             string  = "json"
+	allowUnknownFields bool    = false
+	connectTimeout     float64 = 0
+	formatError        bool    = false
+	maxMsgSz           int     = 0
+	emitDefaults       bool    = false
+	reflection                 = optionalBoolFlag{val: true}
 )
-
-func init() {
-	flags.Var(&addlHeaders, "H", "")
-}
 
 type multiString []string
 
@@ -54,29 +46,34 @@ func (s *multiString) Set(value string) error {
 	return nil
 }
 
-// Uses a file source as a fallback for resolving symbols and extensions, but
-// only uses the reflection source for listing services
-type compositeSource struct {
-	reflection grpcurl.DescriptorSource
-	file       grpcurl.DescriptorSource
+type CustomHandler struct {
+	*grpcurl.DefaultEventHandler
 }
 
-func (cs compositeSource) ListServices() ([]string, error) {
-	return cs.reflection.ListServices()
+func NewCustomHandler(c *grpcurl.DefaultEventHandler) grpcurl.InvocationEventHandler {
+	return &CustomHandler{DefaultEventHandler: c}
+}
+
+func (h *CustomHandler) OnReceiveResponse(protoiface.MessageV1) {
 }
 
 // GrpCurl function acts as a grpc client for the simulate client.
 // It takes grpcRequest json , testcase id, port and request method
 // as its parameter
 func GrpCurl(grpcReq string, id string, port string, method string) error {
-	argsArray := [8]string{"grpcurl", "--plaintext", "-d", grpcReq, "-H", id, port, method}
-	flags.Parse(argsArray[1:])
-	args := flags.Args()
-	var target, symbol string
-	var cc *grpc.ClientConn
-	var descSource grpcurl.DescriptorSource
-	var refClient *grpcreflect.Client
-	var fileSource grpcurl.DescriptorSource
+	addlHeaders = multiString{id}
+	var argsTemp = [2]string{port, method}
+	data = grpcReq
+	args := argsTemp[0:]
+
+	var (
+		target     string
+		symbol     string
+		cc         *grpc.ClientConn
+		descSource grpcurl.DescriptorSource
+		refClient  *grpcreflect.Client
+		fileSource grpcurl.DescriptorSource
+	)
 	target = args[0]
 	args = args[1:]
 
@@ -87,14 +84,14 @@ func GrpCurl(grpcReq string, id string, port string, method string) error {
 	ctx := context.Background()
 	dial := func() *grpc.ClientConn {
 		dialTime := 10 * time.Second
-		if *connectTimeout > 0 {
-			dialTime = time.Duration(*connectTimeout * float64(time.Second))
+		if connectTimeout > 0 {
+			dialTime = time.Duration(connectTimeout * float64(time.Second))
 		}
 		ctx, cancel := context.WithTimeout(ctx, dialTime)
 		defer cancel()
 		var opts []grpc.DialOption
-		if *maxMsgSz > 0 {
-			opts = append(opts, grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(*maxMsgSz)))
+		if maxMsgSz > 0 {
+			opts = append(opts, grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxMsgSz)))
 		}
 		var creds credentials.TransportCredentials
 
@@ -116,7 +113,7 @@ func GrpCurl(grpcReq string, id string, port string, method string) error {
 		return cc
 	}
 	if reflection.val {
-		md := grpcurl.MetadataFromHeaders(append(addlHeaders))
+		md := grpcurl.MetadataFromHeaders(addlHeaders)
 		refCtx := metadata.NewOutgoingContext(ctx, md)
 		cc = dial()
 		refClient = grpcreflect.NewClientV1Alpha(refCtx, reflectpb.NewServerReflectionClient(cc))
@@ -143,10 +140,10 @@ func GrpCurl(grpcReq string, id string, port string, method string) error {
 		cc = dial()
 	}
 	var in io.Reader
-	if *data == "@" {
+	if data == "@" {
 		in = os.Stdin
 	} else {
-		in = strings.NewReader(*data)
+		in = strings.NewReader(data)
 	}
 
 	// if not verbose output, then also include record delimiters
@@ -154,28 +151,31 @@ func GrpCurl(grpcReq string, id string, port string, method string) error {
 	// to another grpcurl process
 	includeSeparators := verbosityLevel == 0
 	options := grpcurl.FormatOptions{
-		EmitJSONDefaultFields: *emitDefaults,
+		EmitJSONDefaultFields: emitDefaults,
 		IncludeTextSeparator:  includeSeparators,
-		AllowUnknownFields:    *allowUnknownFields,
+		AllowUnknownFields:    allowUnknownFields,
 	}
-	rf, formatter, err := grpcurl.RequestParserAndFormatter(grpcurl.Format(*format), descSource, in, options)
+	rf, formatter, err := grpcurl.RequestParserAndFormatter(grpcurl.Format(format), descSource, in, options)
 	if err != nil {
 		return err
 	}
+
 	h := &grpcurl.DefaultEventHandler{
 		Out:            os.Stdout,
 		Formatter:      formatter,
 		VerbosityLevel: verbosityLevel,
 	}
-	err = grpcurl.InvokeRPC(ctx, descSource, cc, symbol, append(addlHeaders), h, rf.Next)
+
+	ch := NewCustomHandler(h)
+	err = grpcurl.InvokeRPC(ctx, descSource, cc, symbol, addlHeaders, ch, rf.Next)
 	if err != nil {
-		if errStatus, ok := status.FromError(err); ok && *formatError {
+		if errStatus, ok := status.FromError(err); ok && formatError {
 			h.Status = errStatus
 		} else {
 			return err
 		}
 	}
-	return nil
+	return err
 }
 
 type optionalBoolFlag struct {

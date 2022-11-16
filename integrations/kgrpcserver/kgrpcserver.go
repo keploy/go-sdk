@@ -8,10 +8,10 @@ import (
 	"strings"
 
 	"github.com/keploy/go-sdk/keploy"
+	"go.keploy.io/server/pkg/models"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
-
 
 // serverInterceptor is grpc middleware which is used to get the grpc method
 // which is being called and the request data.
@@ -37,9 +37,9 @@ func serverInterceptor(k *keploy.Keploy) func(
 			return handler(ctx, req)
 		}
 		id := ""
-		requestId := len(requestMeta["id"])
+		requestId := len(requestMeta["tid"])
 		if requestId != 0 {
-			id = requestMeta["id"][0]
+			id = requestMeta["tid"][0]
 		}
 		if id != "" {
 			ctx = context.WithValue(ctx, keploy.KCTX, &keploy.Context{
@@ -94,7 +94,8 @@ func serverInterceptor(k *keploy.Keploy) func(
 		if err != nil {
 			panic(err)
 		}
-		keploy.CaptureTestcaseGrpc(k, ctx, requestJson, method, resp)
+		emptyHttpResp := models.HttpResp{}
+		keploy.CaptureTestcase(k, nil, nil, emptyHttpResp, nil, ctx, requestJson, method, resp, "grpc")
 		return c, err
 	}
 }
