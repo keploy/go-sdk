@@ -2,7 +2,7 @@ module github.com/keploy/go-sdk
 
 go 1.17
 
-// replace go.keploy.io/server => ../keploy
+replace go.keploy.io/server => ../myfolder/keploy
 
 require (
 	github.com/aws/aws-sdk-go v1.42.23
@@ -30,6 +30,7 @@ require (
 
 require (
 	github.com/andybalholm/brotli v1.0.4 // indirect
+	github.com/araddon/dateparse v0.0.0-20210429162001-6b43995a97de // indirect
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.1 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.0-20210816181553-5444fa50b93d // indirect

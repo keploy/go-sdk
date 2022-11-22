@@ -222,13 +222,16 @@ func CaptureTestcase(k *Keploy, r *http.Request, reqBody []byte, resp models.Htt
 	switch reqType {
 	case "grpc":
 		k.Capture(regression.TestCaseReq{
-			Captured:   time.Now().Unix(),
-			AppID:      k.cfg.App.Name,
-			GrpcReq:    grpcReq,
-			GrpcResp:   grpcResp,
-			GrpcMethod: grpcMethod,
-			Deps:       deps.Deps,
-			Type:       "grpc",
+			Captured:     time.Now().Unix(),
+			AppID:        k.cfg.App.Name,
+			GrpcReq:      grpcReq,
+			GrpcResp:     grpcResp,
+			GrpcMethod:   grpcMethod,
+			Deps:         deps.Deps,
+			TestCasePath: k.cfg.App.TestPath,
+			MockPath:     k.cfg.App.MockPath,
+			Mocks:        deps.Mock,
+			Type:         "grpc",
 		})
 	case "http":
 		k.Capture(regression.TestCaseReq{
