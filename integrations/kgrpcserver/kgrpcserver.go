@@ -46,6 +46,7 @@ func serverInterceptor(k *keploy.Keploy) func(
 				Mode:   keploy.MODE_TEST,
 				TestID: id,
 				Deps:   k.GetDependencies(id),
+				Mock:   k.GetMocks(id),
 			})
 			c, err := handler(ctx, req)
 			if err != nil {

@@ -22,19 +22,6 @@ const noVersion = "dev build <no version set>"
 
 var ver = noVersion
 
-var (
-	isUnixSocket       func() bool // nil when run on non-unix platform
-	addlHeaders        multiString
-	data               string
-	format             string  = "json"
-	allowUnknownFields bool    = false
-	connectTimeout     float64 = 0
-	formatError        bool    = false
-	maxMsgSz           int     = 0
-	emitDefaults       bool    = false
-	reflection                 = optionalBoolFlag{val: true}
-)
-
 type multiString []string
 
 func (s *multiString) String() string {
@@ -61,6 +48,19 @@ func (h *CustomHandler) OnReceiveResponse(protoiface.MessageV1) {
 // It takes grpcRequest json , testcase id, port and request method
 // as its parameter
 func GrpCurl(grpcReq string, id string, port string, method string) error {
+	var (
+		isUnixSocket       func() bool // nil when run on non-unix platform
+		addlHeaders        multiString
+		data               string
+		format             string  = "json"
+		allowUnknownFields bool    = false
+		connectTimeout     float64 = 0
+		formatError        bool    = false
+		maxMsgSz           int     = 0
+		emitDefaults       bool    = false
+		reflection                 = optionalBoolFlag{val: true}
+	)
+
 	addlHeaders = multiString{id}
 	var argsTemp = [2]string{port, method}
 	data = grpcReq

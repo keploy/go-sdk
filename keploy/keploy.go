@@ -429,8 +429,6 @@ func (k *Keploy) simulateGrpc(tc models.TestCase) (string, error) {
 	}
 	// The simulate call is done via grpcurl which acts as a grpc client
 	err := GrpCurl(tc.GrpcReq, `tid:`+tid, "localhost"+port, tc.GrpcMethod)
-	// cmd := exec.Command("grpcurl", "--plaintext", "-d", tc.GrpcReq, "-H", `tid : `+tid, "localhost"+port, tc.GrpcMethod)
-	// err := cmd.Run()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -472,11 +470,13 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 		}
 
 		bin, err = json.Marshal(&regression.TestReq{
-			ID:       tc.ID,
-			AppID:    k.cfg.App.Name,
-			RunID:    runId,
-			GrpcResp: respGrpc,
-			Type:     tc.Type,
+			ID:           tc.ID,
+			AppID:        k.cfg.App.Name,
+			RunID:        runId,
+			GrpcResp:     respGrpc,
+			Type:         tc.Type,
+			TestCasePath: k.cfg.App.TestPath,
+			MockPath:     k.cfg.App.MockPath,
 		})
 	}
 
@@ -632,6 +632,7 @@ func (k *Keploy) denoise(id string, tcs regression.TestCaseReq) {
 			ID:         id,
 			Captured:   tcs.Captured,
 			Deps:       tcs.Deps,
+			Mocks:      tcs.Mocks,
 			GrpcMethod: tcs.GrpcMethod,
 			GrpcReq:    tcs.GrpcReq,
 		})
@@ -641,10 +642,12 @@ func (k *Keploy) denoise(id string, tcs regression.TestCaseReq) {
 		}
 
 		bin2, err = json.Marshal(&regression.TestReq{
-			ID:       id,
-			AppID:    k.cfg.App.Name,
-			GrpcResp: resp2Grpc,
-			Type:     tcs.Type,
+			ID:           id,
+			AppID:        k.cfg.App.Name,
+			GrpcResp:     resp2Grpc,
+			Type:         tcs.Type,
+			TestCasePath: k.cfg.App.TestPath,
+			MockPath:     k.cfg.App.MockPath,
 		})
 	}
 	if err != nil {
