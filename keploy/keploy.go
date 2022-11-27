@@ -300,30 +300,15 @@ func (k *Keploy) Test() {
 		guard <- struct{}{}
 		wg.Add(1)
 		tcCopy := tc
-		switch tc.Type {
-		case "http":
-			go func() {
-				ok := k.check(id, tcCopy)
-				if !ok {
-					passed = false
-				}
-				k.Log.Info("result", zap.String("testcase id", tcCopy.ID), zap.Bool("passed", ok))
-				<-guard
-				wg.Done()
-			}()
-
-		case "grpc":
-			// TODO: Make simulateGrpc, thread safe
-			func() {
-				ok := k.check(id, tcCopy)
-				if !ok {
-					passed = false
-				}
-				k.Log.Info("result", zap.String("testcase id", tcCopy.ID), zap.Bool("passed", ok))
-				<-guard
-				wg.Done()
-			}()
-		}
+		go func() {
+			ok := k.check(id, tcCopy)
+			if !ok {
+				passed = false
+			}
+			k.Log.Info("result", zap.String("testcase id", tcCopy.ID), zap.Bool("passed", ok))
+			<-guard
+			wg.Done()
+		}()
 	}
 	wg.Wait()
 
