@@ -596,8 +596,9 @@ func (k *Keploy) newGet(url string) ([]byte, error) {
 
 func (k *Keploy) fetch() []models.TestCase {
 	var tcs []models.TestCase = []models.TestCase{}
+	pageSize := 25
 
-	for i := 0; ; i += 25 {
+	for i := 0; ; i += pageSize {
 		url := fmt.Sprintf("%s/regression/testcase?app=%s&offset=%d&limit=%d&testCasePath=%s&mockPath=%s", k.cfg.Server.URL, k.cfg.App.Name, i, 25, k.cfg.App.TestPath, k.cfg.App.MockPath)
 
 		req, err := http.NewRequest("GET", url, http.NoBody)
@@ -629,10 +630,10 @@ func (k *Keploy) fetch() []models.TestCase {
 			k.Log.Error("failed to reading testcases from keploy cloud", zap.Error(err))
 			return nil
 		}
-		if len(res) == 0 {
+		tcs = append(tcs, res...)
+		if len(res) < pageSize {
 			break
 		}
-		tcs = append(tcs, res...)
 		eof := resp.Header.Get("EOF")
 		if eof == "true" {
 			break
