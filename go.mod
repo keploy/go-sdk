@@ -3,7 +3,7 @@ module github.com/keploy/go-sdk
 go 1.17
 
 // replace go.keploy.io/server => ../keploy
-replace go.keploy.io/server => github.com/Sarthak160/keploy v0.7.6-alpha
+replace go.keploy.io/server => github.com/Sarthak160/keploy v0.7.7-alpha
 
 require (
 	github.com/aws/aws-sdk-go v1.42.23
