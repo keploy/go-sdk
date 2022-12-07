@@ -3,8 +3,8 @@ cloud.google.com/go v0.34.0/go.mod h1:aQUYkXzVsufM+DwF1aE+0xfcU+56JwCaLick0ClmMT
 github.com/99designs/gqlgen v0.15.1 h1:48bRXecwlCNTa/n2bMSp2rQsXNxwZ54QHbiULNf78ec=
 github.com/99designs/gqlgen v0.15.1/go.mod h1:nbeSjFkqphIqpZsYe1ULVz0yfH8hjpJdJIQoX/e0G2I=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
-github.com/Sarthak160/keploy v0.7.7-alpha h1:u9G3QrHzzDnYaK0cfAetWx/v4zWcvr+wBynEo8UNbiA=
-github.com/Sarthak160/keploy v0.7.7-alpha/go.mod h1:dFXmo7UdH5BRYWNlyQESwT/KW9GcY7g7/8VNz4kTINE=
+github.com/Sarthak160/keploy v0.7.6-alpha h1:8yGnzubkQJOA167Q5YVnEF1oEX8NKQVaBz9fLj+B0SY=
+github.com/Sarthak160/keploy v0.7.6-alpha/go.mod h1:SGIeqsd/UqU/CsvJHHg6bXvwnntdWgdtX0fyPohOKQo=
 github.com/agnivade/levenshtein v1.0.1/go.mod h1:CURSv5d9Uaml+FovSIICkLbAUZ9S4RqaHDIsdSBg7lM=
 github.com/agnivade/levenshtein v1.1.0/go.mod h1:veldBMzWxcCG2ZvUTKD2kJNRdCk5hVbJomOvKkmgYbo=
 github.com/agnivade/levenshtein v1.1.1 h1:QY8M92nrzkmr798gCo3kmMyqXFzdQVpxLlGPRBij0P8=
