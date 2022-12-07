@@ -145,7 +145,7 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 	switch mode {
 	case keploy.MODE_TEST:
 		//don't call i.core.RoundTrip method when not in file export
-		if len(kctx.Mock) > 0 && kctx.Mock[0].Kind == string(models.HTTP_EXPORT) {
+		if len(kctx.Mock) > 0 && kctx.Mock[0].Kind == string(models.HTTP) {
 			mocks := kctx.Mock
 			if len(mocks) > 0 && len(mocks[0].Spec.Objects) > 0 {
 				bin := string(mocks[0].Spec.Objects[0].Data)
@@ -192,9 +192,9 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 			errStr = err.Error()
 		}
 		httpMock := &proto.Mock{
-			Version: string(models.V1_BETA1),
+			Version: string(models.V1Beta1),
 			Name:    kctx.TestID,
-			Kind:    string(models.HTTP_EXPORT),
+			Kind:    string(models.HTTP),
 			Spec: &proto.Mock_SpecSchema{
 				Metadata: meta,
 				Objects: []*proto.Mock_Object{

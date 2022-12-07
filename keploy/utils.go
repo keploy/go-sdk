@@ -160,8 +160,8 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 		if grpcClient != nil && kctx.FileExport && MockId.Unique(kctx.TestID) {
 			_, err := grpcClient.PutMock(ctx, &proto.PutMockReq{
 				Mock: &proto.Mock{
-					Version: string(models.V1_BETA1),
-					Kind:    string(models.GENERIC_EXPORT),
+					Version: string(models.V1Beta1),
+					Kind:    string(models.GENERIC),
 					Name:    kctx.TestID,
 					Spec: &proto.Mock_SpecSchema{
 						Metadata: meta,
@@ -185,8 +185,8 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 			Meta: meta,
 		})
 		kctx.Mock = append(kctx.Mock, &proto.Mock{
-			Version: string(models.V1_BETA1),
-			Kind:    string(models.GENERIC_EXPORT),
+			Version: string(models.V1Beta1),
+			Kind:    string(models.GENERIC),
 			Name:    "",
 			Spec: &proto.Mock_SpecSchema{
 				Metadata: meta,
