@@ -2,8 +2,10 @@ package mock
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"unicode/utf8"
 
 	proto "go.keploy.io/server/grpc/regression"
 	"go.uber.org/zap"
@@ -40,6 +42,15 @@ func StartRecordingMocks(ctx context.Context, path string, mode string, name str
 }
 
 func PostHttpMock(ctx context.Context, path string, mock *proto.Mock) bool {
+	if !utf8.ValidString(mock.Spec.Req.Body) {
+		logger.Info("request body is not valid UTF-8; will be captured as a base64 encoded string")
+		mock.Spec.Req.Body = base64.StdEncoding.EncodeToString([]byte(mock.Spec.Req.Body))
+	}
+
+	if !utf8.ValidString(mock.Spec.Res.Body) {
+		logger.Info("response body is not valid UTF-8; will be captured as a base64 encoded string")
+		mock.Spec.Res.Body = base64.StdEncoding.EncodeToString([]byte(mock.Spec.Res.Body))
+	}
 
 	_, err := grpcClient.PutMock(ctx, &proto.PutMockReq{Path: path, Mock: mock})
 
@@ -51,10 +62,23 @@ func PostHttpMock(ctx context.Context, path string, mock *proto.Mock) bool {
 }
 
 func GetAllMocks(ctx context.Context, req *proto.GetMockReq) ([]*proto.Mock, error) {
-
 	resp, err := grpcClient.GetMocks(ctx, req)
 	if resp != nil {
-		return resp.Mocks, err
+		mocks := resp.Mocks
+		for _, mock := range mocks {
+			// TODO(keploy): investigate a better way of identifying if the body is base64 encoded
+			decodedB64Req, err := base64.StdEncoding.DecodeString(mock.Spec.Req.Body)
+			if err == nil {
+				mock.Spec.Req.Body = string(decodedB64Req)
+			}
+
+			// TODO(keploy): investigate a better way of identifying if the body is base64 encoded
+			decodedB64Resp, err := base64.StdEncoding.DecodeString(mock.Spec.Res.Body)
+			if err == nil {
+				mock.Spec.Res.Body = string(decodedB64Resp)
+			}
+		}
+		return mocks, err
 	}
 	return nil, errors.New("returned nil as array mocks from keploy server")
 }

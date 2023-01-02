@@ -17,6 +17,7 @@ var (
 	logger     *zap.Logger
 )
 
+// Config is the configuration parameter for the mock context using NewContext function
 type Config struct {
 	Mode keploy.Mode
 	Name string
@@ -40,6 +41,7 @@ func init() {
 	keploy.SetGrpcClient(grpcClient)
 }
 
+// NewContext returns a context.Context object with keploy context data based on the config parameter
 func NewContext(conf Config) context.Context {
 	var (
 		mode  = keploy.MODE_TEST
@@ -67,8 +69,8 @@ func NewContext(conf Config) context.Context {
 		mode = keploy.Mode(os.Getenv("KEPLOY_MODE"))
 	}
 	// mode mostly dependent on conf.Mode
-	if keploy.Mode(conf.Mode).Valid() {
-		mode = keploy.Mode(conf.Mode)
+	if conf.Mode.Valid() {
+		mode = conf.Mode
 	}
 	keploy.SetMode(mode)
 
@@ -102,7 +104,6 @@ func NewContext(conf Config) context.Context {
 	exists := StartRecordingMocks(context.Background(), path+"/"+conf.Name+".yaml", string(mode), name)
 	if exists {
 		logger.Error(fmt.Sprintf("🚨 Keploy failed to record dependencies because yaml file already exists%v in directory: %v.\n", name, path))
-		// fmt.Printf("🚨 Keploy failed to record dependencies because yaml file already exists%v in directory: %v.\n", name, path)
 		keploy.MockId.Load(conf.Name)
 	}
 	return context.WithValue(ctx, keploy.KCTX, k)
