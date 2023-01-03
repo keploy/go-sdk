@@ -3,14 +3,10 @@ package ksql
 import (
 	"context"
 	"database/sql/driver"
-	v2 "github.com/keploy/go-sdk/integrations/ksql/v2"
-
-	// "encoding/gob"
-	// "encoding/json"
 	"errors"
-	// "fmt"
-	// "reflect"
-	// "time"
+
+	"github.com/keploy/go-sdk/integrations/ksql/ksqlErr"
+	internal "github.com/keploy/go-sdk/internal/keploy"
 	"github.com/keploy/go-sdk/keploy"
 	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
@@ -49,7 +45,7 @@ func (ksql *Driver) Open(dsn string) (driver.Conn, error) {
 	return res, err
 }
 
-// Conn is used to override driver.Conn interface methods to mock the outputs of the queries.
+// Conn is used to override driver.Conn interface methods to mock the outputs of the querries.
 type Conn struct {
 	// mode string
 	conn driver.Conn
@@ -98,14 +94,14 @@ func (c Conn) Ping(ctx context.Context) error {
 		return errors.New("returned var not implements ConnBeginTx interface")
 	}
 	// return pc.Ping(ctx)
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		return pc.Ping(ctx)
 	}
 	var (
 		err  error
 		kerr *keploy.KError = &keploy.KError{}
 	)
-	kctx, er := keploy.GetState(ctx)
+	kctx, er := internal.GetState(ctx)
 	if er != nil {
 		return er
 	}
@@ -133,7 +129,7 @@ func (c Conn) Ping(ctx context.Context) error {
 		if x.Err != nil {
 			mockErr = x.Err
 		}
-		mockErr = v2.ConvertKError(mockErr)
+		mockErr = ksqlErr.ConvertKError(mockErr)
 		return mockErr
 	}
 	return err

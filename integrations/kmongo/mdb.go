@@ -8,6 +8,7 @@ import (
 
 	"go.keploy.io/server/pkg/models"
 
+	internal "github.com/keploy/go-sdk/internal/keploy"
 	"github.com/keploy/go-sdk/keploy"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -47,7 +48,7 @@ type Collection struct {
 //
 // See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Collection.Distinct for more info about Distinct.
 func (c *Collection) Distinct(ctx context.Context, fieldName string, filter interface{}, opts ...*options.DistinctOptions) ([]interface{}, error) {
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		output, err := c.Collection.Distinct(ctx, fieldName, filter, opts...)
 		return output, err
 	}
@@ -97,7 +98,7 @@ func (c *Collection) Distinct(ctx context.Context, fieldName string, filter inte
 //
 // See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Collection.CountDocuments for more info about CountDocuments.
 func (c *Collection) CountDocuments(ctx context.Context, filter interface{}, opts ...*options.CountOptions) (int64, error) {
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		output, err := c.Collection.CountDocuments(ctx, filter, opts...)
 		return output, err
 	}
@@ -149,7 +150,7 @@ func (c *Collection) CountDocuments(ctx context.Context, filter interface{}, opt
 //
 // See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Collection.Aggregate for more info about Aggregate.
 func (c *Collection) Aggregate(ctx context.Context, pipeline interface{}, opts ...*options.AggregateOptions) (*Cursor, error) {
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		cursor, err := c.Collection.Aggregate(ctx, pipeline, opts...)
 		return &Cursor{
 			Cursor:   *cursor,
@@ -163,7 +164,7 @@ func (c *Collection) Aggregate(ctx context.Context, pipeline interface{}, opts .
 	for _, j := range opts {
 		derivedOpts = append(derivedOpts, *j)
 	}
-	kctx, er := keploy.GetState(ctx)
+	kctx, er := internal.GetState(ctx)
 	if er != nil {
 		return &Cursor{
 			pipeline:      pipeline,
@@ -178,7 +179,7 @@ func (c *Collection) Aggregate(ctx context.Context, pipeline interface{}, opts .
 		err    error
 	)
 	switch mode {
-	case keploy.MODE_TEST:
+	case internal.MODE_TEST:
 		//don't call method in test mode
 		return &Cursor{
 			pipeline:      pipeline,
@@ -186,7 +187,7 @@ func (c *Collection) Aggregate(ctx context.Context, pipeline interface{}, opts .
 			log:           c.log,
 			ctx:           ctx,
 		}, err
-	case keploy.MODE_RECORD:
+	case internal.MODE_RECORD:
 		cursor, err = c.Collection.Aggregate(ctx, pipeline, opts...)
 		return &Cursor{
 			Cursor:        *cursor,
@@ -212,16 +213,16 @@ func (c *Collection) getOutput(ctx context.Context, str string, data []interface
 		output interface{}
 		err    error
 	)
-	kctx, er := keploy.GetState(ctx)
+	kctx, er := internal.GetState(ctx)
 	if er != nil {
 		return nil, er
 	}
 	mode := kctx.Mode
 	switch mode {
-	case keploy.MODE_TEST:
+	case internal.MODE_TEST:
 		//dont run mongo query as it is stored in context
 		err = nil
-	case keploy.MODE_RECORD:
+	case internal.MODE_RECORD:
 		output, err = c.callMethod(ctx, str, data)
 
 	default:

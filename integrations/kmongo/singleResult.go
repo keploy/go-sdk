@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	internal "github.com/keploy/go-sdk/internal/keploy"
 	"github.com/keploy/go-sdk/keploy"
 	"go.keploy.io/server/pkg/models"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -28,21 +29,21 @@ type SingleResult struct {
 //
 // See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#SingleResult.Err for more information about SingleResult.Err.
 func (msr *SingleResult) Err() error {
-	if keploy.GetModeFromContext(msr.ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(msr.ctx) == internal.MODE_OFF {
 		err := msr.SingleResult.Err()
 		return err
 	}
 	var err error
 	var kerr *keploy.KError = &keploy.KError{}
-	kctx, er := keploy.GetState(msr.ctx)
+	kctx, er := internal.GetState(msr.ctx)
 	if er != nil {
 		return er
 	}
 	mode := kctx.Mode
 	switch mode {
-	case keploy.MODE_TEST:
+	case internal.MODE_TEST:
 		//don't run mongo query as it is stored in context
-	case keploy.MODE_RECORD:
+	case internal.MODE_RECORD:
 		err = msr.SingleResult.Err()
 	default:
 		return errors.New("integrations: Not in a valid sdk mode")
@@ -76,21 +77,21 @@ func (msr *SingleResult) Err() error {
 //
 // See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#SingleResult.Decode for more information about SingleResult.Decode.
 func (msr *SingleResult) Decode(v interface{}) error {
-	if keploy.GetModeFromContext(msr.ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(msr.ctx) == internal.MODE_OFF {
 		err := msr.SingleResult.Decode(v)
 		return err
 	}
 	var err error
 	var kerr = &keploy.KError{}
-	kctx, er := keploy.GetState(msr.ctx)
+	kctx, er := internal.GetState(msr.ctx)
 	if er != nil {
 		return er
 	}
 	mode := kctx.Mode
 	switch mode {
-	case keploy.MODE_TEST:
+	case internal.MODE_TEST:
 		//dont run mongo query as it is stored in context
-	case keploy.MODE_RECORD:
+	case internal.MODE_RECORD:
 		err = msr.SingleResult.Decode(v)
 	default:
 		return errors.New("integrations: Not in a valid sdk mode")

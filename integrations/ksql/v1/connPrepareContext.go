@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/keploy/go-sdk/integrations/ksql/ksqlErr"
+	internal "github.com/keploy/go-sdk/internal/keploy"
 	"github.com/keploy/go-sdk/keploy"
 	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
@@ -20,7 +22,7 @@ type Stmt struct {
 }
 
 func (s Stmt) Exec(args []driver.Value) (driver.Result, error) {
-	if keploy.GetModeFromContext(s.ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(s.ctx) == internal.MODE_OFF {
 		return s.Stmt.Exec(args)
 	}
 	var (
@@ -29,7 +31,7 @@ func (s Stmt) Exec(args []driver.Value) (driver.Result, error) {
 		result   driver.Result
 		drResult *Result = &Result{}
 	)
-	kctx, er := keploy.GetState(s.ctx)
+	kctx, er := internal.GetState(s.ctx)
 	if er != nil {
 		return nil, er
 	}
@@ -38,7 +40,7 @@ func (s Stmt) Exec(args []driver.Value) (driver.Result, error) {
 		"name":      "SQL",
 		"type":      string(models.SqlDB),
 		"operation": "PrepareContext.Exec",
-		"query":     fmt.Sprintf(`"%v"`, s.query),
+		"query":     s.query,
 		"arguments": fmt.Sprint(args),
 	}
 	switch mode {
@@ -75,13 +77,13 @@ func (s Stmt) Exec(args []driver.Value) (driver.Result, error) {
 		if x.Err != nil {
 			mockErr = x.Err
 		}
-		mockErr = convertKError(mockErr)
+		mockErr = ksqlErr.ConvertKError(mockErr)
 		return drResult, mockErr
 	}
 	return result, err
 }
 func (s Stmt) Query(args []driver.Value) (driver.Rows, error) {
-	if keploy.GetModeFromContext(s.ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(s.ctx) == internal.MODE_OFF {
 		return s.Stmt.Query(args)
 	}
 	var (
@@ -93,7 +95,7 @@ func (s Stmt) Query(args []driver.Value) (driver.Rows, error) {
 		}
 		rows driver.Rows
 	)
-	kctx, er := keploy.GetState(s.ctx)
+	kctx, er := internal.GetState(s.ctx)
 	if er != nil {
 		return nil, er
 	}
@@ -113,7 +115,7 @@ func (s Stmt) Query(args []driver.Value) (driver.Rows, error) {
 		"name":      "SQL",
 		"type":      string(models.SqlDB),
 		"operation": "PrepareContext.Query",
-		"query":     fmt.Sprintf(`"%v"`, s.query),
+		"query":     s.query,
 		"arguments": fmt.Sprint(args),
 	}
 	if err != nil {
@@ -126,20 +128,20 @@ func (s Stmt) Query(args []driver.Value) (driver.Rows, error) {
 		if x.Err != nil {
 			mockErr = x.Err
 		}
-		mockErr = convertKError(mockErr)
+		mockErr = ksqlErr.ConvertKError(mockErr)
 		return drRows, mockErr
 	}
 	return drRows, err
 }
 func (s Stmt) NumInput() int {
-	if keploy.GetModeFromContext(s.ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(s.ctx) == internal.MODE_OFF {
 		return s.Stmt.NumInput()
 	}
 	var (
 		x      int  = 1
 		output *int = &x
 	)
-	kctx, er := keploy.GetState(s.ctx)
+	kctx, er := internal.GetState(s.ctx)
 	if er != nil {
 		return 0
 	}
@@ -167,14 +169,14 @@ func (s Stmt) NumInput() int {
 	return *output
 }
 func (s Stmt) Close() error {
-	if keploy.GetModeFromContext(s.ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(s.ctx) == internal.MODE_OFF {
 		return s.Stmt.Close()
 	}
 	var (
 		err  error
 		kerr *keploy.KError = &keploy.KError{}
 	)
-	kctx, er := keploy.GetState(s.ctx)
+	kctx, er := internal.GetState(s.ctx)
 	if er != nil {
 		return er
 	}
@@ -204,7 +206,7 @@ func (s Stmt) Close() error {
 		if x.Err != nil {
 			mockErr = x.Err
 		}
-		mockErr = convertKError(mockErr)
+		mockErr = ksqlErr.ConvertKError(mockErr)
 		return mockErr
 	}
 	return err
@@ -216,7 +218,7 @@ func (c Conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, er
 	if !ok {
 		return nil, errors.New("returned var not implements QueryerContext interface")
 	}
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		return pc.PrepareContext(ctx, query)
 	}
 	var (
@@ -229,7 +231,7 @@ func (c Conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, er
 		}
 		stmt driver.Stmt
 	)
-	kctx, er := keploy.GetState(ctx)
+	kctx, er := internal.GetState(ctx)
 	if er != nil {
 		return nil, er
 	}
@@ -247,7 +249,7 @@ func (c Conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, er
 		"name":      "SQL",
 		"type":      string(models.SqlDB),
 		"operation": "PrepareContext",
-		"query":     fmt.Sprintf(`"%v"`, query),
+		"query":     query,
 	}
 	if err != nil {
 		kerr = &keploy.KError{Err: err}
@@ -259,7 +261,7 @@ func (c Conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, er
 		if x.Err != nil {
 			mockErr = x.Err
 		}
-		mockErr = convertKError(mockErr)
+		mockErr = ksqlErr.ConvertKError(mockErr)
 		return drStmt, mockErr
 	}
 	return drStmt, err

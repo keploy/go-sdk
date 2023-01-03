@@ -27,10 +27,12 @@ func GetHttpHeader(m map[string]*proto.StrArr) map[string][]string {
 	return res
 }
 
-func StartRecordingMocks(ctx context.Context, path string, mode string, name string) bool {
+func StartRecordingMocks(ctx context.Context, path, mode, name string, overWrite bool) bool {
 	resp, err := grpcClient.StartMocking(ctx, &proto.StartMockReq{
-		Path: path,
-		Mode: mode,
+		Path:      path,
+		Mode:      mode,
+		OverWrite: overWrite,
+		//Name: ,
 	})
 	if err != nil {
 		logger.Error(fmt.Sprint("Failed to make StartMocking grpc call to keploy server", name, " mock"), zap.Error(err))

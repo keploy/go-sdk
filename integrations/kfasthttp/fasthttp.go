@@ -7,7 +7,7 @@ import (
 	"io/ioutil"
 	"net/http"
 
-	//"github.com/fasthttp/router"
+	internal "github.com/keploy/go-sdk/internal/keploy"
 	"github.com/keploy/go-sdk/keploy"
 
 	"github.com/valyala/fasthttp"
@@ -36,11 +36,11 @@ func captureResp(c *fasthttp.RequestCtx, next fasthttp.RequestHandler) models.Ht
 }
 
 func setContextValFast(c *fasthttp.RequestCtx, val interface{}) {
-	c.SetUserValue(string(keploy.KCTX), val)
+	c.SetUserValue(string(internal.KCTX), val)
 
 }
 func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp.RequestHandler {
-	if k == nil || keploy.GetMode() == keploy.MODE_OFF {
+	if k == nil || internal.GetMode() == internal.MODE_OFF {
 		return func(next fasthttp.RequestHandler) fasthttp.RequestHandler {
 			return next
 		}
@@ -50,18 +50,24 @@ func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp
 
 			id := string(c.Request.Header.Peek("KEPLOY_TEST_ID"))
 			if id != "" {
-				setContextValFast(c, &keploy.Context{
-					Mode:   keploy.MODE_TEST,
+				setContextValFast(c, &internal.Context{
+					Mode:   internal.MODE_TEST,
 					TestID: id,
 					Deps:   k.GetDependencies(id),
 				})
 				resp := captureResp(c, next)
-				k.PutResp(id, resp)
+				response := k.GetResp(id)
+				response.Resp = resp
+				k.PutResp(id, response)
+
+				// Continue further execution after client call in simulate function
+				response.L.Unlock()
+				// k.PutResp(id, keploy.HttpResp{Resp: resp})
 				return
 
 			}
-			setContextValFast(c, &keploy.Context{
-				Mode: keploy.MODE_RECORD,
+			setContextValFast(c, &internal.Context{
+				Mode: internal.MODE_RECORD,
 			})
 			var reqBody []byte
 			var err error
@@ -80,8 +86,8 @@ func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp
 
 			ctx := context.TODO()
 			c.VisitUserValues(func(key []byte, val interface{}) {
-				if string(key) == string(keploy.KCTX) {
-					ctx = context.WithValue(ctx, keploy.KCTX, val)
+				if string(key) == string(internal.KCTX) {
+					ctx = context.WithValue(ctx, internal.KCTX, val)
 					return
 				}
 				ctx = context.WithValue(ctx, string(key), val)

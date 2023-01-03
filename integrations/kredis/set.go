@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
+	internal "github.com/keploy/go-sdk/internal/keploy"
 	"github.com/keploy/go-sdk/keploy"
+
 	"go.keploy.io/server/pkg/models"
 )
 
@@ -20,10 +22,10 @@ type KStatusCmd struct {
 }
 
 func (rc *RedisClient) Set(ctx context.Context, key string, value interface{}, expiration time.Duration) *redis.StatusCmd {
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		return rc.Client.Set(ctx, key, value, expiration)
 	}
-	kctx, err := keploy.GetState(ctx)
+	kctx, err := internal.GetState(ctx)
 	var (
 		resp   = &redis.StatusCmd{}
 		output = &KStatusCmd{}
@@ -41,9 +43,9 @@ func (rc *RedisClient) Set(ctx context.Context, key string, value interface{}, e
 		"expire":    fmt.Sprintf("%v", expiration),
 	}
 	switch mode {
-	case keploy.MODE_TEST:
+	case internal.MODE_TEST:
 		// don't call the actual set method of redis
-	case keploy.MODE_RECORD:
+	case internal.MODE_RECORD:
 		resp = rc.Client.Set(ctx, key, value, expiration)
 		x, er := resp.Result()
 		output.Val = x

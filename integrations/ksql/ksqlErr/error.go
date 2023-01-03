@@ -1,4 +1,4 @@
-package v2
+package ksqlErr
 
 import (
 	"database/sql/driver"
@@ -20,6 +20,8 @@ func ConvertKError(err error) error {
 		return driver.ErrSkip
 	case io.EOF.Error():
 		return io.EOF
+	case "nil":
+		return nil
 	default:
 		return err
 	}

@@ -15,6 +15,9 @@ import (
 	"reflect"
 	"strconv"
 
+	// "github.com/keploy/go-sdk/internal"
+	internal "github.com/keploy/go-sdk/internal/keploy"
+
 	"github.com/keploy/go-sdk/keploy"
 	"github.com/keploy/go-sdk/mock"
 	proto "go.keploy.io/server/grpc/regression"
@@ -54,7 +57,7 @@ func (rc *ReadCloser) MarshalBinary() ([]byte, error) {
 type Interceptor struct {
 	core http.RoundTripper
 	log  *zap.Logger
-	kctx *keploy.Context
+	kctx *internal.Context
 }
 
 // NewInterceptor constructs and returns the pointer to Interceptor. Interceptor is used
@@ -81,7 +84,7 @@ func NewInterceptor(core http.RoundTripper) *Interceptor {
 // kctx field.
 func (i *Interceptor) SetContext(requestContext context.Context) {
 	// ctx := context.TODO()
-	if kctx, err := keploy.GetState(requestContext); err == nil {
+	if kctx, err := internal.GetState(requestContext); err == nil {
 		i.kctx = kctx
 		i.log.Debug("http client keploy interceptor's context has been set to : ", zap.Any("keploy.Context ", i.kctx))
 	}
@@ -90,14 +93,14 @@ func (i *Interceptor) SetContext(requestContext context.Context) {
 // setRequestContext returns the context with keploy context as value. It is called only
 // when kctx field of Interceptor is not null.
 func (i *Interceptor) setRequestContext(ctx context.Context) context.Context {
-	rctx := context.WithValue(ctx, keploy.KCTX, i.kctx)
+	rctx := context.WithValue(ctx, internal.KCTX, i.kctx)
 	return rctx
 }
 
 // RoundTrip is the custom method which is called before making http client calls to
 // capture or replay the outputs of external http service.
 func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
-	if keploy.GetModeFromContext(r.Context()) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(r.Context()) == internal.MODE_OFF {
 		return i.core.RoundTrip(r)
 	}
 
@@ -115,7 +118,7 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 	r.Body = ioutil.NopCloser(bytes.NewBuffer(reqBody)) // Reset
 
 	// adds the keploy context stored in Interceptor's ctx field into the http client request context.
-	if _, err := keploy.GetState(r.Context()); err != nil && i.kctx != nil {
+	if _, err := internal.GetState(r.Context()); err != nil && i.kctx != nil {
 		ctx := i.setRequestContext(r.Context())
 		r = r.WithContext(ctx)
 	}
@@ -126,7 +129,7 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 		resp      *http.Response = &http.Response{}
 		isRespNil bool           = false
 	)
-	kctx, er := keploy.GetState(r.Context())
+	kctx, er := internal.GetState(r.Context())
 	if er != nil {
 		return nil, er
 	}
@@ -143,21 +146,18 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 		"ProtoMinor": strconv.Itoa(r.ProtoMinor),
 	}
 	switch mode {
-	case keploy.MODE_TEST:
+	case internal.MODE_TEST:
 		//don't call i.core.RoundTrip method when not in file export
 		if len(kctx.Mock) > 0 && kctx.Mock[0].Kind == string(models.HTTP) {
 			mocks := kctx.Mock
 			if len(mocks) > 0 && len(mocks[0].Spec.Objects) > 0 {
 				bin := string(mocks[0].Spec.Objects[0].Data)
-				if er != nil {
-					i.log.Error("failed to decode the base64 encode error", zap.Error(er))
+				if bin != "" {
+					err = errors.New(string(bin))
 				}
 				resp.Body = ioutil.NopCloser(bytes.NewBuffer([]byte(mocks[0].Spec.Res.Body)))
 				resp.Header = mock.GetHttpHeader(mocks[0].Spec.Res.Header)
 				resp.StatusCode = int(mocks[0].Spec.Res.StatusCode)
-				if bin != "" {
-					err = errors.New(string(bin))
-				}
 				if kctx.FileExport {
 					fmt.Println("🤡 Returned the mocked outputs for Http dependency call with meta: ", meta)
 				}
@@ -165,7 +165,7 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 			}
 			return resp, err
 		}
-	case keploy.MODE_RECORD:
+	case internal.MODE_RECORD:
 		resp, err = i.core.RoundTrip(r)
 		var (
 			respBody   []byte
@@ -218,8 +218,8 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 				},
 			},
 		}
-		if keploy.GetGrpcClient() != nil && kctx.FileExport && keploy.MockId.Unique(kctx.TestID) {
-			recorded := mock.PostHttpMock(context.Background(), keploy.MockPath, httpMock)
+		if internal.GetGrpcClient() != nil && kctx.FileExport && internal.MockId.Unique(kctx.TestID) {
+			recorded := internal.PutMock(context.Background(), internal.MockPath, httpMock)
 			if recorded {
 				fmt.Println("🟠 Captured the mocked outputs for Http dependency call with meta: ", meta)
 			}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	internal "github.com/keploy/go-sdk/internal/keploy"
 	"github.com/keploy/go-sdk/keploy"
 	"go.keploy.io/server/pkg/models"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -27,22 +28,22 @@ type Cursor struct {
 //
 // See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Cursor.Err for information about Cursor.Err.
 func (cr *Cursor) Err() error {
-	if keploy.GetModeFromContext(cr.ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(cr.ctx) == internal.MODE_OFF {
 		err := cr.Cursor.Err()
 		return err
 	}
 	var err error
 	var kerr = &keploy.KError{}
-	kctx, er := keploy.GetState(cr.ctx)
+	kctx, er := internal.GetState(cr.ctx)
 	if er != nil {
 		return er
 	}
 	mode := kctx.Mode
 	switch mode {
-	case keploy.MODE_TEST:
+	case internal.MODE_TEST:
 		//dont run mongo query as it is stored in context
 		err = nil
-	case keploy.MODE_RECORD:
+	case internal.MODE_RECORD:
 		err = cr.Cursor.Err()
 	default:
 		return errors.New("integrations: Not in a valid sdk mode")
@@ -83,22 +84,22 @@ func (cr *Cursor) Err() error {
 //
 // See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Cursor.Close for information about Cursor.Close.
 func (cr *Cursor) Close(ctx context.Context) error {
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		err := cr.Cursor.Close(ctx)
 		return err
 	}
 	var err error
 	var kerr = &keploy.KError{}
-	kctx, er := keploy.GetState(cr.ctx)
+	kctx, er := internal.GetState(cr.ctx)
 	if er != nil {
 		return er
 	}
 	mode := kctx.Mode
 	switch mode {
-	case keploy.MODE_TEST:
+	case internal.MODE_TEST:
 		//dont run mongo query as it is stored in context
 		err = nil
-	case keploy.MODE_RECORD:
+	case internal.MODE_RECORD:
 		err = cr.Cursor.Close(ctx)
 	default:
 		return errors.New("integrations: Not in a valid sdk mode")
@@ -139,21 +140,21 @@ func (cr *Cursor) Close(ctx context.Context) error {
 //
 // See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Cursor.TryNext for information about Cursor.TryNext.
 func (cr *Cursor) TryNext(ctx context.Context) bool {
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		return cr.Cursor.TryNext(ctx)
 	}
-	kctx, er := keploy.GetState(cr.ctx)
+	kctx, er := internal.GetState(cr.ctx)
 	if er != nil {
 		return false
 	}
 	var output *bool
 	mode := kctx.Mode
 	switch mode {
-	case keploy.MODE_TEST:
+	case internal.MODE_TEST:
 		//dont run mongo query as it is stored in context
 		n := false
 		output = &n
-	case keploy.MODE_RECORD:
+	case internal.MODE_RECORD:
 		n := cr.Cursor.TryNext(ctx)
 		output = &n
 	default:
@@ -189,22 +190,22 @@ func (cr *Cursor) TryNext(ctx context.Context) bool {
 //
 // See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Cursor.All for information about Cursor.All.
 func (cr *Cursor) All(ctx context.Context, results interface{}) error {
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		err := cr.Cursor.All(ctx, results)
 		return err
 	}
 	var err error
 	var kerr = &keploy.KError{}
-	kctx, er := keploy.GetState(cr.ctx)
+	kctx, er := internal.GetState(cr.ctx)
 	if er != nil {
 		return er
 	}
 	mode := kctx.Mode
 	switch mode {
-	case keploy.MODE_TEST:
+	case internal.MODE_TEST:
 		//dont run mongo query as it is stored in context
 		err = nil
-	case keploy.MODE_RECORD:
+	case internal.MODE_RECORD:
 		err = cr.Cursor.All(ctx, results)
 	default:
 		return errors.New("integrations: Not in a valid sdk mode")
@@ -245,21 +246,21 @@ func (cr *Cursor) All(ctx context.Context, results interface{}) error {
 //
 // See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Cursor.Next for information about Cursor.Next.
 func (cr *Cursor) Next(ctx context.Context) bool {
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		return cr.Cursor.Next(ctx)
 	}
-	kctx, er := keploy.GetState(cr.ctx)
+	kctx, er := internal.GetState(cr.ctx)
 	if er != nil {
 		return false
 	}
 	var output *bool
 	mode := kctx.Mode
 	switch mode {
-	case keploy.MODE_TEST:
+	case internal.MODE_TEST:
 		//dont run mongo query as it is stored in context
 		n := false
 		output = &n
-	case keploy.MODE_RECORD:
+	case internal.MODE_RECORD:
 		n := cr.Cursor.Next(ctx)
 		output = &n
 	default:
@@ -295,22 +296,22 @@ func (cr *Cursor) Next(ctx context.Context) bool {
 //
 // See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Cursor.Decode for information about Cursor.Decode.
 func (cr *Cursor) Decode(v interface{}) error {
-	if keploy.GetModeFromContext(cr.ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(cr.ctx) == internal.MODE_OFF {
 		err := cr.Cursor.Decode(v)
 		return err
 	}
 	var err error
 	var kerr = &keploy.KError{}
-	kctx, er := keploy.GetState(cr.ctx)
+	kctx, er := internal.GetState(cr.ctx)
 	if er != nil {
 		return er
 	}
 	mode := kctx.Mode
 	switch mode {
-	case keploy.MODE_TEST:
+	case internal.MODE_TEST:
 		//dont run mongo query as it is stored in context
 		err = nil
-	case keploy.MODE_RECORD:
+	case internal.MODE_RECORD:
 		err = cr.Cursor.Decode(v)
 	default:
 		return errors.New("integrations: Not in a valid sdk mode")
