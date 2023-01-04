@@ -2,8 +2,6 @@ module github.com/keploy/go-sdk
 
 go 1.17
 
-// replace go.keploy.io/server => ../keploy
-
 require (
 	github.com/aws/aws-sdk-go v1.42.23
 	github.com/bnkamalesh/webgo/v4 v4.1.11
@@ -24,7 +22,7 @@ require (
 	github.com/gorilla/mux v1.8.0
 	github.com/lestrrat-go/jwx v1.2.25
 	github.com/valyala/fasthttp v1.40.0
-	go.keploy.io/server v0.7.8
+	go.keploy.io/server v0.7.10
 )
 
 require (

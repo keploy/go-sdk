@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/gob"
-	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -15,16 +14,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keploy/go-sdk/internal/keploy"
 	proto "go.keploy.io/server/grpc/regression"
 	"go.keploy.io/server/http/regression"
 	"go.keploy.io/server/pkg/models"
 
 	"go.uber.org/zap"
 )
-
-type KctxType string
-
-const KCTX KctxType = "KeployContext"
 
 // Decode returns the decoded data by using gob decoder on bin parameter.
 func Decode(bin []byte, obj interface{}) (interface{}, error) {
@@ -59,27 +55,18 @@ func Encode(obj interface{}, arr [][]byte, pos int) error {
 	return nil
 }
 
-// GetState returns value of "KeployContext" key-value pair which is stored in the request context.
-func GetState(ctx context.Context) (*Context, error) {
-	kctx := ctx.Value(KCTX)
-	if kctx == nil {
-		return nil, errors.New("failed to get Keploy context")
-	}
-	return kctx.(*Context), nil
-}
-
 // ProcessDep is a generic method to encode and decode the outputs of external dependecies.
 // If request is on keploy.MODE_TEST mode, it returns (true, decoded outputs of stored binaries in keploy context).
 // Else in keploy.MODE_RECORD mode, it encodes the outputs of external dependencies and stores in keploy context. Returns (false, nil).
 func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, outputs ...interface{}) (bool, []interface{}) {
-	kctx, err := GetState(ctx)
+	kctx, err := keploy.GetState(ctx)
 	if err != nil {
 		log.Error("dependency mocking failed: failed to get Keploy state from context", zap.Error(err))
 		return false, nil
 	}
 	// capture the object
 	switch kctx.Mode {
-	case MODE_TEST:
+	case keploy.MODE_TEST:
 		if len(kctx.Mock) == 0 {
 			if kctx.Deps == nil || len(kctx.Deps) == 0 {
 				log.Error("dependency mocking failed: incorrect number of dependencies in keploy context", zap.String("test id", kctx.TestID))
@@ -119,7 +106,11 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 			}
 			r, err := Decode(bin, t)
 			if err != nil {
-				log.Error("dependency mocking failed: failed to decode object", zap.String("type", reflect.TypeOf(r).String()), zap.String("test id", kctx.TestID))
+				typ := "nil"
+				if r != nil {
+					typ = reflect.TypeOf(r).String()
+				}
+				log.Error("dependency mocking failed: failed to decode object", zap.String("type", typ), zap.String("test id", kctx.TestID))
 				return false, nil
 			}
 			res = append(res, r)
@@ -131,7 +122,7 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 		kctx.Mock = kctx.Mock[1:]
 		return true, res
 
-	case MODE_RECORD:
+	case keploy.MODE_RECORD:
 		res := make([][]byte, len(outputs))
 		for i, t := range outputs {
 			err = Encode(t, res, i)
@@ -147,37 +138,23 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 				Data: j,
 			})
 		}
-
-		// if !kctx.FileExport {
-		// 	kctx.Deps = append(kctx.Deps, models.Dependency{
-		// 		Name: meta["name"],
-		// 		Type: models.DependencyType(meta["type"]),
-		// 		Data: res,
-		// 		Meta: meta,
-		// 	})
-		// 	return false, nil
-		// }
-		if grpcClient != nil && kctx.FileExport && MockId.Unique(kctx.TestID) {
-			_, err := grpcClient.PutMock(ctx, &proto.PutMockReq{
-				Mock: &proto.Mock{
-					Version: string(models.V1Beta1),
-					Kind:    string(models.GENERIC),
-					Name:    kctx.TestID,
-					Spec: &proto.Mock_SpecSchema{
-						Metadata: meta,
-						Objects:  protoObjs,
-					},
+		if keploy.GetGrpcClient() != nil && kctx.FileExport && keploy.MockId.Unique(kctx.TestID) {
+			recorded := keploy.PutMock(ctx, keploy.MockPath, &proto.Mock{
+				Version: string(models.V1Beta1),
+				Kind:    string(models.GENERIC),
+				Name:    kctx.TestID,
+				Spec: &proto.Mock_SpecSchema{
+					Metadata: meta,
+					Objects:  protoObjs,
 				},
-				Path: MockPath,
 			})
-			if err != nil {
-				log.Error("failed to call the grpc PutMock method of keploy", zap.Error(err))
-				return false, nil
+			if recorded {
+				fmt.Println("🟠 Captured the mocked outputs for Generic dependency call with meta: ", meta)
 			}
-			fmt.Println("🟠 Captured the mocked outputs for Generic dependency call with meta: ", meta)
 			return false, nil
 
 		}
+
 		kctx.Deps = append(kctx.Deps, models.Dependency{
 			Name: meta["name"],
 			Type: models.DependencyType(meta["type"]),
@@ -199,12 +176,12 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 
 func CaptureTestcase(k *Keploy, r *http.Request, reqBody []byte, resp models.HttpResp, params map[string]string) {
 
-	d := r.Context().Value(KCTX)
+	d := r.Context().Value(keploy.KCTX)
 	if d == nil {
 		k.Log.Error("failed to get keploy context")
 		return
 	}
-	deps := d.(*Context)
+	deps := d.(*keploy.Context)
 
 	// u := &url.URL{
 	// 	Scheme: r.URL.Scheme,
@@ -305,17 +282,18 @@ func ProcessRequest(rw http.ResponseWriter, r *http.Request, k *Keploy) (*BodyDu
 	if id != "" {
 		// id is only present during simulation
 		// run it similar to how testcases would run
-		ctx := context.WithValue(r.Context(), KCTX, &Context{
-			Mode:   MODE_TEST,
+		ctx := context.WithValue(r.Context(), keploy.KCTX, &keploy.Context{
+			Mode:   keploy.MODE_TEST,
 			TestID: id,
 			Deps:   k.GetDependencies(id),
 			Mock:   k.GetMocks(id),
 		})
+
 		r = r.WithContext(ctx)
 		return writer, r, resBody, nil, nil
 	}
-	ctx := context.WithValue(r.Context(), KCTX, &Context{
-		Mode: MODE_RECORD,
+	ctx := context.WithValue(r.Context(), keploy.KCTX, &keploy.Context{
+		Mode: keploy.MODE_RECORD,
 	})
 	r = r.WithContext(ctx)
 

@@ -7,7 +7,7 @@ import (
 	"log"
 	"testing"
 
-	"github.com/keploy/go-sdk/keploy"
+	internal "github.com/keploy/go-sdk/internal/keploy"
 	"go.keploy.io/server/pkg/models"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -49,8 +49,8 @@ func TestFindOne(t *testing.T) {
 	}{
 		// test mode document present in client DB
 		{
-			ctx: context.WithValue(context.TODO(), keploy.KCTX, &keploy.Context{
-				Mode:   keploy.MODE_TEST,
+			ctx: context.WithValue(context.TODO(), internal.KCTX, &internal.Context{
+				Mode:   internal.MODE_TEST,
 				TestID: "8f7f6705-87eb-4c56-a096-85ba47071080",
 				Deps: []models.Dependency{
 					{
@@ -78,8 +78,8 @@ func TestFindOne(t *testing.T) {
 		},
 		// test mode document not present in client DB
 		{
-			ctx: context.WithValue(context.TODO(), keploy.KCTX, &keploy.Context{
-				Mode:   keploy.MODE_TEST,
+			ctx: context.WithValue(context.TODO(), internal.KCTX, &internal.Context{
+				Mode:   internal.MODE_TEST,
 				TestID: "8f7f6705-87eb-4c56-a096-85ba47071080",
 				Deps: []models.Dependency{
 					{
@@ -140,7 +140,7 @@ func TestFindOne(t *testing.T) {
 		//},
 		// not in a valid SDK mode
 		{
-			ctx: context.WithValue(context.TODO(), keploy.KCTX, &keploy.Context{
+			ctx: context.WithValue(context.TODO(), internal.KCTX, &internal.Context{
 				Mode:   "XYZ",
 				TestID: "",
 				Deps:   []models.Dependency{},
@@ -187,8 +187,8 @@ func TestInsertOne(t *testing.T) {
 	}{
 		//test mode insertOne successful
 		{
-			ctx: context.WithValue(context.TODO(), keploy.KCTX, &keploy.Context{
-				Mode:   keploy.MODE_TEST,
+			ctx: context.WithValue(context.TODO(), internal.KCTX, &internal.Context{
+				Mode:   internal.MODE_TEST,
 				TestID: "8f7f6705-87eb-4c56-a096-85ba47071080",
 				Deps: []models.Dependency{
 					{
@@ -233,7 +233,7 @@ func TestInsertOne(t *testing.T) {
 		//},
 		//not in a valid mode
 		{
-			ctx: context.WithValue(context.TODO(), keploy.KCTX, &keploy.Context{
+			ctx: context.WithValue(context.TODO(), internal.KCTX, &internal.Context{
 				Mode:   "XYZ",
 				TestID: "",
 				Deps:   []models.Dependency{},
@@ -265,11 +265,11 @@ func TestInsertOne(t *testing.T) {
 			log.Fatal(" Testcase ", index, " failed in error \n ", ti.ctx, ti.document, "\n   ", ti.err, "\n   ", eRr)
 		}
 
-		d := ti.ctx.Value(keploy.KCTX)
-		deps, ok := d.(*keploy.Context)
+		d := ti.ctx.Value(internal.KCTX)
+		deps, ok := d.(*internal.Context)
 
 		//compare returned output and expected output only in test mode
-		if !ok || deps.Mode != keploy.MODE_TEST || (deps.Mode == keploy.MODE_TEST &&
+		if !ok || deps.Mode != internal.MODE_TEST || (deps.Mode == internal.MODE_TEST &&
 			res.InsertedID.(primitive.ObjectID).Hex() == ti.result.InsertedID.(primitive.ObjectID).Hex()) {
 
 			fmt.Printf(" Testcase %v Passed\n", index)

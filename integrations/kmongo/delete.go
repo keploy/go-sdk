@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	internal "github.com/keploy/go-sdk/internal/keploy"
 	"github.com/keploy/go-sdk/keploy"
 	"go.keploy.io/server/pkg/models"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -16,7 +17,7 @@ import (
 // information about Collection.DeleteOne.
 func (c *Collection) DeleteOne(ctx context.Context, filter interface{},
 	opts ...*options.DeleteOptions) (*mongo.DeleteResult, error) {
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		output, err := c.Collection.DeleteOne(ctx, filter, opts...)
 		return output, err
 	}
@@ -75,7 +76,7 @@ func (c *Collection) DeleteOne(ctx context.Context, filter interface{},
 // See https://pkg.go.dev/go.mongodb.org/mongo-driver@v1.8.0/mongo#Collection.DeleteMany for information about Collection.DeleteMany.
 func (c *Collection) DeleteMany(ctx context.Context, filter interface{},
 	opts ...*options.DeleteOptions) (*mongo.DeleteResult, error) {
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		output, err := c.Collection.DeleteMany(ctx, filter, opts...)
 		return output, err
 	}
