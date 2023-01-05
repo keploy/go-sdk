@@ -24,7 +24,7 @@ import (
 //
 // r is the gin v1 router instance
 func GinV1(k *keploy.Keploy, r *gin.Engine) {
-	if internal.GetMode() == internal.MODE_OFF {
+	if internal.GetMode() == internal.MODE_OFF || internal.GetMode() == internal.MODE_TEST {
 		return
 	}
 	r.Use(mw(k))
