@@ -24,7 +24,7 @@ func CaptureSqlMocks(kctx *internal.Context, log *zap.Logger, meta map[string]st
 		obj = []*proto.Mock_Object{}
 	)
 	sqlMock := &proto.Mock{
-		Version: string(models.V1Beta1),
+		Version: string(models.V1Beta2),
 		Name:    kctx.TestID,
 		Kind:    string(models.SQL),
 		Spec: &proto.Mock_SpecSchema{
