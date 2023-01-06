@@ -22,7 +22,7 @@ type Router interface {
 }
 
 func Middleware(k *Keploy, router Router) error {
-	if k == nil || keploy.GetMode() == keploy.MODE_OFF {
+	if k == nil || keploy.GetMode() == keploy.MODE_OFF ||(keploy.GetMode() == keploy.MODE_TEST && router.GetRequest().Header.Get("KEPLOY_TEST_ID") == "") {
 		return router.Next()
 	}
 	writer, r, resBody, reqBody, err := ProcessRequest(router.GetResponseWriter(), router.GetRequest(), k)
