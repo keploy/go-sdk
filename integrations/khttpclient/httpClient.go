@@ -108,14 +108,16 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 	var reqBody []byte
 	if r.Body != nil { // Read
 		var err error
-		reqBody, err = ioutil.ReadAll(r.Body)
+		reqBody, err = io.ReadAll(r.Body)
 		if err != nil {
 			// TODO right way to log errors
 			i.log.Error("Unable to read request body", zap.Error(err))
 			return nil, err
 		}
 	}
-	r.Body = ioutil.NopCloser(bytes.NewBuffer(reqBody)) // Reset
+	if r.Body != http.NoBody {
+		r.Body = io.NopCloser(bytes.NewBuffer(reqBody)) // Reset
+	}
 
 	// adds the keploy context stored in Interceptor's ctx field into the http client request context.
 	if _, err := internal.GetState(r.Context()); err != nil && i.kctx != nil {
