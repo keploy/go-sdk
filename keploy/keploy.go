@@ -7,16 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
-	"strings"
-
-	"github.com/keploy/go-sdk/mock"
-
 	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -24,7 +21,7 @@ import (
 	"github.com/creasty/defaults"
 	"github.com/go-playground/validator/v10"
 	"github.com/keploy/go-sdk/internal/keploy"
-
+	"github.com/keploy/go-sdk/mock"
 	proto "go.keploy.io/server/grpc/regression"
 	"go.keploy.io/server/http/regression"
 	"go.keploy.io/server/pkg/models"
