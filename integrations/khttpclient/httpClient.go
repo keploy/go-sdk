@@ -108,14 +108,16 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 	var reqBody []byte
 	if r.Body != nil { // Read
 		var err error
-		reqBody, err = ioutil.ReadAll(r.Body)
+		reqBody, err = io.ReadAll(r.Body)
 		if err != nil {
 			// TODO right way to log errors
 			i.log.Error("Unable to read request body", zap.Error(err))
 			return nil, err
 		}
 	}
-	r.Body = ioutil.NopCloser(bytes.NewBuffer(reqBody)) // Reset
+	if r.Body != http.NoBody {
+		r.Body = io.NopCloser(bytes.NewBuffer(reqBody)) // Reset
+	}
 
 	// adds the keploy context stored in Interceptor's ctx field into the http client request context.
 	if _, err := internal.GetState(r.Context()); err != nil && i.kctx != nil {
@@ -151,11 +153,17 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 		if len(kctx.Mock) > 0 && kctx.Mock[0].Kind == string(models.HTTP) {
 			mocks := kctx.Mock
 			if len(mocks) > 0 && len(mocks[0].Spec.Objects) > 0 {
-				bin := string(mocks[0].Spec.Objects[0].Data)
-				if bin != "" {
-					err = errors.New(string(bin))
+				errStr := string(mocks[0].Spec.Objects[0].Data)
+				if errStr != "" {
+					err = errors.New(string(errStr))
 				}
-				resp.Body = ioutil.NopCloser(bytes.NewBuffer([]byte(mocks[0].Spec.Res.Body)))
+				bin := []byte{}
+				if mocks[0].Spec.Res.BodyData != nil {
+					bin = mocks[0].Spec.Res.BodyData
+				} else {
+					bin = []byte(mocks[0].Spec.Res.Body)
+				}
+				resp.Body = ioutil.NopCloser(bytes.NewBuffer(bin))
 				resp.Header = mock.GetHttpHeader(mocks[0].Spec.Res.Header)
 				resp.StatusCode = int(mocks[0].Spec.Res.StatusCode)
 				if kctx.FileExport {
@@ -192,7 +200,7 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 			errStr = err.Error()
 		}
 		httpMock := &proto.Mock{
-			Version: string(models.V1Beta1),
+			Version: string(models.V1Beta2),
 			Name:    kctx.TestID,
 			Kind:    string(models.HTTP),
 			Spec: &proto.Mock_SpecSchema{
@@ -209,12 +217,14 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 					ProtoMinor: int64(r.ProtoMinor),
 					URL:        r.URL.String(),
 					Header:     mock.GetProtoMap(r.Header),
-					Body:       string(reqBody),
+					// Body:       string(reqBody),
+					BodyData: reqBody,
 				},
 				Res: &proto.HttpResp{
 					StatusCode: int64(statusCode),
 					Header:     mock.GetProtoMap(respHeader),
-					Body:       string(respBody),
+					// Body:       string(respBody),
+					BodyData: respBody,
 				},
 			},
 		}

@@ -140,7 +140,7 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 		}
 		if keploy.GetGrpcClient() != nil && kctx.FileExport && keploy.MockId.Unique(kctx.TestID) {
 			recorded := keploy.PutMock(ctx, keploy.MockPath, &proto.Mock{
-				Version: string(models.V1Beta1),
+				Version: string(models.V1Beta2),
 				Kind:    string(models.GENERIC),
 				Name:    kctx.TestID,
 				Spec: &proto.Mock_SpecSchema{
@@ -162,7 +162,7 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 			Meta: meta,
 		})
 		kctx.Mock = append(kctx.Mock, &proto.Mock{
-			Version: string(models.V1Beta1),
+			Version: string(models.V1Beta2),
 			Kind:    string(models.GENERIC),
 			Name:    "",
 			Spec: &proto.Mock_SpecSchema{
