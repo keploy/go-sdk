@@ -146,7 +146,7 @@ func New(cfg Config) *Keploy {
 		if err != nil {
 			logger.Error("Failed to get the path of current directory", zap.Error(err))
 		}
-		cfg.App.TestPath = path + "/keploy-tests"
+		cfg.App.TestPath = path + "/e2e/keploy-tests"
 	}
 	if len(cfg.App.MockPath) > 0 && cfg.App.MockPath[0] != '/' {
 		path, err := filepath.Abs(cfg.App.MockPath)
@@ -155,11 +155,11 @@ func New(cfg Config) *Keploy {
 		}
 		cfg.App.MockPath = path
 	} else if len(cfg.App.MockPath) == 0 {
-		// path, err := cfg.App.TestPath+"/mocks"
+		path, err := os.Getwd()
 		if cfg.App.TestPath == "" {
 			logger.Error("Failed to get the path of current directory", zap.Error(err))
 		}
-		cfg.App.MockPath = cfg.App.TestPath + "/mocks"
+		cfg.App.MockPath = path + "/e2e/keploy-mocks"
 	}
 
 	k := &Keploy{
