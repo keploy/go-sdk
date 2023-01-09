@@ -62,6 +62,7 @@ type Interceptor struct {
 
 // NewInterceptor constructs and returns the pointer to Interceptor. Interceptor is used
 // to intercept every http client calls and store their responses into keploy context.
+// The default mode of the internal keploy context of the interceptor returned here is MODE_OFF.
 func NewInterceptor(core http.RoundTripper) *Interceptor {
 	// Initialize a logger
 	logger, _ := zap.NewProduction()
@@ -77,6 +78,9 @@ func NewInterceptor(core http.RoundTripper) *Interceptor {
 	return &Interceptor{
 		core: core,
 		log:  logger,
+		kctx: &internal.Context{
+			Mode: internal.MODE_OFF,
+		},
 	}
 }
 
@@ -100,8 +104,18 @@ func (i *Interceptor) setRequestContext(ctx context.Context) context.Context {
 // RoundTrip is the custom method which is called before making http client calls to
 // capture or replay the outputs of external http service.
 func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
-	if internal.GetModeFromContext(r.Context()) == internal.MODE_OFF {
-		return i.core.RoundTrip(r)
+	// If the request has no context with keploy context, we check the global keploy context
+	// of the interceptor. If the interceptor context is set to MODE_OFF, we transparently
+	// pass the request. If the request has a keploy context, we check the mode of the context
+	// and if it is MODE_OFF, we transparently pass the request.
+	if _, err := internal.GetState(r.Context()); err != nil {
+		if i.kctx != nil && i.kctx.Mode == internal.MODE_OFF {
+			return i.core.RoundTrip(r)
+		}
+	} else {
+		if internal.GetModeFromContext(r.Context()) == internal.MODE_OFF {
+			return i.core.RoundTrip(r)
+		}
 	}
 
 	// Read the request body to store in meta
