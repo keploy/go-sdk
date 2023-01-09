@@ -174,7 +174,7 @@ func New(cfg Config) *Keploy {
 			Mode:      GetMode(),
 			Name:      k.cfg.App.Name,
 			CTX:       context.Background(),
-			Path:      cfg.App.TestPath,
+			Path:      strings.TrimSuffix(cfg.App.MockPath, "/mocks"),
 			OverWrite: true,
 		})
 	}
