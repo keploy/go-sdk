@@ -43,7 +43,7 @@ func (t Tx) Commit() error {
 	switch mode {
 	case internal.MODE_TEST:
 		// don't run
-		o, ok := MockSqlDeps(kctx, meta)
+		o, ok := MockSqlFromYaml(kctx, meta)
 		if ok && len(o.Err) == 1 {
 			return ksqlErr.ConvertKError(errors.New(o.Err[0]))
 		}
@@ -101,7 +101,7 @@ func (t Tx) Rollback() error {
 	switch mode {
 	case internal.MODE_TEST:
 		// don't run
-		o, ok := MockSqlDeps(kctx, meta)
+		o, ok := MockSqlFromYaml(kctx, meta)
 		if ok && len(o.Err) == 1 {
 			return ksqlErr.ConvertKError(errors.New(o.Err[0]))
 		}
@@ -169,7 +169,7 @@ func (c Conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, er
 	switch mode {
 	case internal.MODE_TEST:
 		// don't run
-		o, ok := MockSqlDeps(kctx, meta)
+		o, ok := MockSqlFromYaml(kctx, meta)
 		if ok && len(o.Err) == 1 {
 			return drTx, ksqlErr.ConvertKError(errors.New(o.Err[0]))
 		}

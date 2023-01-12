@@ -1,6 +1,8 @@
 package keploy
 
 import (
+	"sync"
+
 	proto "go.keploy.io/server/grpc/regression"
 	"go.keploy.io/server/pkg/models"
 )
@@ -11,4 +13,5 @@ type Context struct {
 	FileExport bool
 	Deps       []models.Dependency
 	Mock       []*proto.Mock
+	Mu         *sync.Mutex
 }

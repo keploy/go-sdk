@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"sync"
 
 	internal "github.com/keploy/go-sdk/internal/keploy"
 	"github.com/keploy/go-sdk/keploy"
@@ -54,6 +55,7 @@ func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp
 					Mode:   internal.MODE_TEST,
 					TestID: id,
 					Deps:   k.GetDependencies(id),
+					Mu:     &sync.Mutex{},
 				})
 				resp := captureResp(c, next)
 				response := k.GetResp(id)
@@ -68,6 +70,7 @@ func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp
 			}
 			setContextValFast(c, &internal.Context{
 				Mode: internal.MODE_RECORD,
+				Mu:   &sync.Mutex{},
 			})
 			var reqBody []byte
 			var err error

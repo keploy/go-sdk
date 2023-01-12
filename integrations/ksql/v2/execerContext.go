@@ -61,18 +61,18 @@ func (c Conn) ExecContext(ctx context.Context, query string, args []driver.Named
 	switch mode {
 	case internal.MODE_TEST:
 		//don't call Find method
-		o, ok := MockSqlDeps(kctx, meta)
+		o, ok := MockSqlFromYaml(kctx, meta)
 		if ok && len(o.Err) == 1 {
 			meta1 := cloneMap(meta)
 			meta1["operation"] = "ExecContext.LastInsertId"
-			o1, ok1 := MockSqlDeps(kctx, meta1)
+			o1, ok1 := MockSqlFromYaml(kctx, meta1)
 			if ok1 && len(o1.Err) == 1 {
 				driverResult.LastInserted = int64(o1.Count)
 				driverResult.LError = o1.Err[0]
 			}
 			meta2 := cloneMap(meta)
 			meta2["operation"] = "ExecContext.RowsAffected"
-			o2, ok2 := MockSqlDeps(kctx, meta2)
+			o2, ok2 := MockSqlFromYaml(kctx, meta2)
 			if ok2 && len(o2.Err) == 1 {
 				driverResult.RowsAff = int64(o2.Count)
 				driverResult.RError = o2.Err[0]
