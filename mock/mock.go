@@ -18,11 +18,11 @@ var (
 )
 
 type Config struct {
-	Mode      keploy.Mode
-	Name      string
-	CTX       context.Context
-	Path      string
-	OverWrite bool
+	Mode      keploy.Mode //Default: Test
+	Name      string //Default: Auto generated during record mode and required in test mode
+	CTX       context.Context //Default: Empty
+	Path      string //Default: ./mocks
+	OverWrite bool //Default: false
 }
 
 func init() {
