@@ -62,7 +62,7 @@ func CaptureSqlMocks(kctx *internal.Context, log *zap.Logger, meta map[string]st
 	})
 }
 
-func MockSqlDeps(kctx *internal.Context, meta map[string]string) (sqlOutput, bool) {
+func MockSqlFromYaml(kctx *internal.Context, meta map[string]string) (sqlOutput, bool) {
 	var (
 		res = sqlOutput{}
 	)
@@ -78,7 +78,7 @@ func MockSqlDeps(kctx *internal.Context, meta map[string]string) (sqlOutput, boo
 					res.Count = int(mocks[i].Spec.Int)
 					res.Err = mocks[i].Spec.Err
 					if kctx.FileExport {
-						fmt.Println("🤡 Returned the mocked outputs for Http dependency call with meta: ", meta)
+						fmt.Println("🤡 Returned the mocked outputs for SQL dependency call with meta: ", meta)
 					}
 					mocks = append(mocks[:i], mocks[i+1:]...)
 					kctx.Mock = mocks

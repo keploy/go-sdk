@@ -41,18 +41,18 @@ func (c *Stmt) ExecContext(ctx context.Context, args []driver.NamedValue) (drive
 	switch mode {
 	case internal.MODE_TEST:
 		//don't call Find method
-		o, ok := MockSqlDeps(kctx, meta)
+		o, ok := MockSqlFromYaml(kctx, meta)
 		if ok {
 			meta1 := cloneMap(meta)
 			meta1["operation"] = "ExecContext.LastInsertId"
-			o1, ok1 := MockSqlDeps(kctx, meta1)
+			o1, ok1 := MockSqlFromYaml(kctx, meta1)
 			if ok1 && len(o1.Err) == 1 {
 				driverResult.LastInserted = int64(o1.Count)
 				driverResult.LError = o1.Err[0]
 			}
 			meta2 := cloneMap(meta)
 			meta2["operation"] = "ExecContext.RowsAffected"
-			o2, ok2 := MockSqlDeps(kctx, meta2)
+			o2, ok2 := MockSqlFromYaml(kctx, meta2)
 			if ok2 && len(o2.Err) == 1 {
 				driverResult.RowsAff = int64(o2.Count)
 				driverResult.RError = o2.Err[0]
@@ -159,12 +159,12 @@ func (c *Stmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driv
 		driverRows.columns = nil
 		driverRows.rows = nil
 		driverRows.err = nil
-		o, ok := MockSqlDeps(kctx, meta)
+		o, ok := MockSqlFromYaml(kctx, meta)
 		if ok {
 			if len(o.Err) > 0 && o.Err[0] == "nil" {
 				meta1 := cloneMap(meta)
 				meta1["operation"] = "QueryContext.Close"
-				o1, ok1 := MockSqlDeps(kctx, meta1)
+				o1, ok1 := MockSqlFromYaml(kctx, meta1)
 				if ok1 && o1.Table != nil {
 					driverRows.columns = o1.Table.Cols
 					driverRows.rows = o1.Table.Rows

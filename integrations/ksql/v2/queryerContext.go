@@ -477,11 +477,11 @@ func (c Conn) QueryContext(ctx context.Context, query string, args []driver.Name
 		driverRows.columns = nil
 		driverRows.rows = nil
 		driverRows.err = nil
-		o, ok := MockSqlDeps(kctx, meta)
+		o, ok := MockSqlFromYaml(kctx, meta)
 		if ok {
 			meta1 := cloneMap(meta)
 			meta1["operation"] = "QueryContext.Close"
-			o1, ok1 := MockSqlDeps(kctx, meta1)
+			o1, ok1 := MockSqlFromYaml(kctx, meta1)
 			if ok1 {
 				driverRows.columns = o1.Table.Cols
 				driverRows.rows = o1.Table.Rows

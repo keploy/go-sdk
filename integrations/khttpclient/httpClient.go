@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"reflect"
 	"strconv"
+	"sync"
 
 	// "github.com/keploy/go-sdk/internal"
 	internal "github.com/keploy/go-sdk/internal/keploy"
@@ -80,6 +81,7 @@ func NewInterceptor(core http.RoundTripper) *Interceptor {
 		log:  logger,
 		kctx: &internal.Context{
 			Mode: internal.MODE_OFF,
+			Mu:   &sync.Mutex{},
 		},
 	}
 }
@@ -156,36 +158,19 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 		"operation":  r.Method,
 		"URL":        r.URL.String(),
 		"Header":     fmt.Sprint(r.Header),
-		"Body":       string(reqBody),
 		"Proto":      r.Proto,
 		"ProtoMajor": strconv.Itoa(r.ProtoMajor),
 		"ProtoMinor": strconv.Itoa(r.ProtoMinor),
 	}
+	// if r.URL.String() == "https://127.0.0.1:64502/apis/batch/v1beta1?timeout=32s" {
+	// 	fmt.Println("\n\n  https://127.0.0.1:64502/apis/batch/v1beta1?timeout=32s is requested")
+	// }
 	switch mode {
 	case internal.MODE_TEST:
 		//don't call i.core.RoundTrip method when not in file export
-		if len(kctx.Mock) > 0 && kctx.Mock[0].Kind == string(models.HTTP) {
-			mocks := kctx.Mock
-			if len(mocks) > 0 && len(mocks[0].Spec.Objects) > 0 {
-				errStr := string(mocks[0].Spec.Objects[0].Data)
-				if errStr != "" {
-					err = errors.New(string(errStr))
-				}
-				bin := []byte{}
-				if mocks[0].Spec.Res.BodyData != nil {
-					bin = mocks[0].Spec.Res.BodyData
-				} else {
-					bin = []byte(mocks[0].Spec.Res.Body)
-				}
-				resp.Body = ioutil.NopCloser(bytes.NewBuffer(bin))
-				resp.Header = mock.GetHttpHeader(mocks[0].Spec.Res.Header)
-				resp.StatusCode = int(mocks[0].Spec.Res.StatusCode)
-				if kctx.FileExport {
-					fmt.Println("🤡 Returned the mocked outputs for Http dependency call with meta: ", meta)
-				}
-				kctx.Mock = mocks[1:]
-			}
-			return resp, err
+		resp1, err1, ok := MockRespFromYaml(kctx, r, reqBody, meta)
+		if ok {
+			return resp1, err1
 		}
 	case internal.MODE_RECORD:
 		resp, err = i.core.RoundTrip(r)

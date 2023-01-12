@@ -327,19 +327,57 @@ Following operations are supported:<br>
 - GetItemWithContext
 - PutItemWithContext
 ### 3. SQL Driver
-Keploy inplements most of the sql driver's interface for mocking the outputs of sql queries. Its compatible with gORM. 
-**Note**: sql methods which have request context as parameter can be supported because outputs are replayed or captured to context.
-Here is an example -
+Keploy inplements most of the sql driver's interface for mocking the outputs of sql queries which are called from your API handler.  
+
+Since, keploy uses request context for mocking outputs of SQL queries thus, SQL methods having request context as parameter should be called from API handler.
+
+#### v1
+This version records the outputs and store them as binary in exported yaml files
+#### v2
+This version records and stores the outputs as readable/editable format in exported yaml file.
+Sample: 
+```yaml
+version: api.keploy.io/v1beta1
+kind: SQL
+name: Sample-App # App_Id from keploy config or mock name from mock.Config
+spec:
+    metadata:
+        name: SQL
+        operation: QueryContext.Close
+        type: SQL_DB
+    type: table
+    table:
+        cols:
+            - name: id
+              type: int64
+              precision: 0
+              scale: 0
+            - name: uuid
+              type: '[]uint8'
+              precision: 0
+              scale: 0
+            - name: name
+              type: string
+              precision: 0
+              scale: 0
+        rows:
+            - "[`3` | `[50 101 101]` | `qwertt2` | ]"
+    int: 0
+    error:
+        - nil
+        - nil
+```
+
+Here is an example for postgres driver and binary encoded outputs -
 ```go
     import (
-        "github.com/keploy/go-sdk/integrations/ksql"
+        "github.com/keploy/go-sdk/integrations/ksql/v1" // the outputs of sql queries are stored as binary encoded in exported yaml files
         "github.com/lib/pq"
     )
     func main(){
         // Register keploy sql driver to database/sql package.
         driver := ksql.Driver{Driver: pq.Driver{}}
-
-	sql.Register("keploy", &driver)
+		sql.Register("keploy", &driver)
         
         pSQL_URI := fmt.Sprintf("host=%s user=%s dbname=%s sslmode=disable password=%s port=%s", "localhost", "postgres", "Book_Keeper", "8789", "5432")
         // keploy driver will internally open the connection using dataSourceName string parameter
@@ -367,12 +405,12 @@ Here is an example -
         }))
     }
 ```
-**Note**: To integerate with gORM set DisableAutomaticPing of gorm.Config to true. Also pass request context to methods as params. 
+**Note**: Its compatible with gORM. To integerate with gORM set DisableAutomaticPing of gorm.Config to true. Also pass request context to methods as params. 
 Example for gORM with GCP-Postgres driver:
 ```go
     import (
-	gcppostgres "github.com/GoogleCloudPlatform/cloudsql-proxy/proxy/dialers/postgres"
-        "github.com/keploy/go-sdk/integrations/ksql"
+		gcppostgres "github.com/GoogleCloudPlatform/cloudsql-proxy/proxy/dialers/postgres"
+        "github.com/keploy/go-sdk/integrations/ksql/v1" // the outputs of sql queries are stored as binary encoded in exported yaml files
         "gorm.io/driver/postgres"
 	    "gorm.io/gorm"
     )

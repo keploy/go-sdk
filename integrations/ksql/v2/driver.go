@@ -113,7 +113,7 @@ func (c Conn) Ping(ctx context.Context) error {
 	switch mode {
 	case internal.MODE_TEST:
 		// don't run
-		o, ok := MockSqlDeps(kctx, meta)
+		o, ok := MockSqlFromYaml(kctx, meta)
 		if ok {
 			return ksqlErr.ConvertKError(errors.New(o.Err[0]))
 		}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/keploy/go-sdk/internal/keploy"
 	proto "go.keploy.io/server/grpc/regression"
@@ -88,6 +89,7 @@ func NewContext(conf Config) context.Context {
 		Mock:       mocks,
 		Mode:       mode,
 		FileExport: true,
+		Mu:         &sync.Mutex{},
 	}
 	ctx := conf.CTX
 	if ctx == nil {

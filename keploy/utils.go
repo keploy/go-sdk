@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/keploy/go-sdk/internal/keploy"
@@ -287,6 +288,7 @@ func ProcessRequest(rw http.ResponseWriter, r *http.Request, k *Keploy) (*BodyDu
 			TestID: id,
 			Deps:   k.GetDependencies(id),
 			Mock:   k.GetMocks(id),
+			Mu:     &sync.Mutex{},
 		})
 
 		r = r.WithContext(ctx)
@@ -294,6 +296,7 @@ func ProcessRequest(rw http.ResponseWriter, r *http.Request, k *Keploy) (*BodyDu
 	}
 	ctx := context.WithValue(r.Context(), keploy.KCTX, &keploy.Context{
 		Mode: keploy.MODE_RECORD,
+		Mu:   &sync.Mutex{},
 	})
 	r = r.WithContext(ctx)
 
