@@ -99,6 +99,7 @@ type AppConfig struct {
 type Filter struct {
 	AcceptUrlRegex string
 	HeaderRegex    []string
+	RejectFields   []string
 	RejectUrlRegex []string
 }
 
@@ -257,6 +258,8 @@ func (k *Keploy) PutResp(id string, resp HttpResp) {
 // Capture will capture request, response and output of external dependencies by making Call to keploy server.
 func (k *Keploy) Capture(req regression.TestCaseReq) {
 	// req.Path, _ = os.Getwd()
+
+	req.Filter = k.cfg.App.Filter
 	go k.put(req)
 }
 
