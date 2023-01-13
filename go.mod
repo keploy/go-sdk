@@ -19,6 +19,7 @@ require (
 	github.com/benbjohnson/clock v1.1.0
 	github.com/go-chi/chi v1.5.4
 	github.com/go-redis/redis/v8 v8.11.5
+	github.com/go-test/deep v1.0.8
 	github.com/gorilla/mux v1.8.0
 	github.com/lestrrat-go/jwx v1.2.25
 	github.com/valyala/fasthttp v1.40.0

@@ -157,7 +157,7 @@ func (s *Stmt) NumInput() int {
 	switch mode {
 	case internal.MODE_TEST:
 		// don't run
-		o, ok := MockSqlDeps(kctx, meta)
+		o, ok := MockSqlFromYaml(kctx, meta)
 		if ok {
 			return o.Count
 		}
@@ -202,7 +202,7 @@ func (s *Stmt) Close() error {
 	switch mode {
 	case internal.MODE_TEST:
 		// don't run
-		o, ok := MockSqlDeps(kctx, meta)
+		o, ok := MockSqlFromYaml(kctx, meta)
 		if ok && len(o.Err) == 1 {
 			return ksqlErr.ConvertKError(errors.New(o.Err[0]))
 		}
@@ -273,7 +273,7 @@ func (c Conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, er
 	switch mode {
 	case internal.MODE_TEST:
 		// mocks of SQL kind
-		o, ok := MockSqlDeps(kctx, meta)
+		o, ok := MockSqlFromYaml(kctx, meta)
 		if ok && len(o.Err) == 1 {
 			return drStmt, ksqlErr.ConvertKError(errors.New(o.Err[0]))
 		}

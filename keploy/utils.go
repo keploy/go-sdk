@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/keploy/go-sdk/internal/keploy"
@@ -69,11 +70,11 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 	case keploy.MODE_TEST:
 		if len(kctx.Mock) == 0 {
 			if kctx.Deps == nil || len(kctx.Deps) == 0 {
-				log.Error("dependency mocking failed: incorrect number of dependencies in keploy context", zap.String("test id", kctx.TestID))
+				log.Error("dependency mocking failed: New unrecorded dependency call. Please record again and delete current tcs with", zap.String("test id", kctx.TestID))
 				return false, nil
 			}
 			if len(kctx.Deps[0].Data) != len(outputs) {
-				log.Error("dependency mocking failed: incorrect number of dependencies in keploy context", zap.String("test id", kctx.TestID))
+				log.Error("dependency mocking failed: Async or Unrecorded dependency call. Please record again and delete current tcs with", zap.String("test id", kctx.TestID))
 				return false, nil
 			}
 			var res []interface{}
@@ -90,11 +91,11 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 		}
 
 		if kctx.Mock == nil || len(kctx.Mock) == 0 {
-			log.Error("mocking failed: incorrect number of mocks in keploy context", zap.String("test id", kctx.TestID))
+			log.Error("mocking failed: New unrecorded dependency call. Please record again and delete current tcs with", zap.String("test id", kctx.TestID))
 			return false, nil
 		}
 		if len(kctx.Mock[0].Spec.Objects) != len(outputs) {
-			log.Error("mocking failed: incorrect number of mocks in keploy context", zap.String("test id", kctx.TestID))
+			log.Error("mocking failed: Async or Unrecorded dependency call. Please record again and delete current tcs with", zap.String("test id", kctx.TestID))
 			return false, nil
 		}
 		var res []interface{}
@@ -287,6 +288,7 @@ func ProcessRequest(rw http.ResponseWriter, r *http.Request, k *Keploy) (*BodyDu
 			TestID: id,
 			Deps:   k.GetDependencies(id),
 			Mock:   k.GetMocks(id),
+			Mu:     &sync.Mutex{},
 		})
 
 		r = r.WithContext(ctx)
@@ -294,6 +296,7 @@ func ProcessRequest(rw http.ResponseWriter, r *http.Request, k *Keploy) (*BodyDu
 	}
 	ctx := context.WithValue(r.Context(), keploy.KCTX, &keploy.Context{
 		Mode: keploy.MODE_RECORD,
+		Mu:   &sync.Mutex{},
 	})
 	r = r.WithContext(ctx)
 

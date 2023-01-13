@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	internal "github.com/keploy/go-sdk/internal/keploy"
@@ -70,6 +71,7 @@ func mw(k *keploy.Keploy) gin.HandlerFunc {
 				TestID: id,
 				Deps:   k.GetDependencies(id),
 				Mock:   k.GetMocks(id),
+				Mu:     &sync.Mutex{},
 			})
 			resp := captureRespGin(c)
 			response := k.GetResp(id)
@@ -82,7 +84,7 @@ func mw(k *keploy.Keploy) gin.HandlerFunc {
 			return
 		}
 
-		setContextValGin(c, &internal.Context{Mode: internal.MODE_RECORD})
+		setContextValGin(c, &internal.Context{Mode: internal.MODE_RECORD, Mu: &sync.Mutex{}})
 
 		// Request
 		var reqBody []byte
