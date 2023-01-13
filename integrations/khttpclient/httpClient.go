@@ -168,7 +168,7 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 	switch mode {
 	case internal.MODE_TEST:
 		//don't call i.core.RoundTrip method when not in file export
-		resp1, err1, ok := MockRespFromYaml(kctx, r, reqBody, meta)
+		resp1, err1, ok := MockRespFromYaml(kctx, i.log, r, reqBody, meta)
 		if ok {
 			return resp1, err1
 		}
