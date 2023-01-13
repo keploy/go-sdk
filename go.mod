@@ -22,7 +22,7 @@ require (
 	github.com/gorilla/mux v1.8.0
 	github.com/lestrrat-go/jwx v1.2.25
 	github.com/valyala/fasthttp v1.40.0
-	go.keploy.io/server v0.7.12
+	go.keploy.io/server v0.7.16
 )
 
 require (
