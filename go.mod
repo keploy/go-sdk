@@ -1,5 +1,7 @@
 module github.com/keploy/go-sdk
 
+replace go.keploy.io/server => ../keploy/
+
 go 1.17
 
 require (
@@ -16,6 +18,7 @@ require (
 )
 
 require (
+	github.com/araddon/dateparse v0.0.0-20210429162001-6b43995a97de
 	github.com/benbjohnson/clock v1.1.0
 	github.com/go-chi/chi v1.5.4
 	github.com/go-redis/redis/v8 v8.11.5
@@ -59,7 +62,6 @@ require (
 require (
 	github.com/99designs/gqlgen v0.15.1 // indirect
 	github.com/agnivade/levenshtein v1.1.1 // indirect
-	github.com/araddon/dateparse v0.0.0-20210429162001-6b43995a97de // indirect
 	github.com/gin-contrib/sse v0.1.0 // indirect
 	github.com/go-chi/render v1.0.1 // indirect
 	github.com/go-playground/locales v0.14.0 // indirect
