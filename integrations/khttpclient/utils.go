@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/araddon/dateparse"
@@ -14,6 +15,7 @@ import (
 	"github.com/keploy/go-sdk/keploy"
 	"github.com/keploy/go-sdk/mock"
 	"go.keploy.io/server/pkg/models"
+	"go.uber.org/zap"
 )
 
 func toGobType(err error, resp *http.Response) (*keploy.KError, *http.Response) {
@@ -29,7 +31,7 @@ func toGobType(err error, resp *http.Response) (*keploy.KError, *http.Response) 
 	return kerr, resp
 }
 
-func MockRespFromYaml(kctx *internal.Context, req *http.Request, reqBody []byte, meta map[string]string) (*http.Response, error, bool) {
+func MockRespFromYaml(kctx *internal.Context, logger *zap.Logger, req *http.Request, reqBody []byte, meta map[string]string) (*http.Response, error, bool) {
 	var (
 		resp                = &http.Response{}
 		err           error = nil
@@ -45,9 +47,13 @@ func MockRespFromYaml(kctx *internal.Context, req *http.Request, reqBody []byte,
 		// determine the degree of match for all mocked http request in mock
 		// array with current http call
 		for i, j := range mocks {
+			reqUrl, er := url.Parse(j.Spec.Req.URL)
+			if er != nil {
+				continue
+			}
 			if j.Kind == string(models.HTTP) &&
 				req.Method == j.Spec.Req.Method &&
-				req.URL.String() == j.Spec.Req.URL {
+				req.URL.RequestURI() == reqUrl.RequestURI() {
 				matchPriority[i] = 0
 				// headers macthes ignoring date fields
 				if compareHttpHeaders(req.Header, mock.GetHttpHeader(j.Spec.Req.Header)) {
@@ -73,10 +79,10 @@ func MockRespFromYaml(kctx *internal.Context, req *http.Request, reqBody []byte,
 		}
 		// return the closest match for http request
 		if indx != -1 {
-			if matchPriority[indx] == 6 {
-				fmt.Println("🎉 returned http response of exact http request match")
-			} else {
-				fmt.Println("≅ returned http response of approximate http request match")
+			if matchPriority[indx] < 6 {
+				// 	fmt.Println("🎉 returned http response of exact http request match")
+				// } else {
+				fmt.Println(" ≅ returned http response of approximate http request match")
 			}
 			// assign the mocked outputs for http call
 			errStr := string(mocks[indx].Spec.Objects[0].Data)
@@ -101,6 +107,8 @@ func MockRespFromYaml(kctx *internal.Context, req *http.Request, reqBody []byte,
 			kctx.Mock = mocks
 			return resp, err, true
 		}
+		logger.Error("Failed to match http request with recorded http calls", zap.String("request method", req.Method), zap.String("request path", req.URL.RequestURI()))
+		return nil, nil, true
 	}
 	return resp, err, false
 }
