@@ -6,7 +6,9 @@ import (
 	"fmt"
 
 	"github.com/go-redis/redis/v8"
+	internal "github.com/keploy/go-sdk/internal/keploy"
 	"github.com/keploy/go-sdk/keploy"
+
 	"go.keploy.io/server/pkg/models"
 )
 
@@ -18,10 +20,10 @@ type KIntCmd struct {
 }
 
 func (rc *RedisClient) Del(ctx context.Context, keys ...string) *redis.IntCmd {
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		return rc.Client.Del(ctx, keys...)
 	}
-	kctx, err := keploy.GetState(ctx)
+	kctx, err := internal.GetState(ctx)
 	var (
 		resp   = &redis.IntCmd{}
 		output = &KIntCmd{}
@@ -37,9 +39,9 @@ func (rc *RedisClient) Del(ctx context.Context, keys ...string) *redis.IntCmd {
 		"keys":      fmt.Sprintf("%v", keys),
 	}
 	switch mode {
-	case keploy.MODE_TEST:
+	case internal.MODE_TEST:
 		// don't call the actual del method of redis
-	case keploy.MODE_RECORD:
+	case internal.MODE_RECORD:
 		resp = rc.Client.Del(ctx, keys...)
 		x, er := resp.Result()
 		output.Val = x

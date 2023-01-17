@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/keploy/go-sdk/keploy"
+	internal "github.com/keploy/go-sdk/internal/keploy"
+
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -26,7 +27,7 @@ func (c *Collection) FindOne(ctx context.Context, filter interface{}, opts ...*o
 		ctx:    ctx,
 	}
 
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		sr := c.Collection.FindOne(ctx, filter, opts...)
 		if sr != nil {
 			singleResult.SingleResult = *sr
@@ -34,7 +35,7 @@ func (c *Collection) FindOne(ctx context.Context, filter interface{}, opts ...*o
 		return singleResult
 	}
 
-	kctx, err := keploy.GetState(ctx)
+	kctx, err := internal.GetState(ctx)
 	if err != nil {
 		return singleResult
 	}
@@ -42,9 +43,9 @@ func (c *Collection) FindOne(ctx context.Context, filter interface{}, opts ...*o
 	var sr *mongo.SingleResult
 
 	switch mode {
-	case keploy.MODE_TEST:
+	case internal.MODE_TEST:
 		return singleResult
-	case keploy.MODE_RECORD:
+	case internal.MODE_RECORD:
 		sr = c.Collection.FindOne(ctx, filter, opts...)
 		if sr != nil {
 			singleResult.SingleResult = *sr
@@ -74,7 +75,7 @@ func (c *Collection) Find(ctx context.Context, filter interface{},
 		ctx:      ctx,
 	}
 
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		cursor, err := c.Collection.Find(ctx, filter, opts...)
 		if cursor != nil {
 			result.Cursor = *cursor
@@ -82,7 +83,7 @@ func (c *Collection) Find(ctx context.Context, filter interface{},
 		return result, err
 	}
 
-	kctx, er := keploy.GetState(ctx)
+	kctx, er := internal.GetState(ctx)
 	if er != nil {
 		return result, er
 	}
@@ -93,10 +94,10 @@ func (c *Collection) Find(ctx context.Context, filter interface{},
 	)
 
 	switch mode {
-	case keploy.MODE_TEST:
+	case internal.MODE_TEST:
 		//don't call method in test mode
 		return result, err
-	case keploy.MODE_RECORD:
+	case internal.MODE_RECORD:
 		cursor, err = c.Collection.Find(ctx, filter, opts...)
 		if cursor != nil {
 			result.Cursor = *cursor

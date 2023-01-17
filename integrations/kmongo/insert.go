@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	internal "github.com/keploy/go-sdk/internal/keploy"
 	"github.com/keploy/go-sdk/keploy"
 	"go.keploy.io/server/pkg/models"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -15,15 +16,15 @@ import (
 // See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Collection.InsertOne for information about Collection.InsertOne.
 func (c *Collection) InsertOne(ctx context.Context, document interface{},
 	opts ...*options.InsertOneOptions) (*mongo.InsertOneResult, error) {
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		output, err := c.Collection.InsertOne(ctx, document, opts...)
 		return output, err
 	}
 	var (
 		output = &mongo.InsertOneResult{}
-		err error
-		kerr = &keploy.KError{}
-		data []interface{}
+		err    error
+		kerr   = &keploy.KError{}
+		data   []interface{}
 	)
 	data = append(data, document)
 	for _, j := range opts {
@@ -73,15 +74,15 @@ func (c *Collection) InsertOne(ctx context.Context, document interface{},
 // For information about Collection.InsertMany, visit https://pkg.go.dev/go.mongodb.org/mongo-driver@v1.8.0/mongo#Collection.InsertMany.
 func (c *Collection) InsertMany(ctx context.Context, documents []interface{},
 	opts ...*options.InsertManyOptions) (*mongo.InsertManyResult, error) {
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		output, err := c.Collection.InsertMany(ctx, documents, opts...)
 		return output, err
 	}
 	var (
 		output = &mongo.InsertManyResult{}
-		err error
-		kerr *keploy.KError = &keploy.KError{}
-		data []interface{}
+		err    error
+		kerr   *keploy.KError = &keploy.KError{}
+		data   []interface{}
 	)
 	data = append(data, documents)
 	for _, j := range opts {

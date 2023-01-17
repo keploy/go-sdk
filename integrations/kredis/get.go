@@ -5,7 +5,9 @@ import (
 	"errors"
 
 	"github.com/go-redis/redis/v8"
+	internal "github.com/keploy/go-sdk/internal/keploy"
 	"github.com/keploy/go-sdk/keploy"
+
 	"go.keploy.io/server/pkg/models"
 )
 
@@ -17,10 +19,10 @@ type KStringCmd struct {
 }
 
 func (rc *RedisClient) Get(ctx context.Context, key string) *redis.StringCmd {
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		return rc.Client.Get(ctx, key)
 	}
-	kctx, err := keploy.GetState(ctx)
+	kctx, err := internal.GetState(ctx)
 	var (
 		resp   = &redis.StringCmd{}
 		output = &KStringCmd{}
@@ -36,9 +38,9 @@ func (rc *RedisClient) Get(ctx context.Context, key string) *redis.StringCmd {
 		"key":       key,
 	}
 	switch mode {
-	case keploy.MODE_TEST:
+	case internal.MODE_TEST:
 		// don't call the actual get method of redis
-	case keploy.MODE_RECORD:
+	case internal.MODE_RECORD:
 		resp = rc.Client.Get(ctx, key)
 		x, er := resp.Result()
 		output.Val = x

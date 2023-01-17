@@ -5,17 +5,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io/ioutil"
-
-	"go.keploy.io/server/pkg/models"
-
-	// "fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"net/http"
+	"sync"
 
 	"github.com/gin-gonic/gin"
+	internal "github.com/keploy/go-sdk/internal/keploy"
 	"github.com/keploy/go-sdk/keploy"
+	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
 )
 
@@ -26,7 +25,7 @@ import (
 //
 // r is the gin v1 router instance
 func GinV1(k *keploy.Keploy, r *gin.Engine) {
-	if keploy.GetMode() == keploy.MODE_OFF {
+	if internal.GetMode() == internal.MODE_OFF || internal.GetMode() == internal.MODE_TEST {
 		return
 	}
 	r.Use(mw(k))
@@ -52,7 +51,7 @@ func captureRespGin(c *gin.Context) models.HttpResp {
 
 // from here https://stackoverflow.com/questions/67267065/how-to-propagate-context-values-from-gin-middleware-to-gqlgen-resolvers
 func setContextValGin(c *gin.Context, val interface{}) {
-	ctx := context.WithValue(c.Request.Context(), keploy.KCTX, val)
+	ctx := context.WithValue(c.Request.Context(), internal.KCTX, val)
 	c.Request = c.Request.WithContext(ctx)
 }
 
@@ -67,18 +66,25 @@ func mw(k *keploy.Keploy) gin.HandlerFunc {
 		if id != "" {
 			// id is only present during simulation
 			// run it similar to how testcases would run
-			setContextValGin(c, &keploy.Context{
-				Mode:   keploy.MODE_TEST,
+			setContextValGin(c, &internal.Context{
+				Mode:   internal.MODE_TEST,
 				TestID: id,
 				Deps:   k.GetDependencies(id),
 				Mock:   k.GetMocks(id),
+				Mu:     &sync.Mutex{},
 			})
 			resp := captureRespGin(c)
-			k.PutResp(id, resp)
+			response := k.GetResp(id)
+			response.Resp = resp
+			k.PutResp(id, response)
+
+			// Continue further execution after client call in simulate function
+			response.L.Unlock()
+			// k.PutResp(id, keploy.HttpResp{Resp: resp})
 			return
 		}
 
-		setContextValGin(c, &keploy.Context{Mode: keploy.MODE_RECORD})
+		setContextValGin(c, &internal.Context{Mode: internal.MODE_RECORD, Mu: &sync.Mutex{}})
 
 		// Request
 		var reqBody []byte

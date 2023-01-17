@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
-	"github.com/keploy/go-sdk/keploy"
+	"github.com/keploy/go-sdk/internal/keploy"
 	proto "go.keploy.io/server/grpc/regression"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -18,10 +19,11 @@ var (
 )
 
 type Config struct {
-	Mode keploy.Mode
-	Name string
-	CTX  context.Context
-	Path string
+	Mode      keploy.Mode //Default: Test
+	Name      string //Default: Auto generated during record mode and required in test mode
+	CTX       context.Context //Default: Empty
+	Path      string //Default: ./mocks
+	OverWrite bool //Default: false
 }
 
 func init() {
@@ -87,6 +89,7 @@ func NewContext(conf Config) context.Context {
 		Mock:       mocks,
 		Mode:       mode,
 		FileExport: true,
+		Mu:         &sync.Mutex{},
 	}
 	ctx := conf.CTX
 	if ctx == nil {
@@ -99,8 +102,8 @@ func NewContext(conf Config) context.Context {
 	}
 
 	fmt.Printf("\n💡⚡️ Keploy created new mocking context in %v mode %v.\n If you dont see any logs about your dependencies below, your dependency/s are NOT wrapped.\n", mode, name)
-	exists := StartRecordingMocks(context.Background(), path+"/"+conf.Name+".yaml", string(mode), name)
-	if exists {
+	exists := StartRecordingMocks(context.Background(), path+"/"+conf.Name+".yaml", string(mode), name, conf.OverWrite)
+	if exists && !conf.OverWrite {
 		logger.Error(fmt.Sprintf("🚨 Keploy failed to record dependencies because yaml file already exists%v in directory: %v.\n", name, path))
 		// fmt.Printf("🚨 Keploy failed to record dependencies because yaml file already exists%v in directory: %v.\n", name, path)
 		keploy.MockId.Load(conf.Name)

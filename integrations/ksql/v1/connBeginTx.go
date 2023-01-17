@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/keploy/go-sdk/integrations/ksql/ksqlErr"
+	internal "github.com/keploy/go-sdk/internal/keploy"
 	"github.com/keploy/go-sdk/keploy"
+
 	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
 )
@@ -20,14 +23,14 @@ type Tx struct {
 
 // Commit mocks the outputs of Commit method present driver's Tx interface.
 func (t Tx) Commit() error {
-	if keploy.GetModeFromContext(t.ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(t.ctx) == internal.MODE_OFF {
 		return t.Tx.Commit()
 	}
 	var (
 		err  error
 		kerr *keploy.KError = &keploy.KError{}
 	)
-	kctx, er := keploy.GetState(t.ctx)
+	kctx, er := internal.GetState(t.ctx)
 	if er != nil {
 		return er
 	}
@@ -57,7 +60,7 @@ func (t Tx) Commit() error {
 		if x.Err != nil {
 			mockErr = x.Err
 		}
-		mockErr = convertKError(mockErr)
+		mockErr = ksqlErr.ConvertKError(mockErr)
 		return mockErr
 	}
 	return err
@@ -65,14 +68,14 @@ func (t Tx) Commit() error {
 
 // Rollback mocks the outputs of Rollback method present driver's Tx interface.
 func (t Tx) Rollback() error {
-	if keploy.GetModeFromContext(t.ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(t.ctx) == internal.MODE_OFF {
 		return t.Tx.Rollback()
 	}
 	var (
 		err  error
 		kerr *keploy.KError = &keploy.KError{}
 	)
-	kctx, er := keploy.GetState(t.ctx)
+	kctx, er := internal.GetState(t.ctx)
 	if er != nil {
 		return er
 	}
@@ -102,7 +105,7 @@ func (t Tx) Rollback() error {
 		if x.Err != nil {
 			mockErr = x.Err
 		}
-		mockErr = convertKError(mockErr)
+		mockErr = ksqlErr.ConvertKError(mockErr)
 		return mockErr
 	}
 	return err
@@ -114,7 +117,7 @@ func (c Conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, er
 	if !ok {
 		return nil, errors.New("returned var not implements ConnBeginTx interface")
 	}
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		return bc.BeginTx(ctx, opts)
 	}
 	var (
@@ -126,7 +129,7 @@ func (c Conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, er
 			ctx: ctx,
 		}
 	)
-	kctx, er := keploy.GetState(ctx)
+	kctx, er := internal.GetState(ctx)
 	if er != nil {
 		return nil, er
 	}
@@ -156,7 +159,7 @@ func (c Conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, er
 		if x.Err != nil {
 			mockErr = x.Err
 		}
-		mockErr = convertKError(mockErr)
+		mockErr = ksqlErr.ConvertKError(mockErr)
 		return drTx, mockErr
 	}
 	return drTx, err
