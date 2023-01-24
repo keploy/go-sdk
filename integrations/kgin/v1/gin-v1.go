@@ -25,7 +25,7 @@ import (
 //
 // r is the gin v1 router instance
 func GinV1(k *keploy.Keploy, r *gin.Engine) {
-	if internal.GetMode() == internal.MODE_OFF || internal.GetMode() == internal.MODE_TEST {
+	if internal.GetMode() == internal.MODE_OFF {
 		return
 	}
 	r.Use(mw(k))
@@ -63,6 +63,10 @@ func mw(k *keploy.Keploy) gin.HandlerFunc {
 	}
 	return func(c *gin.Context) {
 		id := c.Request.Header.Get("KEPLOY_TEST_ID")
+		if id == "" && internal.GetMode() == internal.MODE_TEST {
+			c.Next()
+			return
+		}
 		if id != "" {
 			// id is only present during simulation
 			// run it similar to how testcases would run
@@ -101,7 +105,7 @@ func mw(k *keploy.Keploy) gin.HandlerFunc {
 
 		resp := captureRespGin(c)
 		params := urlParamsGin(c, k)
-		keploy.CaptureTestcase(k, c.Request, reqBody, resp, params, context.Background(), "", "", "", "http")
+		keploy.CaptureHttpTC(k, c.Request, reqBody, resp, params)
 	}
 }
 

@@ -175,64 +175,58 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 	return false, nil
 }
 
-func CaptureTestcase(k *Keploy, r *http.Request, reqBody []byte, resp models.HttpResp, params map[string]string, grpcCtx context.Context, grpcReq string, grpcMethod string, grpcResp string, reqType string) {
-	var d interface{}
-	switch reqType {
-	case "http":
-		d = r.Context().Value(keploy.KCTX)
-
-	case "grpc":
-		d = grpcCtx.Value(keploy.KCTX)
-	}
+func CaptureGrpcTC(k *Keploy, grpcCtx context.Context, req models.GrpcReq, resp models.GrpcResp) {
+	// var d interface{}
+	d := grpcCtx.Value(keploy.KCTX)
 	if d == nil {
 		k.Log.Error("failed to get keploy context")
 		return
 	}
 	deps := d.(*keploy.Context)
 
-	// u := &url.URL{
-	// 	Scheme: r.URL.Scheme,
-	// 	//User:     url.UserPassword("me", "pass"),
-	// 	Host:     r.URL.Host,
-	// 	Path:     r.URL.Path,
-	// 	RawQuery: r.URL.RawQuery,
-	// }
-	switch reqType {
-	case "grpc":
-		k.Capture(regression.TestCaseReq{
-			Captured:     time.Now().Unix(),
-			AppID:        k.cfg.App.Name,
-			GrpcReq:      grpcReq,
-			GrpcResp:     grpcResp,
-			GrpcMethod:   grpcMethod,
-			Deps:         deps.Deps,
-			TestCasePath: k.cfg.App.TestPath,
-			MockPath:     k.cfg.App.MockPath,
-			Mocks:        deps.Mock,
-			Type:         "grpc",
-		})
-	case "http":
-		k.Capture(regression.TestCaseReq{
-			Captured: time.Now().Unix(),
-			AppID:    k.cfg.App.Name,
-			URI:      urlPath(r.URL.Path, params),
-			HttpReq: models.HttpReq{
-				Method:     models.Method(r.Method),
-				ProtoMajor: r.ProtoMajor,
-				ProtoMinor: r.ProtoMinor,
-				URL:        r.URL.String(),
-				URLParams:  urlParams(r, params),
-				Header:     r.Header,
-				Body:       string(reqBody),
-			},
-			HttpResp:     resp,
-			Deps:         deps.Deps,
-			TestCasePath: k.cfg.App.TestPath,
-			MockPath:     k.cfg.App.MockPath,
-			Mocks:        deps.Mock,
-			Type:         "http",
-		})
+	k.Capture(regression.TestCaseReq{
+		Captured: time.Now().Unix(),
+		AppID:    k.cfg.App.Name,
+		GrpcReq:  req,
+		GrpcResp: resp,
+		// GrpcMethod:   grpcMethod,
+		Deps:         deps.Deps,
+		TestCasePath: k.cfg.App.TestPath,
+		MockPath:     k.cfg.App.MockPath,
+		Mocks:        deps.Mock,
+		Type:         models.GRPC_EXPORT,
+	})
+
+}
+
+func CaptureHttpTC(k *Keploy, r *http.Request, reqBody []byte, resp models.HttpResp, params map[string]string) {
+	d := r.Context().Value(keploy.KCTX)
+	if d == nil {
+		k.Log.Error("failed to get keploy context")
+		return
 	}
+	deps := d.(*keploy.Context)
+
+	k.Capture(regression.TestCaseReq{
+		Captured: time.Now().Unix(),
+		AppID:    k.cfg.App.Name,
+		URI:      urlPath(r.URL.Path, params),
+		HttpReq: models.HttpReq{
+			Method:     models.Method(r.Method),
+			ProtoMajor: r.ProtoMajor,
+			ProtoMinor: r.ProtoMinor,
+			URL:        r.URL.String(),
+			URLParams:  urlParams(r, params),
+			Header:     r.Header,
+			Body:       string(reqBody),
+		},
+		HttpResp:     resp,
+		Deps:         deps.Deps,
+		TestCasePath: k.cfg.App.TestPath,
+		MockPath:     k.cfg.App.MockPath,
+		Mocks:        deps.Mock,
+		Type:         models.HTTP,
+	})
 }
 
 func urlParams(r *http.Request, params map[string]string) map[string]string {

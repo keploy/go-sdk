@@ -7,8 +7,10 @@ import (
 	"os"
 	"strings"
 
+	internal "github.com/keploy/go-sdk/internal/keploy"
 	"github.com/keploy/go-sdk/keploy"
 	"go.keploy.io/server/pkg/models"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
@@ -36,13 +38,14 @@ func serverInterceptor(k *keploy.Keploy) func(
 			fmt.Println("\nUnable to Start Keploy !!")
 			return handler(ctx, req)
 		}
+		errStr := ""
 		id := ""
 		requestId := len(requestMeta["tid"])
 		if requestId != 0 {
 			id = requestMeta["tid"][0]
 		}
 		if id != "" {
-			ctx = context.WithValue(ctx, keploy.KCTX, &keploy.Context{
+			ctx = context.WithValue(ctx, internal.KCTX, &internal.Context{
 				Mode:   keploy.MODE_TEST,
 				TestID: id,
 				Deps:   k.GetDependencies(id),
@@ -50,33 +53,37 @@ func serverInterceptor(k *keploy.Keploy) func(
 			})
 			c, err := handler(ctx, req)
 			if err != nil {
-				panic(err)
+				errStr = err.Error()
 			}
-			respByte, err := json.Marshal(c)
-			if err != nil {
-				panic(err)
+			respByte, err1 := json.Marshal(c)
+			if err1 != nil {
+				k.Log.Error("failed to unmarshal grpc response body", zap.Error(err1))
+				return c, err
 			}
 			resp := string(respByte)
-			k.PutRespGrpc(id, resp)
+			k.PutRespGrpc(id, models.GrpcResp{Body: resp, Err: errStr})
 			return c, err
 		}
-		ctx = context.WithValue(ctx, keploy.KCTX, &keploy.Context{
+		ctx = context.WithValue(ctx, internal.KCTX, &internal.Context{
 			Mode: keploy.MODE_RECORD,
 		})
-		reqByte, err := json.Marshal(req)
-		if err != nil {
-			panic(err)
+		reqByte, err1 := json.Marshal(req)
+		if err1 != nil {
+			k.Log.Error("failed to marshal grpc request body and tcs is not captured", zap.Error(err1))
 		}
 		requestJson := string(reqByte)
-		infoByte, err := json.Marshal(info)
-		if err != nil {
-			panic(err)
+		infoByte, err1 := json.Marshal(info)
+		if err1 != nil {
+			k.Log.Error("", zap.Error(err1))
 		}
 		serverInfo := grpc.UnaryServerInfo{}
-		json.Unmarshal(infoByte, &serverInfo)
+		err1 = json.Unmarshal(infoByte, &serverInfo)
+		if err1 != nil {
+			k.Log.Error("", zap.Error(err1))
+		}
 		// serverInfo.FullMethod contains the method name with "/" character
 		// Here, we remove this redundant character.
-		fullMethod := strings.Split(serverInfo.FullMethod, "/")
+		fullMethod := strings.Split(info.FullMethod, "/")
 		method := ""
 		for i := 1; i < len(fullMethod); i++ {
 			if i == len(fullMethod)-1 {
@@ -85,18 +92,17 @@ func serverInterceptor(k *keploy.Keploy) func(
 			}
 			method = method + fullMethod[i] + "."
 		}
-
 		c, err := handler(ctx, req)
 		if err != nil {
-			panic(err)
+			errStr = err.Error()
 		}
-		respByte, err := json.Marshal(c)
+		respByte, err1 := json.Marshal(c)
+		if err1 != nil {
+			k.Log.Error("failed to marshal grpc response", zap.Error(err1))
+			return c, err1
+		}
 		resp := string(respByte)
-		if err != nil {
-			panic(err)
-		}
-		emptyHttpResp := models.HttpResp{}
-		keploy.CaptureTestcase(k, nil, nil, emptyHttpResp, nil, ctx, requestJson, method, resp, "grpc")
+		keploy.CaptureGrpcTC(k, ctx, models.GrpcReq{Body: requestJson, Method: method}, models.GrpcResp{Body: resp, Err: errStr})
 		return c, err
 	}
 }

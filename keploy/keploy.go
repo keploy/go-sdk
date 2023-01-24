@@ -254,13 +254,17 @@ func (k *Keploy) GetResp(id string) HttpResp {
 	return resp
 }
 
-func (k *Keploy) GetRespGrpc(id string) string {
+func (k *Keploy) GetRespGrpc(id string) models.GrpcResp {
 	val, ok := k.resp.Load(id)
 	if !ok {
 		k.Log.Error("failed getting response for grpc request", zap.String("test case id", id))
-		return ""
+		return models.GrpcResp{}
 	}
-	resp := val.(string)
+	resp, ok := val.(models.GrpcResp)
+	if !ok {
+		k.Log.Error("stored grpc response type is invalid", zap.String("test case id", id))
+		return models.GrpcResp{}
+	}
 	return resp
 }
 
@@ -268,7 +272,7 @@ func (k *Keploy) PutResp(id string, resp HttpResp) {
 	k.resp.Store(id, resp)
 }
 
-func (k *Keploy) PutRespGrpc(id string, resp string) {
+func (k *Keploy) PutRespGrpc(id string, resp models.GrpcResp) {
 	k.resp.Store(id, resp)
 }
 
@@ -283,8 +287,8 @@ func (k *Keploy) Test() {
 	// fetch test cases from web server and save to memory
 	k.Log.Info("test starting in " + k.cfg.App.Delay.String())
 	time.Sleep(k.cfg.App.Delay)
-	tcs := k.fetch("http")
-	tcs = append(tcs, k.fetch("grpc")...)
+	tcs := k.fetch(models.HTTP)
+	tcs = append(tcs, k.fetch(models.GRPC_EXPORT)...)
 	total := len(tcs)
 
 	// start a http test run
@@ -402,7 +406,7 @@ func (k *Keploy) simulate(tc models.TestCase) (*models.HttpResp, error) {
 	return &resp.Resp, nil
 }
 
-func (k *Keploy) simulateGrpc(tc models.TestCase) (string, error) {
+func (k *Keploy) simulateGrpc(tc models.TestCase) (models.GrpcResp, error) {
 	// add dependencies to shared context
 	k.deps.Store(tc.ID, tc.Deps)
 	defer k.deps.Delete(tc.ID)
@@ -417,7 +421,7 @@ func (k *Keploy) simulateGrpc(tc models.TestCase) (string, error) {
 		port = ":" + port
 	}
 	// The simulate call is done via grpcurl which acts as a grpc client
-	err := GrpCurl(tc.GrpcReq, `tid:`+tid, "localhost"+port, tc.GrpcMethod)
+	err := GrpCurl(tc.GrpcReq.Body, `tid:`+tid, "localhost"+port, tc.GrpcReq.Method)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -429,12 +433,12 @@ func (k *Keploy) simulateGrpc(tc models.TestCase) (string, error) {
 func (k *Keploy) check(runId string, tc models.TestCase) bool {
 	var (
 		resp     *models.HttpResp
-		respGrpc string
+		respGrpc models.GrpcResp
 		bin      []byte
 		err      error
 	)
 	switch tc.Type {
-	case "http":
+	case string(models.HTTP):
 		resp, err = k.simulate(tc)
 		if err != nil {
 			k.Log.Error("failed to simulate request on local server", zap.Error(err))
@@ -448,10 +452,10 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 			Resp:         *resp,
 			TestCasePath: k.cfg.App.TestPath,
 			MockPath:     k.cfg.App.MockPath,
-			Type:         tc.Type,
+			Type:         models.HTTP,
 		})
 
-	case "grpc":
+	case string(models.GRPC_EXPORT):
 		respGrpc, err = k.simulateGrpc(tc)
 		if err != nil {
 			k.Log.Error("failed to simulate request on local server", zap.Error(err))
@@ -463,7 +467,7 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 			AppID:        k.cfg.App.Name,
 			RunID:        runId,
 			GrpcResp:     respGrpc,
-			Type:         tc.Type,
+			Type:         models.GRPC_EXPORT,
 			TestCasePath: k.cfg.App.TestPath,
 			MockPath:     k.cfg.App.MockPath,
 		})
@@ -618,11 +622,11 @@ func (k *Keploy) denoise(id string, tcs regression.TestCaseReq) {
 	var (
 		err       error
 		resp2     *models.HttpResp
-		resp2Grpc string
+		resp2Grpc models.GrpcResp
 		bin2      []byte
 	)
 	switch tcs.Type {
-	case "http":
+	case models.HTTP:
 		if strings.Contains(strings.Join(tcs.HttpReq.Header["Content-Type"], ", "), "multipart/form-data") {
 			bin, err := base64.StdEncoding.DecodeString(tcs.HttpReq.Body)
 			if err != nil {
@@ -650,17 +654,17 @@ func (k *Keploy) denoise(id string, tcs regression.TestCaseReq) {
 			Resp:         *resp2,
 			TestCasePath: k.cfg.App.TestPath,
 			MockPath:     k.cfg.App.MockPath,
-			Type:         tcs.Type,
+			Type:         models.HTTP,
 		})
 
-	case "grpc":
+	case models.GRPC_EXPORT:
 		resp2Grpc, err = k.simulateGrpc(models.TestCase{
-			ID:         id,
-			Captured:   tcs.Captured,
-			Deps:       tcs.Deps,
-			Mocks:      tcs.Mocks,
-			GrpcMethod: tcs.GrpcMethod,
-			GrpcReq:    tcs.GrpcReq,
+			ID:       id,
+			Captured: tcs.Captured,
+			Deps:     tcs.Deps,
+			Mocks:    tcs.Mocks,
+			// GrpcMethod: tcs.GrpcMethod,
+			GrpcReq: tcs.GrpcReq,
 		})
 		if err != nil {
 			k.Log.Error("failed to simulate request on local grpc server", zap.Error(err))
@@ -671,7 +675,7 @@ func (k *Keploy) denoise(id string, tcs regression.TestCaseReq) {
 			ID:           id,
 			AppID:        k.cfg.App.Name,
 			GrpcResp:     resp2Grpc,
-			Type:         tcs.Type,
+			Type:         models.GRPC_EXPORT,
 			TestCasePath: k.cfg.App.TestPath,
 			MockPath:     k.cfg.App.MockPath,
 		})
@@ -736,7 +740,7 @@ func (k *Keploy) newGet(url string) ([]byte, error) {
 	return body, nil
 }
 
-func (k *Keploy) fetch(reqType string) []models.TestCase {
+func (k *Keploy) fetch(reqType models.Kind) []models.TestCase {
 	var tcs []models.TestCase = []models.TestCase{}
 	pageSize := 25
 

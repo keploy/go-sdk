@@ -81,6 +81,6 @@ func Middleware(k *Keploy, router Router) error {
 	}
 
 	params := router.GetURLParams()
-	CaptureTestcase(k, r, reqBody, resp, params, context.Background(), "", "", "", "http")
+	CaptureHttpTC(k, r, reqBody, resp, params)
 	return nil
 }
