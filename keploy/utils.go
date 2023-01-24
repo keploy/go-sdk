@@ -175,8 +175,31 @@ func ProcessDep(ctx context.Context, log *zap.Logger, meta map[string]string, ou
 	return false, nil
 }
 
-func CaptureTestcase(k *Keploy, r *http.Request, reqBody []byte, resp models.HttpResp, params map[string]string) {
+func CaptureGrpcTC(k *Keploy, grpcCtx context.Context, req models.GrpcReq, resp models.GrpcResp) {
+	// var d interface{}
+	d := grpcCtx.Value(keploy.KCTX)
+	if d == nil {
+		k.Log.Error("failed to get keploy context")
+		return
+	}
+	deps := d.(*keploy.Context)
 
+	k.Capture(regression.TestCaseReq{
+		Captured: time.Now().Unix(),
+		AppID:    k.cfg.App.Name,
+		GrpcReq:  req,
+		GrpcResp: resp,
+		// GrpcMethod:   grpcMethod,
+		Deps:         deps.Deps,
+		TestCasePath: k.cfg.App.TestPath,
+		MockPath:     k.cfg.App.MockPath,
+		Mocks:        deps.Mock,
+		Type:         models.GRPC_EXPORT,
+	})
+
+}
+
+func CaptureHttpTC(k *Keploy, r *http.Request, reqBody []byte, resp models.HttpResp, params map[string]string) {
 	d := r.Context().Value(keploy.KCTX)
 	if d == nil {
 		k.Log.Error("failed to get keploy context")
@@ -184,13 +207,6 @@ func CaptureTestcase(k *Keploy, r *http.Request, reqBody []byte, resp models.Htt
 	}
 	deps := d.(*keploy.Context)
 
-	// u := &url.URL{
-	// 	Scheme: r.URL.Scheme,
-	// 	//User:     url.UserPassword("me", "pass"),
-	// 	Host:     r.URL.Host,
-	// 	Path:     r.URL.Path,
-	// 	RawQuery: r.URL.RawQuery,
-	// }
 	k.Capture(regression.TestCaseReq{
 		Captured: time.Now().Unix(),
 		AppID:    k.cfg.App.Name,
@@ -209,8 +225,8 @@ func CaptureTestcase(k *Keploy, r *http.Request, reqBody []byte, resp models.Htt
 		TestCasePath: k.cfg.App.TestPath,
 		MockPath:     k.cfg.App.MockPath,
 		Mocks:        deps.Mock,
+		Type:         models.HTTP,
 	})
-
 }
 
 func urlParams(r *http.Request, params map[string]string) map[string]string {
