@@ -38,7 +38,7 @@ func serverInterceptor(k *keploy.Keploy) func(
 			fmt.Println("\nUnable to Start Keploy !!")
 			return handler(ctx, req)
 		}
-		errStr := ""
+		errStr := "nil"
 		id := ""
 		requestId := len(requestMeta["tid"])
 		if requestId != 0 {
@@ -61,7 +61,10 @@ func serverInterceptor(k *keploy.Keploy) func(
 				return c, err
 			}
 			resp := string(respByte)
-			k.PutRespGrpc(id, models.GrpcResp{Body: resp, Err: errStr})
+			res := k.GetRespGrpc(id)
+			res.Resp = models.GrpcResp{Body: resp, Err: errStr}
+			k.PutRespGrpc(id, res)
+			res.L.Unlock()
 			return c, err
 		}
 		ctx = context.WithValue(ctx, internal.KCTX, &internal.Context{

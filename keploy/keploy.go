@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"path/filepath"
 
 	"github.com/creasty/defaults"
@@ -42,6 +41,11 @@ var (
 
 type HttpResp struct {
 	Resp models.HttpResp
+	L    *sync.Mutex
+}
+
+type GrpcResp struct {
+	Resp models.GrpcResp
 	L    *sync.Mutex
 }
 
@@ -254,16 +258,16 @@ func (k *Keploy) GetResp(id string) HttpResp {
 	return resp
 }
 
-func (k *Keploy) GetRespGrpc(id string) models.GrpcResp {
+func (k *Keploy) GetRespGrpc(id string) GrpcResp {
 	val, ok := k.resp.Load(id)
 	if !ok {
 		k.Log.Error("failed getting response for grpc request", zap.String("test case id", id))
-		return models.GrpcResp{}
+		return GrpcResp{}
 	}
-	resp, ok := val.(models.GrpcResp)
+	resp, ok := val.(GrpcResp)
 	if !ok {
 		k.Log.Error("stored grpc response type is invalid", zap.String("test case id", id))
-		return models.GrpcResp{}
+		return GrpcResp{}
 	}
 	return resp
 }
@@ -272,7 +276,7 @@ func (k *Keploy) PutResp(id string, resp HttpResp) {
 	k.resp.Store(id, resp)
 }
 
-func (k *Keploy) PutRespGrpc(id string, resp models.GrpcResp) {
+func (k *Keploy) PutRespGrpc(id string, resp GrpcResp) {
 	k.resp.Store(id, resp)
 }
 
@@ -420,14 +424,20 @@ func (k *Keploy) simulateGrpc(tc models.TestCase) (models.GrpcResp, error) {
 	if port[0] != ':' {
 		port = ":" + port
 	}
+	m := sync.Mutex{}
+	m.Lock()
+	k.PutRespGrpc(tc.ID, GrpcResp{L: &m})
+
 	// The simulate call is done via grpcurl which acts as a grpc client
 	err := GrpCurl(tc.GrpcReq.Body, `tid:`+tid, "localhost"+port, tc.GrpcReq.Method)
 	if err != nil {
-		log.Fatal(err)
+		k.Log.Error("failed to simulate grpc request", zap.String("testcase id:", tc.ID), zap.Error(err))
 	}
+	m.Lock()
+	m.Unlock()
 	resp := k.GetRespGrpc(tc.ID)
 	defer k.resp.Delete(tc.ID)
-	return resp, nil
+	return resp.Resp, nil
 }
 
 func (k *Keploy) check(runId string, tc models.TestCase) bool {
@@ -552,26 +562,28 @@ func (k *Keploy) isRejectedUrl(tcs regression.TestCaseReq) bool {
 
 func (k *Keploy) put(tcs regression.TestCaseReq) {
 
-	var fil = k.cfg.App.Filter
+	if tcs.Type == models.HTTP {
+		var fil = k.cfg.App.Filter
 
-	if fil.HeaderRegex != nil {
-		if !k.isValidHeader(tcs) {
+		if fil.HeaderRegex != nil {
+			if !k.isValidHeader(tcs) {
+				return
+			}
+		}
+		if fil.RejectUrlRegex != nil {
+			if !k.isRejectedUrl(tcs) {
+				return
+			}
+		}
+
+		reg := regexp.MustCompile(fil.AcceptUrlRegex)
+		if fil.AcceptUrlRegex != "" && reg.FindString(tcs.URI) == "" {
 			return
 		}
-	}
-	if fil.RejectUrlRegex != nil {
-		if !k.isRejectedUrl(tcs) {
-			return
+
+		if strings.Contains(strings.Join(tcs.HttpReq.Header["Content-Type"], ", "), "multipart/form-data") {
+			tcs.HttpReq.Body = base64.StdEncoding.EncodeToString([]byte(tcs.HttpReq.Body))
 		}
-	}
-
-	reg := regexp.MustCompile(fil.AcceptUrlRegex)
-	if fil.AcceptUrlRegex != "" && reg.FindString(tcs.URI) == "" {
-		return
-	}
-
-	if strings.Contains(strings.Join(tcs.HttpReq.Header["Content-Type"], ", "), "multipart/form-data") {
-		tcs.HttpReq.Body = base64.StdEncoding.EncodeToString([]byte(tcs.HttpReq.Body))
 	}
 	bin, err := json.Marshal(tcs)
 	if err != nil {
