@@ -31,7 +31,9 @@ func init() {
 }
 
 func SetPath(path string) {
+  mu.Lock()
 	MockPath = path
+  mu.Unlock()
 }
 
 // avoids circular dependency between mock and keploy packages
