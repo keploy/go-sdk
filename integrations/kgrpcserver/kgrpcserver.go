@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	internal "github.com/keploy/go-sdk/internal/keploy"
@@ -29,7 +28,7 @@ func serverInterceptor(k *keploy.Keploy) func(
 		info *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler,
 	) (interface{}, error) {
-		if os.Getenv("KEPLOY_MODE") == "off" {
+		if internal.GetMode() == internal.MODE_OFF {
 			return handler(ctx, req)
 		}
 		// requestMeta is used to retrieve the testcase id from the context

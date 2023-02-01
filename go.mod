@@ -2,7 +2,7 @@ module github.com/keploy/go-sdk
 
 go 1.17
 
-replace go.keploy.io/server => github.com/iamskp99/keploy v0.0.2-alpha
+// replace go.keploy.io/server => github.com/iamskp99/keploy v0.0.2-alpha
 
 require (
 	github.com/aws/aws-sdk-go v1.42.23
@@ -26,7 +26,7 @@ require (
 	github.com/jhump/protoreflect v1.14.0
 	github.com/lestrrat-go/jwx v1.2.25
 	github.com/valyala/fasthttp v1.40.0
-	go.keploy.io/server v0.7.16
+	go.keploy.io/server v0.7.20
 )
 
 require (
