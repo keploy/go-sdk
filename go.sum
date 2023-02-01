@@ -215,6 +215,7 @@ github.com/keploy/go-sdk v0.5.3/go.mod h1:FrKEdAbypVbeHdboueHZ3icD24pPRSn/jsZ5KL
 github.com/keploy/go-sdk v0.6.6-alpha/go.mod h1:ytWcfOLeqCr9GyZLTRljEARgtSHuuvaKhOpIX20SIps=
 github.com/keploy/go-sdk v0.6.7/go.mod h1:uD1ds3mbVdhQaRVzK33Dch5Nbocc/1LzQ5oda96/Hss=
 github.com/keploy/go-sdk v0.7.4/go.mod h1:TtJIM+Gkq76FzfkD8W9u1F8NDkC9sVY8nYvmbRo1nhg=
+github.com/keploy/go-sdk v0.7.9/go.mod h1:XUKkX7BuKIgqxg+f9bFNSmZGsxva3DjsQE8rfuAruzA=
 github.com/kevinmbeaulieu/eq-go v1.0.0/go.mod h1:G3S8ajA56gKBZm4UB9AOyoOS37JO3roToPzKNM8dtdM=
 github.com/kisielk/gotool v1.0.0/go.mod h1:XhKaO+MFFWcvkIS/tQcRk01m1F5IRFswLeQ+oQHNcck=
 github.com/klauspost/compress v1.13.6/go.mod h1:/3/Vjq9QcHkK5uEr5lBEmyoZ1iFhe47etQ6QUkpK6sk=
@@ -366,8 +367,9 @@ go.keploy.io/server v0.5.2/go.mod h1:TL7IcngMUjrpm9uoJbY7dfqfNNOqE5NSgQ+eHh3pp0I
 go.keploy.io/server v0.5.6/go.mod h1:/wHYlepZLITJ+MsYnRfRED9K/ENset2JhfzeAqSGnV0=
 go.keploy.io/server v0.7.8/go.mod h1:Xm0Zzt2iBRrvoDY7fBMm8M+geV+ZlkknbqKRVjC3K0I=
 go.keploy.io/server v0.7.12/go.mod h1:ch4rD1NCgtxozDHD9yVk+sLHWz5HgefOqrgEdEIgfBQ=
-go.keploy.io/server v0.7.20 h1:bvppY9sCykmU45xhlJjLBOSSqFCKigEh/iV1yNIVk84=
 go.keploy.io/server v0.7.20/go.mod h1:cu/y7NQ8Io1OP2BfMtfFQugYd/UanRvDWpzcyulx/Qo=
+go.keploy.io/server v0.7.21 h1:Cjn6Eob1ZOSD3xedvqD1X7RdQnWTGNl3B/PWauF5efw=
+go.keploy.io/server v0.7.21/go.mod h1:8rOT9hrWC0xqKm0L8XqjskMEnSwGq3D2tFoAeBBRgA0=
 go.mongodb.org/mongo-driver v1.8.3 h1:TDKlTkGDKm9kkJVUOAXDK5/fkqKHJVwYQSpoRfB43R4=
 go.mongodb.org/mongo-driver v1.8.3/go.mod h1:0sQWfOeY63QTntERDJJ/0SuKK0T1uVSgKCuAROlKEPY=
 go.opencensus.io v0.21.0/go.mod h1:mSImk1erAIZhrmZN+AvHh14ztQfjbGwt4TtuofqLduU=

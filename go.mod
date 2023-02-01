@@ -26,7 +26,7 @@ require (
 	github.com/jhump/protoreflect v1.14.0
 	github.com/lestrrat-go/jwx v1.2.25
 	github.com/valyala/fasthttp v1.40.0
-	go.keploy.io/server v0.7.20
+	go.keploy.io/server v0.7.21
 )
 
 require (
