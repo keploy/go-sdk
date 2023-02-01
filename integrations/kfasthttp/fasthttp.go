@@ -41,7 +41,7 @@ func setContextValFast(c *fasthttp.RequestCtx, val interface{}) {
 
 }
 func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp.RequestHandler {
-	if k == nil || internal.GetMode() == internal.MODE_OFF || internal.GetMode() == internal.MODE_TEST {
+	if k == nil || internal.GetMode() == internal.MODE_OFF {
 		return func(next fasthttp.RequestHandler) fasthttp.RequestHandler {
 			return next
 		}
@@ -50,11 +50,16 @@ func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp
 		return fasthttp.RequestHandler(func(c *fasthttp.RequestCtx) {
 
 			id := string(c.Request.Header.Peek("KEPLOY_TEST_ID"))
+			if id == "" && internal.GetMode() == internal.MODE_TEST {
+				next(c)
+				return
+			}
 			if id != "" {
 				setContextValFast(c, &internal.Context{
 					Mode:   internal.MODE_TEST,
 					TestID: id,
 					Deps:   k.GetDependencies(id),
+					Mock:   k.GetMocks(id),
 					Mu:     &sync.Mutex{},
 				})
 				resp := captureResp(c, next)
@@ -99,8 +104,7 @@ func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp
 
 			r = r.WithContext(ctx)
 
-			keploy.CaptureTestcase(k, r, reqBody, resp, params)
-			return
+			keploy.CaptureHttpTC(k, r, reqBody, resp, params)
 		})
 	}
 }
