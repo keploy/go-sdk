@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/keploy/go-sdk/internal/keploy"
+	"github.com/keploy/go-sdk/pkg/keploy"
 	proto "go.keploy.io/server/grpc/regression"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -19,11 +19,11 @@ var (
 )
 
 type Config struct {
-	Mode      keploy.Mode //Default: Test
-	Name      string //Default: Auto generated during record mode and required in test mode
+	Mode      keploy.Mode     //Default: Test
+	Name      string          //Default: Auto generated during record mode and required in test mode
 	CTX       context.Context //Default: Empty
-	Path      string //Default: ./mocks
-	OverWrite bool //Default: false
+	Path      string          //Default: ./mocks
+	OverWrite bool            //Default: false
 }
 
 func init() {
