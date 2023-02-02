@@ -12,17 +12,25 @@ import (
 )
 
 type Router interface {
-	GetRequest() *http.Request              // GetRequest provides access to the current http request object. Example: echo.Context.Request()
-	SetRequest(*http.Request)               // SetRequest sets the http request with given request object parameter.
-	GetResponseWriter() http.ResponseWriter // GetResponseWriter returns current ResponseWriter of the http handler.
-	SetResponseWriter(http.ResponseWriter)  // SetResponseWriter sets the ResponseWriter of http handler with given parameter.
-	Context() context.Context               // Context returns the underlying context of the http.Request.
-	Next() error                            // Next is used to call the next handler of the middleware chain.
-	GetURLParams() map[string]string        // GetURLParams returns the url parameter as key:value pair.
+	// GetRequest provides access to the current http request object.
+	// Example: echo.Context.Request()
+	GetRequest() *http.Request
+	// SetRequest sets the http request with given request object parameter.
+	SetRequest(*http.Request)
+	// GetResponseWriter returns current ResponseWriter of the http handler.
+	GetResponseWriter() http.ResponseWriter
+	// SetResponseWriter sets the ResponseWriter of http handler with given parameter.
+	SetResponseWriter(http.ResponseWriter)
+	// Context returns the underlying context of the http.Request.
+	Context() context.Context
+	// Next is used to call the next handler of the middleware chain.
+	Next() error
+	// GetURLParams returns the url parameter as key:value pair.
+	GetURLParams() map[string]string
 }
 
 func Middleware(k *Keploy, router Router) error {
-	if k == nil || keploy.GetMode() == keploy.MODE_OFF ||(keploy.GetMode() == keploy.MODE_TEST && router.GetRequest().Header.Get("KEPLOY_TEST_ID") == "") {
+	if k == nil || keploy.GetMode() == keploy.MODE_OFF || (keploy.GetMode() == keploy.MODE_TEST && router.GetRequest().Header.Get("KEPLOY_TEST_ID") == "") {
 		return router.Next()
 	}
 	writer, r, resBody, reqBody, err := ProcessRequest(router.GetResponseWriter(), router.GetRequest(), k)
@@ -73,6 +81,6 @@ func Middleware(k *Keploy, router Router) error {
 	}
 
 	params := router.GetURLParams()
-	CaptureTestcase(k, r, reqBody, resp, params)
-	return err
+	CaptureHttpTC(k, r, reqBody, resp, params)
+	return nil
 }
