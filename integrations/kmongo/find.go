@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	internal "github.com/keploy/go-sdk/internal/keploy"
+	internal "github.com/keploy/go-sdk/pkg/keploy"
 
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
