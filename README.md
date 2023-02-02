@@ -294,8 +294,35 @@ func main() {
 	log.Fatal(fasthttp.ListenAndServe(":8080", mw(m)))
 }
 ```
+### 7. gRPC Server
+Testcases can be generated for gRPC unary methods by just registering keploy's gRPC Unary interceptor(from go-sdk/integrations/kgrpcserver package) in grpc.NewServer and enabling reflection for server.
+#### Example
+```go
+import(
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
+	"github.com/keploy/go-sdk/integrations/kgrpcserver"
+	"github.com/keploy/go-sdk/keploy"
+)
 
-
+func main() {
+	// port on which gRPC server will run
+	port := "8080"
+	k := keploy.New(keploy.Config{
+	  App: keploy.AppConfig{
+		  Name: "my-app",
+		  Port: port,
+	  },
+	  Server: keploy.ServerConfig{
+		  URL: "http://localhost:6789/api",
+	  },
+	})
+	
+	// make new gRPC server with keploy unary interceptor
+	srv := grpc.NewServer(kgrpcserver.UnaryInterceptor(k))
+	reflection.Register(srv)
+}
+```
 ## Supported Databases
 ### 1. MongoDB
 ```go
@@ -603,26 +630,33 @@ func main(){
 ```
 **Note**: ensure to pass request context to all external requests like http requests, db calls, etc. 
 
-### gRPC
+### gRPC Client
+ The outputs of external gRPC calls from API handlers can be mocked by registering keploy's gRPC client interceptor(called WithClientUnaryInterceptor of go-sdk/integrations/kgrpc package). 
 ```go
 conn, err := grpc.Dial(address, grpc.WithInsecure(), kgrpc.WithClientUnaryInterceptor(k))
 ```
 #### Example
 ```go
-import("github.com/keploy/go-sdk/integrations/kgrpc")
+import(
+	"github.com/keploy/go-sdk/integrations/kgrpc"
+	"github.com/keploy/go-sdk/keploy"
+)
 
-port := "8080"
-k := keploy.New(keploy.Config{
-  App: keploy.AppConfig{
-      Name: "my-app",
-      Port: port,
-  },
-  Server: keploy.ServerConfig{
-      URL: "http://localhost:6789/api",
-  },
-})
-
-conn, err := grpc.Dial(address, grpc.WithInsecure(), kgrpc.WithClientUnaryInterceptor(k))
+func main() {
+	port := "8080"
+	k := keploy.New(keploy.Config{
+	  App: keploy.AppConfig{
+		  Name: "my-app",
+		  Port: port,
+	  },
+	  Server: keploy.ServerConfig{
+		  URL: "http://localhost:6789/api",
+	  },
+	})
+	
+	// Make gRPC client connection
+	conn, err := grpc.Dial(address, grpc.WithInsecure(), kgrpc.WithClientUnaryInterceptor(k))
+}
 ```
 **Note**: Currently streaming is not yet supported. 
 
