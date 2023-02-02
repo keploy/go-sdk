@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	internal "github.com/keploy/go-sdk/internal/keploy"
 	"github.com/keploy/go-sdk/keploy"
+	internal "github.com/keploy/go-sdk/pkg/keploy"
 	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"

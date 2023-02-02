@@ -7,7 +7,7 @@ import (
 	"log"
 	"testing"
 
-	internal "github.com/keploy/go-sdk/internal/keploy"
+	internal "github.com/keploy/go-sdk/pkg/keploy"
 	"go.keploy.io/server/pkg/models"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"

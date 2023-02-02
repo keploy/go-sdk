@@ -16,8 +16,8 @@ import (
 	"strconv"
 	"sync"
 
-	// "github.com/keploy/go-sdk/internal"
-	internal "github.com/keploy/go-sdk/internal/keploy"
+	// "github.com/keploy/go-sdk/pkg"
+	internal "github.com/keploy/go-sdk/pkg/keploy"
 
 	"github.com/keploy/go-sdk/keploy"
 	"github.com/keploy/go-sdk/mock"
@@ -63,7 +63,7 @@ type Interceptor struct {
 
 // NewInterceptor constructs and returns the pointer to Interceptor. Interceptor is used
 // to intercept every http client calls and store their responses into keploy context.
-// The default mode of the internal keploy context of the interceptor returned here is MODE_OFF.
+// The default mode of the pkg keploy context of the interceptor returned here is MODE_OFF.
 func NewInterceptor(core http.RoundTripper) *Interceptor {
 	// Initialize a logger
 	logger, _ := zap.NewProduction()

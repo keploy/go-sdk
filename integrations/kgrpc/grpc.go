@@ -8,8 +8,8 @@ import (
 
 	"go.keploy.io/server/pkg/models"
 
-	internal "github.com/keploy/go-sdk/internal/keploy"
 	"github.com/keploy/go-sdk/keploy"
+	internal "github.com/keploy/go-sdk/pkg/keploy"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
