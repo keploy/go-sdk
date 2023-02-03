@@ -3,6 +3,7 @@ package keploy
 import (
 	"context"
 	"errors"
+	"sync"
 )
 
 // Mode represents the mode at which the SDK is operating
@@ -12,6 +13,8 @@ import (
 type Mode string
 
 type KctxType string
+
+var mu sync.Mutex
 
 const (
 	MODE_RECORD Mode     = "record"
@@ -46,10 +49,12 @@ func SetTestMode() {
 // SetMode sets the keploy SDK mode
 // error is returned if the mode is invalid
 func SetMode(m Mode) error {
+	mu.Lock()
 	if !m.Valid() {
 		return errors.New("invalid mode: " + string(m))
 	}
 	mode = m
+	mu.Unlock()
 	return nil
 }
 
