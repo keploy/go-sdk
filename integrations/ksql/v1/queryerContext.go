@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/keploy/go-sdk/integrations/ksql/ksqlErr"
-	internal "github.com/keploy/go-sdk/internal/keploy"
 	"github.com/keploy/go-sdk/keploy"
+	internal "github.com/keploy/go-sdk/pkg/keploy"
 	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
 )

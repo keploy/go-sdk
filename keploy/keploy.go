@@ -23,8 +23,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/keploy/go-sdk/internal/keploy"
 	"github.com/keploy/go-sdk/mock"
+	"github.com/keploy/go-sdk/pkg/keploy"
 	proto "go.keploy.io/server/grpc/regression"
 	"go.keploy.io/server/http/regression"
 	"go.keploy.io/server/pkg/models"

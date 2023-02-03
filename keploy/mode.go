@@ -1,7 +1,7 @@
 package keploy
 
 import (
-	"github.com/keploy/go-sdk/internal/keploy"
+	"github.com/keploy/go-sdk/pkg/keploy"
 )
 
 const (
