@@ -228,7 +228,7 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 			},
 		}
 		if internal.GetGrpcClient() != nil && kctx.FileExport && internal.MockId.Unique(kctx.TestID) {
-			recorded := internal.PutMock(context.Background(), internal.MockPath, httpMock)
+			recorded := internal.PutMock(r.Context(), internal.MockPath, httpMock)
 			if recorded {
 				fmt.Println("🟠 Captured the mocked outputs for Http dependency call with meta: ", meta)
 			}

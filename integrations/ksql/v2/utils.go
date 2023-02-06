@@ -37,7 +37,8 @@ func CaptureSqlMocks(kctx *internal.Context, log *zap.Logger, meta map[string]st
 		},
 	}
 	if internal.GetGrpcClient() != nil && kctx.FileExport && internal.MockId.Unique(kctx.TestID) {
-		recorded := internal.PutMock(context.Background(), internal.MockPath, sqlMock)
+		ctx := context.WithValue(context.Background(), internal.KCTX, kctx)
+		recorded := internal.PutMock(ctx, internal.MockPath, sqlMock)
 		if recorded {
 			fmt.Println("🟠 Captured the mocked outputs for Http dependency call with meta: ", meta)
 		}
