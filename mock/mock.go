@@ -24,6 +24,8 @@ type Config struct {
 	CTX       context.Context //Default: Empty
 	Path      string          //Default: ./mocks
 	OverWrite bool            //Default: false
+	Remove    []string        //Default: []
+	Replace   map[string]string //Default: {}
 }
 
 func init() {
@@ -90,6 +92,8 @@ func NewContext(conf Config) context.Context {
 		Mode:       mode,
 		FileExport: true,
 		Mu:         &sync.Mutex{},
+		Remove:     conf.Remove,
+		Replace:    conf.Replace,
 	}
 	ctx := conf.CTX
 	if ctx == nil {
