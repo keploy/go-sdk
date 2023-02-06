@@ -54,8 +54,12 @@ func (m *MockLib) Load(name string) {
 }
 
 func PutMock(ctx context.Context, path string, mock *proto.Mock) bool {
-
-	_, err := client.PutMock(ctx, &proto.PutMockReq{Path: path, Mock: mock})
+	kctx, err := GetState(ctx)
+    if err != nil {
+		logger.Error("Failed to get the keploy context", zap.Error(err))
+		return false
+    }
+	_, err = client.PutMock(ctx, &proto.PutMockReq{Path: path, Mock: mock, Remove: kctx.Remove, Replace: kctx.Replace})
 	if err != nil {
 		logger.Error("Failed to call the putMock method", zap.Error(err))
 		return false

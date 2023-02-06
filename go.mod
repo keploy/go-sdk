@@ -2,7 +2,7 @@ module github.com/keploy/go-sdk
 
 go 1.17
 
-// replace go.keploy.io/server => ../keploy/
+replace go.keploy.io/server => ../keploy/
 
 // replace go.keploy.io/server => github.com/iamskp99/keploy v0.0.2-alpha
 
