@@ -36,6 +36,7 @@ func StartRecordingMocks(ctx context.Context, path, mode, name string, overWrite
 	})
 	if err != nil {
 		logger.Error(fmt.Sprint("Failed to make StartMocking grpc call to keploy server", name, " mock"), zap.Error(err))
+	
 		return false
 	}
 	return resp.Exists

@@ -107,6 +107,8 @@ type AppConfig struct {
 type Filter struct {
 	AcceptUrlRegex string
 	HeaderRegex    []string
+	Remove   	   []string
+	Replace 	   map[string]string
 	RejectUrlRegex []string
 }
 
@@ -283,6 +285,8 @@ func (k *Keploy) PutRespGrpc(id string, resp GrpcResp) {
 // Capture will capture request, response and output of external dependencies by making Call to keploy server.
 func (k *Keploy) Capture(req regression.TestCaseReq) {
 	// req.Path, _ = os.Getwd()
+	req.Remove = k.cfg.App.Filter.Remove //Setting the Remove field from config
+	req.Replace = k.cfg.App.Filter.Replace //Setting the Replace field from config
 	go k.put(req)
 }
 

@@ -13,7 +13,6 @@ import (
 	"io/ioutil"
 	"net/http"
 	"reflect"
-	"strconv"
 	"sync"
 
 	// "github.com/keploy/go-sdk/pkg"
@@ -153,18 +152,10 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 	mode := kctx.Mode
 	meta := map[string]string{
-		"name":       "http-client",
-		"type":       string(models.HttpClient),
-		"operation":  r.Method,
-		"URL":        r.URL.String(),
-		"Header":     fmt.Sprint(r.Header),
-		"Proto":      r.Proto,
-		"ProtoMajor": strconv.Itoa(r.ProtoMajor),
-		"ProtoMinor": strconv.Itoa(r.ProtoMinor),
+		"name":      "http-client",
+		"type":      string(models.HttpClient),
+		"operation": r.Method,
 	}
-	// if r.URL.String() == "https://127.0.0.1:64502/apis/batch/v1beta1?timeout=32s" {
-	// 	fmt.Println("\n\n  https://127.0.0.1:64502/apis/batch/v1beta1?timeout=32s is requested")
-	// }
 	switch mode {
 	case internal.MODE_TEST:
 		//don't call i.core.RoundTrip method when not in file export
@@ -228,7 +219,7 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 			},
 		}
 		if internal.GetGrpcClient() != nil && kctx.FileExport && internal.MockId.Unique(kctx.TestID) {
-			recorded := internal.PutMock(context.Background(), internal.MockPath, httpMock)
+			recorded := internal.PutMock(r.Context(), internal.MockPath, httpMock)
 			if recorded {
 				fmt.Println("🟠 Captured the mocked outputs for Http dependency call with meta: ", meta)
 			}

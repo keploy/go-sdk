@@ -19,11 +19,13 @@ var (
 )
 
 type Config struct {
-	Mode      keploy.Mode     //Default: Test
-	Name      string          //Default: Auto generated during record mode and required in test mode
-	CTX       context.Context //Default: Empty
-	Path      string          //Default: ./mocks
-	OverWrite bool            //Default: false
+	Mode      keploy.Mode // Default: test
+	Name      string      // Default: Auto generated during record mode and required in test mode
+	CTX       context.Context
+	Path      string // Default: ./mocks
+	OverWrite bool
+	Remove    []string          // removes given http fields from yaml. Format: "<req_OR_resp_OR_all>.<header_OR_body>.<FIELD_NAME>"
+	Replace   map[string]string // replaces values of given http fields. Format: key (can be "header.<KEY>", "domain", "method", "proto_major", "proto_minor")
 }
 
 func init() {
@@ -90,6 +92,8 @@ func NewContext(conf Config) context.Context {
 		Mode:       mode,
 		FileExport: true,
 		Mu:         &sync.Mutex{},
+		Remove:     conf.Remove,
+		Replace:    conf.Replace,
 	}
 	ctx := conf.CTX
 	if ctx == nil {
