@@ -152,7 +152,7 @@ func (i Interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 	mode := kctx.Mode
 	meta := map[string]string{
-		"name":      "http-client",
+		"name":      "Http",
 		"type":      string(models.HttpClient),
 		"operation": r.Method,
 	}
