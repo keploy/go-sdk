@@ -1,7 +1,7 @@
 # Keploy Go-SDK
 [![PkgGoDev](https://pkg.go.dev/badge/github.com/keploy/go-sdk#readme-contents)](https://pkg.go.dev/github.com/keploy/go-sdk#readme-contents)
 
-This is the client SDK for the [Keploy](https://github.com/keploy/keploy) testing platform. You can use this to generate realistic mock files or entire e2e tests for your applications. The **HTTP mocks and tests are the same format** are are inter-exchangeable.  
+This is the client SDK for the [Keploy](https://github.com/keploy/keploy) testing platform. You can use this to generate realistic mock files or entire e2e tests for your applications. The **HTTP mocks/stubs and tests are the same format** are are inter-exchangeable.  
 
 ## Contents
 
@@ -11,29 +11,29 @@ This is the client SDK for the [Keploy](https://github.com/keploy/keploy) testin
 4. [Supported Databases](#supported-databases)
 5. [Support Clients](#supported-clients)
 6. [Supported JWT Middlewares](#supported-jwt-middlewares)
-7. [Mocking for Unit Tests](#mocking-for-unit-tests)
+7. [Mocking/Stubbing for unit tests](#mockingstubbing-for-unit-tests)
 
 ## Installation
 ```bash
 go get -u github.com/keploy/go-sdk
 ```
 ## Usage
-### Create mocks by recording external calls (APIs, DBs..)
-These mocks are realistic and frees you up from writing mocks manually. Keploy creates files which can be referenced in any of your tests. 
-1. **Wrap your depedency**: To record your depdencies, you need to wrap their clients with the supported keploy wrapper as metioned below. If your dependency is not supported please open a [feature request.](https://github.com/keploy/go-sdk/issues/new?assignees=&labels=&template=feature_request.md&title=)
-2. **Record**: To record you can import the keploy mocking library and set the mode to record mode. This should generate a file containing the mocks. 
+### Create mocks/stubs for your unit-test
+These mocks/stubs are realistic and frees you up from writing them manually. Keploy creates `readable/editable` mocks/stubs yaml files which can be referenced in any of your unit-tests tests. An example is mentioned in [Mocking/Stubbing for unit tests](#mockingstubbing-for-unit-tests) section
+1. **Wrap your depedency**: To wrap your depdencies, you need to integrate them with the keploy supported wrappers as metioned below. If your dependency is not supported please open a [feature request.](https://github.com/keploy/go-sdk/issues/new?assignees=&labels=&template=feature_request.md&title=)
+2. **Record**: To record you can import the keploy mocking library and set the mode to record mode. This should generate a file containing the mocks/stubs. 
 ```go
 import(
     "github.com/keploy/go-sdk/keploy"
     "github.com/keploy/go-sdk/mock"
 )
 
-// inside your test
+// Inside your unit test
 ...
 ctx := mock.NewContext(mock.Config{
-	Name: "<name_for_mocks>", // unique for every mock. if you dont provide during record it would be generated. Its compulsory during tests. 
-	Mode: keploy.MODE_RECORD, // Or keploy.MODE_TEST, Or keploy.MODE_OFF. Default is keploy.MODE_OFF
-	Path: "<local_path_for_yaml>", // optional. relative(./internals) or absolute(/users/xyz/...)
+	Name: "<name_for_yamls>", // It is unique for every mock/stub. If you dont provide during record it would be generated. Its compulsory during tests. 
+	Mode: keploy.MODE_RECORD, // It can be MODE_TEST or MODE_OFF. Default is MODE_TEST
+	Path: "<local_path_for_yaml>", // optional. It can be relative(./internals) or absolute(/users/xyz/...)
 	CTX: <existing context>, // optional. can be used to pass existing running context. 
 })
 ...
@@ -41,16 +41,16 @@ ctx := mock.NewContext(mock.Config{
 3. **Mock**: To mock dependency as per the content of the generated file (during testing) - just set the `Mode` config to `keploy.MODE_TEST` or remove the variable all together (default is test mode). eg: 
 ```go
 ctx := mock.NewContext(mock.Config{
-	Name: "<name_for_mocks>", // unique for every mock. if you dont provide during record it would be generated. Its compulsory during tests. 
-	Mode: keploy.MODE_TEST, // Or keploy.MODE_TEST, Or keploy.MODE_OFF. Default is keploy.MODE_OFF
-	Path: "<local_path_for_yaml>", // optional. relative(./internals) or absolute(/users/xyz/...)
-	CTX: <existing context>, // optional. can be used to pass existing running context. 
+	Name: "<name_for_yamls>", // Should be unique for every mock/stub. Its compulsory during tests. 
+	Mode: keploy.MODE_TEST, 
+	Path: "<local_path_for_yaml>", // Optional. It should be the path to the recorded mocks/stubs.It can be relative(./internals) or absolute(/users/xyz/...)
+	CTX: <existing context>, // Optional. It can be used to pass existing running context. 
 })
 ```
 
 
-### Generate E2E tests (with mocks)
-These tests can be run alongside your manually written `go-tests`and adds coverage to them. This way you can focus on only writing those tests that are hard to e2e test with keploy. Mocks are also generated and linked to their respective tests. As mentioned above, the tests can also be shared with the clients for mocking (and vice versa!).    
+### Generate E2E tests 
+These tests can be run alongside your manually written `go-tests`and adds coverage to them. This way you can focus on only writing those tests that are hard to e2e test with keploy. Mocks/stubs are also generated and linked to their respective tests. As mentioned above, the tests can also be shared with the clients for mocking (and vice versa!).    
 1. **Wrap your depedency**: (same as above)
 2. **Intialize SDK**: You would need to initialize the keploy SDK
 ```go
@@ -785,14 +785,11 @@ func ginRouter() http.Handler {
 }
 ```
 
-## Mocking for unit tests
-Mocks can be generated for external dependency calls of go unit tests as `readable/editable` yaml files using Keploy.
+## Mocking/Stubbing for unit tests
+Mocks/Stubs can be generated for external dependency calls of go unit tests as `readable/editable` yaml files using Keploy.
 
 
-### Integration 
-Create the go context using NewContext of go-sdk/mock package which is passed to all the keploy-supported dependency calls of unit tests.
-
-#### Example
+### Example
 ```go
 import (
 	"bytes"; "context"; "io"; "net/http"; "testing"
@@ -832,7 +829,7 @@ func TestExample(t *testing.T) {
 		},
 	} {
 		ctx := context.Background()
-		// Integration for keploy unit-tests mocking.
+		// Integration for keploy unit-tests mocks/stubs.
 		ctx = mock.NewContext(mock.Config{
 			Mode:      keploy.MODE_RECORD,   // Keploy mode on which unit test will run. Possible values: MODE_TEST or MODE_RECORD.
 			Name:      tt.input.tcsName,     // Unique names for testcases of a unit test. If it is empty then, a unique id is generated by keploy during RECORD.
