@@ -36,7 +36,6 @@ func (c Conn) ExecContext(ctx context.Context, query string, args []driver.Named
 	// if !ok {
 	// 	return nil, errors.New("mocked Driver.Conn var not implements ExecerContext interface")
 	// }
-	fmt.Println(" Called ExecContext with mode: ", internal.GetModeFromContext(ctx))
 	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		return execerContext.ExecContext(ctx, query, args)
 	}
