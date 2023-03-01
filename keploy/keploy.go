@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"google.golang.org/grpc"
 
 	"github.com/creasty/defaults"
 	"github.com/go-playground/validator/v10"
@@ -91,6 +92,7 @@ func AssertTests(t *testing.T) {
 type Config struct {
 	App    AppConfig
 	Server ServerConfig
+	GrpcEnabled bool
 }
 
 type AppConfig struct {
@@ -199,6 +201,8 @@ type Keploy struct {
 	Ctx    context.Context
 	Log    *zap.Logger
 	client *http.Client
+	grpcClient  grpc.ClientConnInterface
+	grpcEnabled bool
 	deps   sync.Map
 	//Deps map[string][]models.Dependency
 	resp sync.Map
@@ -589,33 +593,42 @@ func (k *Keploy) put(tcs regression.TestCaseReq) {
 			tcs.HttpReq.Body = base64.StdEncoding.EncodeToString([]byte(tcs.HttpReq.Body))
 		}
 	}
-	bin, err := json.Marshal(tcs)
-	if err != nil {
-		k.Log.Error("failed to marshall testcase request", zap.String("url", tcs.URI), zap.Error(err))
-		return
-	}
-	req, err := http.NewRequest("POST", k.cfg.Server.URL+"/regression/testcase", bytes.NewBuffer(bin))
-	if err != nil {
-		k.Log.Error("failed to create testcase request", zap.String("url", tcs.URI), zap.Error(err))
-		return
-	}
-	k.setKey(req)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := k.client.Do(req)
-	if err != nil {
-		k.Log.Error("failed to send testcase to backend", zap.String("url", tcs.URI), zap.Error(err))
-		return
-	}
-
-	defer func(Body io.ReadCloser) {
-		err = Body.Close()
+	if k.grpcEnabled {
+		conn, err := grpc.Dial("localhost:6789", grpc.WithInsecure())
 		if err != nil {
-			// a.Log.Error("failed to close connecton reader", zap.String("url", tcs.URI), zap.Error(err))
+			k.Log.Error(":x: Failed to connect to keploy server via grpc. Please ensure that keploy server is running", zap.Error(err))
+		}
+		grpcClient := proto.NewRegressionServiceClient(conn)
+		keploy.SetGrpcClient(grpcClient)
+		grpcClient.PostTC(k.Ctx , &proto.TestCaseReq{})
+
+	}else{
+		bin, err := json.Marshal(tcs)
+		if err != nil {
+			k.Log.Error("failed to marshall testcase request", zap.String("url", tcs.URI), zap.Error(err))
 			return
 		}
-	}(resp.Body)
-	var res map[string]string
+		req, err := http.NewRequest("POST", k.cfg.Server.URL+"/regression/testcase", bytes.NewBuffer(bin))
+		if err != nil {
+			k.Log.Error("failed to create testcase request", zap.String("url", tcs.URI), zap.Error(err))
+			return
+		}
+		k.setKey(req)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := k.client.Do(req)
+		if err != nil {
+			k.Log.Error("failed to send testcase to backend", zap.String("url", tcs.URI), zap.Error(err))
+			return
+		}
+		defer func(Body io.ReadCloser) {
+			err = Body.Close()
+			if err != nil {
+				// a.Log.Error("failed to close connecton reader", zap.String("url", tcs.URI), zap.Error(err))
+				return
+			}
+		}(resp.Body)
+		var res map[string]string
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		k.Log.Error("failed to read response from backend", zap.String("url", tcs.URI), zap.Error(err))
@@ -630,6 +643,7 @@ func (k *Keploy) put(tcs regression.TestCaseReq) {
 		return
 	}
 	k.denoise(id, tcs)
+	}
 }
 
 func (k *Keploy) denoise(id string, tcs regression.TestCaseReq) {
