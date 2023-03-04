@@ -95,7 +95,7 @@ type Config struct {
 
 type AppConfig struct {
 	Name     string        `validate:"required"`
-	Host     string        `default:"0.0.0.0"`
+	Host     string        `default:"localhost"`
 	Port     string        `validate:"required"`
 	Delay    time.Duration `default:"5s"`
 	Timeout  time.Duration `default:"60s"`
