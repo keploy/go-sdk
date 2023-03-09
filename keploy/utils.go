@@ -402,51 +402,51 @@ func ProtoDepsToModelDeps(request []*proto.Dependency) []models.Dependency {
 	return deps
 }
 
-// func ProtoToModelsTestCase(tc []*proto.TestCase) []models.TestCase {
-// 	var res []models.TestCase
-// 	for _, v := range tc {
-// 		return models.TestCase{
-// 			ID:       tc.Id,
-// 			URI:      tc.URI,
-// 			Created:  tc.Created,
-// 			Updated:  tc.Updated,
-// 			Captured: tc.Captured,
-// 			CID:      tc.CID,
-// 			AppID:    tc.AppID,
-// 			HttpReq: models.HttpReq{
-// 				Method:     models.Method(tc.HttpReq.Method),
-// 				ProtoMajor: int(tc.HttpReq.ProtoMajor),
-// 				ProtoMinor: int(tc.HttpReq.ProtoMinor),
-// 				URL:        tc.HttpReq.URL,
-// 				URLParams:  tc.HttpReq.URLParams,
-// 				Header:     GetHttpHeader(tc.HttpReq.Header),
-// 				Body:       tc.HttpReq.Body,
-// 				Binary:     tc.HttpReq.Binary,
-// 				Form:       GetMockFormData(tc.HttpReq.Form),
-// 			},
-// 			HttpResp: models.HttpResp{
-// 				StatusCode:    int(tc.HttpResp.StatusCode),
-// 				ProtoMajor:    int(tc.HttpResp.ProtoMajor),
-// 				ProtoMinor:    int(tc.HttpResp.ProtoMinor),
-// 				Header:        GetHttpHeader(tc.HttpResp.Header),
-// 				Body:          tc.HttpResp.Body,
-// 				StatusMessage: tc.HttpResp.StatusMessage,
-// 				Binary:        tc.HttpResp.Binary,
-// 			},
-// 			GrpcReq: models.GrpcReq{
-// 				Body:   tc.GrpcReq.Body,
-// 				Method: tc.GrpcReq.Method,
-// 			},
-// 			GrpcResp: models.GrpcResp{
-// 				Body: tc.GrpcResp.Body,
-// 				Err:  tc.GrpcResp.Err,
-// 			},
-// 			Noise:   tc.Noise,
-// 			Deps:    ProtoDepsToModelDeps(tc.Deps),
-// 			Mocks:   (tc.Mocks),
-// 			Type:    tc.Type,
-// 		}
-// 	}
+func ProtoToModelsTestCase(tc []*proto.TestCase) []models.TestCase {
+	var res []models.TestCase
+	for _, v := range tc {
+		tcs := models.TestCase{
+			ID:       v.Id,
+			URI:      v.URI,
+			Created:  v.Created,
+			Updated:  v.Updated,
+			Captured: v.Captured,
+			CID:      v.CID,
+			AppID:    v.AppID,
+			HttpReq: models.HttpReq{
+				Method:     models.Method(v.HttpReq.Method),
+				ProtoMajor: int(v.HttpReq.ProtoMajor),
+				ProtoMinor: int(v.HttpReq.ProtoMinor),
+				URL:        v.HttpReq.URL,
+				URLParams:  v.HttpReq.URLParams,
+				Header:     GetHttpHeader(v.HttpReq.Header),
+				Body:       v.HttpReq.Body,
+				Binary:     v.HttpReq.Binary,
+				Form:       GetMockFormData(v.HttpReq.Form),
+			},
+			HttpResp: models.HttpResp{
+				StatusCode:    int(v.HttpResp.StatusCode),
+				ProtoMajor:    int(v.HttpResp.ProtoMajor),
+				ProtoMinor:    int(v.HttpResp.ProtoMinor),
+				Header:        GetHttpHeader(v.HttpResp.Header),
+				Body:          v.HttpResp.Body,
+				StatusMessage: v.HttpResp.StatusMessage,
+				Binary:        v.HttpResp.Binary,
+			},
+			GrpcReq: models.GrpcReq{
+				Body:   v.GrpcReq.Body,
+				Method: v.GrpcReq.Method,
+			},
+			GrpcResp: models.GrpcResp{
+				Body: v.GrpcResp.Body,
+				Err:  v.GrpcResp.Err,
+			},
+			Noise:   v.Noise,
+			Deps:    ProtoDepsToModelDeps(v.Deps),
+			Mocks:   (v.Mocks),
+		}
+		res = append(res, tcs)
+	}
+	return res
 
-
-// }
+}
