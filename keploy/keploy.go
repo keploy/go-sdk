@@ -95,7 +95,6 @@ func AssertTests(t *testing.T) {
 type Config struct {
 	App         AppConfig
 	Server      ServerConfig
-	GrpcEnabled bool
 }
 
 type AppConfig struct {
@@ -121,6 +120,7 @@ type ServerConfig struct {
 	URL        string `default:"http://localhost:6789/api"`
 	LicenseKey string
 	AsyncCalls bool
+	GrpcEnabled bool
 }
 
 func New(cfg Config) *Keploy {
@@ -184,7 +184,7 @@ func New(cfg Config) *Keploy {
 		resp:     sync.Map{},
 		mocktime: sync.Map{},
 	}
-	if cfg.GrpcEnabled {
+	if cfg.Server.GrpcEnabled {
 		conn, err := grpc.Dial("localhost:6789", grpc.WithInsecure())
 		if err != nil {
 			logger.Error(":x: Failed to connect to keploy server via grpc. Please ensure that keploy server is running", zap.Error(err))
@@ -358,7 +358,7 @@ func (k *Keploy) Test() {
 
 func (k *Keploy) start(total int) (string, error) {
 	var resp map[string]string
-	if k.cfg.GrpcEnabled {
+	if k.cfg.Server.GrpcEnabled{
 		res, err := k.grpcClient.Start(k.Ctx, &proto.StartRequest{
 			Total:        strconv.Itoa(total),
 			App:          k.cfg.App.Name,
@@ -388,7 +388,7 @@ func (k *Keploy) start(total int) (string, error) {
 }
 
 func (k *Keploy) end(id string, status bool) error {
-	if k.cfg.GrpcEnabled {
+	if k.cfg.Server.GrpcEnabled {
 		_, err := k.grpcClient.End(k.Ctx, &proto.EndRequest{
 			Id:     id,
 			Status: strconv.FormatBool(status),
@@ -536,7 +536,7 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 	}
 
 	// test application reponse
-	if k.cfg.GrpcEnabled {
+	if k.cfg.Server.GrpcEnabled {
 		r, err := k.grpcClient.Test(k.Ctx, &proto.TestReq{
 			ID:    tc.ID,
 			AppID: k.cfg.App.Name,
@@ -661,7 +661,7 @@ func (k *Keploy) put(tcs regression.TestCaseReq) {
 			tcs.HttpReq.Body = base64.StdEncoding.EncodeToString([]byte(tcs.HttpReq.Body))
 		}
 	}
-	if k.cfg.GrpcEnabled {
+	if k.cfg.Server.GrpcEnabled {
 		resp, err := k.grpcClient.PostTC(k.Ctx, &proto.TestCaseReq{
 			Captured: tcs.Captured,
 			URI:      tcs.URI,
@@ -712,9 +712,7 @@ func (k *Keploy) put(tcs regression.TestCaseReq) {
 		if id == "" {
 			return
 		}
-		k.Log.Error("We are making a grpc call!!!!!")
 		k.denoise(id, tcs)
-
 	} else {
 		bin, err := json.Marshal(tcs)
 		if err != nil {
@@ -829,7 +827,7 @@ func (k *Keploy) denoise(id string, tcs regression.TestCaseReq) {
 	}
 
 	// send de-noise request to server
-	if k.cfg.GrpcEnabled {
+	if k.cfg.Server.GrpcEnabled {
 		_, err = k.grpcClient.DeNoise(k.Ctx, &proto.TestReq{
 			ID:    id,
 			AppID: k.cfg.App.Name,
@@ -914,7 +912,7 @@ func (k *Keploy) fetch(reqType models.Kind) []models.TestCase {
 	pageSize := 25
 	for i := 0; ; i += pageSize {
 		var res []models.TestCase
-		if k.cfg.GrpcEnabled {
+		if k.cfg.Server.GrpcEnabled {
 			resp, err := k.grpcClient.GetTCS(k.Ctx, &proto.GetTCSRequest{
 				App:          k.cfg.App.Name,
 				Offset:       strconv.Itoa(i),
