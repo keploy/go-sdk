@@ -369,7 +369,13 @@ func (k *Keploy) start(total int) (string, error) {
 			return "", err
 		}
 		result, _ := res.Descriptor()
+		if result == nil {
+			return "", errors.New("empty response")
+		}
 		err = json.Unmarshal(result, &resp)
+		if err != nil {
+			return "", err
+		}
 
 	} else {
 
@@ -537,25 +543,52 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 
 	// test application reponse
 	if k.cfg.Server.GrpcEnabled {
-		r, err := k.grpcClient.Test(k.Ctx, &proto.TestReq{
-			ID:    tc.ID,
-			AppID: k.cfg.App.Name,
-			RunID: runId,
-			Resp: &proto.HttpResp{
-				Body:          resp.Body,
-				Header:        utils.GetProtoMap(resp.Header),
-				StatusCode:    int64(resp.StatusCode),
-				StatusMessage: resp.StatusMessage,
-				ProtoMajor:    int64(resp.ProtoMajor),
-				ProtoMinor:    int64(resp.ProtoMinor),
-				Binary:        resp.Binary,
-			},
-			TestCasePath: k.cfg.App.TestPath,
-			MockPath:     k.cfg.App.MockPath,
-		})
-		if err != nil {
-			k.Log.Error("failed to create test request request server", zap.String("id", tc.ID), zap.String("url", tc.URI), zap.Error(err))
-			return false
+		var r *proto.TestResponse
+		var err error
+		switch tc.Type{
+		case string(models.HTTP):
+			r, err = k.grpcClient.Test(k.Ctx, &proto.TestReq{
+				ID:    tc.ID,
+				AppID: k.cfg.App.Name,
+				RunID: runId,
+				Resp: &proto.HttpResp{
+					Body:          resp.Body,
+					Header:        utils.GetProtoMap(resp.Header),
+					StatusCode:    int64(resp.StatusCode),
+					StatusMessage: resp.StatusMessage,
+					ProtoMajor:    int64(resp.ProtoMajor),
+					ProtoMinor:    int64(resp.ProtoMinor),
+					Binary:        resp.Binary,
+				},
+				TestCasePath: k.cfg.App.TestPath,
+				MockPath:     k.cfg.App.MockPath,
+			})
+			if err != nil {
+				k.Log.Error("failed to create test request request server", zap.String("id", tc.ID), zap.String("url", tc.URI), zap.Error(err))
+				return false
+			}
+			case string(models.GRPC_EXPORT):
+				r, err = k.grpcClient.Test(k.Ctx, &proto.TestReq{
+					ID:    tc.ID,
+					AppID: k.cfg.App.Name,
+					RunID: runId,
+					Resp: &proto.HttpResp{
+						Body:          resp.Body,
+						Header:        utils.GetProtoMap(resp.Header),
+						StatusCode:    int64(resp.StatusCode),
+						StatusMessage: resp.StatusMessage,
+						ProtoMajor:    int64(resp.ProtoMajor),
+						ProtoMinor:    int64(resp.ProtoMinor),
+						Binary:        resp.Binary,
+					},
+					TestCasePath: k.cfg.App.TestPath,
+					MockPath:     k.cfg.App.MockPath,
+					GrpcResp: &proto.GrpcResp{
+						Body: respGrpc.Body,
+						Err: respGrpc.Err,
+					},
+
+				})
 		}
 		res := r.GetPass()
 		if res["pass"] {
@@ -828,25 +861,54 @@ func (k *Keploy) denoise(id string, tcs regression.TestCaseReq) {
 
 	// send de-noise request to server
 	if k.cfg.Server.GrpcEnabled {
-		_, err = k.grpcClient.DeNoise(k.Ctx, &proto.TestReq{
-			ID:    id,
-			AppID: k.cfg.App.Name,
-			Resp: &proto.HttpResp{
-				Body:          resp2.Body,
-				Header:        utils.GetProtoMap(resp2.Header),
-				StatusCode:    int64(resp2.StatusCode),
-				StatusMessage: resp2.StatusMessage, //when it has to be done it will be done and it should be doe
-				ProtoMajor:    int64(resp2.ProtoMajor),
-				ProtoMinor:    int64(resp2.ProtoMinor),
-				Binary:        resp2.Binary,
-			},
-			TestCasePath: k.cfg.App.TestPath,
-			MockPath:     k.cfg.App.MockPath,
-		})
-		if err != nil {
-			k.Log.Error("failed to send de-noise request to backend", zap.String("url", tcs.URI), zap.Error(err))
-			return
+		switch tcs.Type {
+		case models.HTTP:
+			_, err = k.grpcClient.DeNoise(k.Ctx, &proto.TestReq{
+				ID:    id,
+				AppID: k.cfg.App.Name,
+				Resp: &proto.HttpResp{
+					Body:          resp2.Body,
+					Header:        utils.GetProtoMap(resp2.Header),
+					StatusCode:    int64(resp2.StatusCode),
+					StatusMessage: resp2.StatusMessage, //when it has to be done it will be done and it should be doe
+					ProtoMajor:    int64(resp2.ProtoMajor),
+					ProtoMinor:    int64(resp2.ProtoMinor),
+					Binary:        resp2.Binary,
+				},
+				TestCasePath: k.cfg.App.TestPath,
+				MockPath:     k.cfg.App.MockPath,
+			})
+			if err != nil {
+				k.Log.Error("failed to send de-noise request to backend", zap.String("url", tcs.URI), zap.Error(err))
+				return
+			}
+		case models.GRPC_EXPORT:
+			_, err = k.grpcClient.DeNoise(k.Ctx, &proto.TestReq{
+				ID:    id,
+				AppID: k.cfg.App.Name,
+				Resp: &proto.HttpResp{
+					Body:          resp2.Body,
+					Header:        utils.GetProtoMap(resp2.Header),
+					StatusCode:    int64(resp2.StatusCode),
+					StatusMessage: resp2.StatusMessage, //when it has to be done it will be done and it should be doe
+					ProtoMajor:    int64(resp2.ProtoMajor),
+					ProtoMinor:    int64(resp2.ProtoMinor),
+					Binary:        resp2.Binary,
+				},
+				TestCasePath: k.cfg.App.TestPath,
+				MockPath:     k.cfg.App.MockPath,
+				GrpcResp: &proto.GrpcResp{
+					Body:       resp2Grpc.Body,
+					Err: 	  resp2Grpc.Err,
+				},
+			})
+			if err != nil {
+				k.Log.Error("failed to send de-noise request to backend", zap.String("url", tcs.URI), zap.Error(err))
+				return
+			}
+
 		}
+
 
 	} else {
 		r, err := http.NewRequest("POST", k.cfg.Server.URL+"/regression/denoise", bytes.NewBuffer(bin2))
