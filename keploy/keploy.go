@@ -107,8 +107,8 @@ type AppConfig struct {
 type Filter struct {
 	AcceptUrlRegex string
 	HeaderRegex    []string
-	Remove   	   []string
-	Replace 	   map[string]string
+	Remove         []string
+	Replace        map[string]string
 	RejectUrlRegex []string
 }
 
@@ -285,7 +285,7 @@ func (k *Keploy) PutRespGrpc(id string, resp GrpcResp) {
 // Capture will capture request, response and output of external dependencies by making Call to keploy server.
 func (k *Keploy) Capture(req regression.TestCaseReq) {
 	// req.Path, _ = os.Getwd()
-	req.Remove = k.cfg.App.Filter.Remove //Setting the Remove field from config
+	req.Remove = k.cfg.App.Filter.Remove   //Setting the Remove field from config
 	req.Replace = k.cfg.App.Filter.Replace //Setting the Replace field from config
 	go k.put(req)
 }
@@ -295,8 +295,7 @@ func (k *Keploy) Test() {
 	// fetch test cases from web server and save to memory
 	k.Log.Info("test starting in " + k.cfg.App.Delay.String())
 	time.Sleep(k.cfg.App.Delay)
-	tcs := k.fetch(models.HTTP)
-	tcs = append(tcs, k.fetch(models.GRPC_EXPORT)...)
+	tcs := k.fetch()
 	total := len(tcs)
 
 	// start a http test run
@@ -756,12 +755,14 @@ func (k *Keploy) newGet(url string) ([]byte, error) {
 	return body, nil
 }
 
-func (k *Keploy) fetch(reqType models.Kind) []models.TestCase {
+// fetch makes a get request to keploy API server and returns array of testcases
+func (k *Keploy) fetch() []models.TestCase {
+
 	var tcs []models.TestCase = []models.TestCase{}
 	pageSize := 25
 
 	for i := 0; ; i += pageSize {
-		url := fmt.Sprintf("%s/regression/testcase?app=%s&offset=%d&limit=%d&testCasePath=%s&mockPath=%s&reqType=%s", k.cfg.Server.URL, k.cfg.App.Name, i, 25, k.cfg.App.TestPath, k.cfg.App.MockPath, reqType)
+		url := fmt.Sprintf("%s/regression/testcase?app=%s&offset=%d&limit=%d&testCasePath=%s&mockPath=%s", k.cfg.Server.URL, k.cfg.App.Name, i, 25, k.cfg.App.TestPath, k.cfg.App.MockPath)
 
 		req, err := http.NewRequest("GET", url, http.NoBody)
 		if err != nil {
