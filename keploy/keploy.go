@@ -107,8 +107,8 @@ type AppConfig struct {
 type Filter struct {
 	AcceptUrlRegex string
 	HeaderRegex    []string
-	Remove   	   []string
-	Replace 	   map[string]string
+	Remove         []string
+	Replace        map[string]string
 	RejectUrlRegex []string
 }
 
@@ -285,7 +285,7 @@ func (k *Keploy) PutRespGrpc(id string, resp GrpcResp) {
 // Capture will capture request, response and output of external dependencies by making Call to keploy server.
 func (k *Keploy) Capture(req regression.TestCaseReq) {
 	// req.Path, _ = os.Getwd()
-	req.Remove = k.cfg.App.Filter.Remove //Setting the Remove field from config
+	req.Remove = k.cfg.App.Filter.Remove   //Setting the Remove field from config
 	req.Replace = k.cfg.App.Filter.Replace //Setting the Replace field from config
 	go k.put(req)
 }
@@ -296,7 +296,11 @@ func (k *Keploy) Test() {
 	k.Log.Info("test starting in " + k.cfg.App.Delay.String())
 	time.Sleep(k.cfg.App.Delay)
 	tcs := k.fetch(models.HTTP)
-	tcs = append(tcs, k.fetch(models.GRPC_EXPORT)...)
+
+	// TODO: Add a method to fetch test cases for gRPC exports.
+	// The current call to HTTP server duplicates the tests (as well as test IDs) which causes lots of concurrency
+	// failures in parallel execution.
+	// tcs = append(tcs, k.fetch(models.GRPC_EXPORT)...)
 	total := len(tcs)
 
 	// start a http test run
