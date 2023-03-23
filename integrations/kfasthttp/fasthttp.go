@@ -37,7 +37,7 @@ func captureResp(c *fasthttp.RequestCtx, next fasthttp.RequestHandler) models.Ht
 }
 
 func setContextValFast(c *fasthttp.RequestCtx, val interface{}) {
-	c.SetUserValue(internal.KCTX, val)
+	c.SetUserValue(string(internal.KCTX), val)
 	
 }
 
