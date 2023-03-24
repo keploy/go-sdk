@@ -2,7 +2,6 @@ package kfasthttp
 
 import (
 	"bytes"
-	"context"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -37,9 +36,10 @@ func captureResp(c *fasthttp.RequestCtx, next fasthttp.RequestHandler) models.Ht
 }
 
 func setContextValFast(c *fasthttp.RequestCtx, val interface{}) {
-	c.SetUserValue(string(internal.KCTX), val)
+	c.SetUserValue(internal.KCTX, val)
 
 }
+
 func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp.RequestHandler {
 	if k == nil || internal.GetMode() == internal.MODE_OFF {
 		return func(next fasthttp.RequestHandler) fasthttp.RequestHandler {
@@ -92,22 +92,13 @@ func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp
 			resp := captureResp(c, next)
 			params := pathParams(c)
 
-			ctx := context.TODO()
-			c.VisitUserValues(func(key []byte, val interface{}) {
-				if string(key) == string(internal.KCTX) {
-					ctx = context.WithValue(ctx, internal.KCTX, val)
-					return
-				}
-				ctx = context.WithValue(ctx, string(key), val)
-
-			})
-
-			r = r.WithContext(ctx)
+			r = r.WithContext(c)
 
 			keploy.CaptureHttpTC(k, r, reqBody, resp, params)
 		})
 	}
 }
+
 func pathParams(c *fasthttp.RequestCtx) map[string]string {
 	var result map[string]string = make(map[string]string)
 	c.URI().QueryArgs().VisitAll(func(key, value []byte) {
