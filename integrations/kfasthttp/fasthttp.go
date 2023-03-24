@@ -37,8 +37,9 @@ func captureResp(c *fasthttp.RequestCtx, next fasthttp.RequestHandler) models.Ht
 }
 
 func setContextValFast(c *fasthttp.RequestCtx, val interface{}) {
-	c.SetUserValue(string(internal.KCTX), val)
-	
+	ctx := context.Context(c).Value(internal.KCTX)
+	c.SetUserValue(ctx, val)
+
 }
 
 func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp.RequestHandler {
