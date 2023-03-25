@@ -9,10 +9,6 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/creasty/defaults"
-	"github.com/go-playground/validator/v10"
-
-	// "github.com/benbjohnson/clock"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -23,10 +19,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/creasty/defaults"
+	"github.com/go-playground/validator/v10"
 	"github.com/keploy/go-sdk/mock"
 	"github.com/keploy/go-sdk/pkg/keploy"
 	proto "go.keploy.io/server/grpc/regression"
-	"go.keploy.io/server/http/regression"
 	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -283,7 +280,7 @@ func (k *Keploy) PutRespGrpc(id string, resp GrpcResp) {
 }
 
 // Capture will capture request, response and output of external dependencies by making Call to keploy server.
-func (k *Keploy) Capture(req regression.TestCaseReq) {
+func (k *Keploy) Capture(req models.TestCaseReq) {
 	// req.Path, _ = os.Getwd()
 	req.Remove = k.cfg.App.Filter.Remove   //Setting the Remove field from config
 	req.Replace = k.cfg.App.Filter.Replace //Setting the Replace field from config
@@ -458,7 +455,7 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 			return false
 		}
 
-		bin, err = json.Marshal(&regression.TestReq{
+		bin, err = json.Marshal(&models.TestReq{
 			ID:           tc.ID,
 			AppID:        k.cfg.App.Name,
 			RunID:        runId,
@@ -475,7 +472,7 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 			return false
 		}
 
-		bin, err = json.Marshal(&regression.TestReq{
+		bin, err = json.Marshal(&models.TestReq{
 			ID:           tc.ID,
 			AppID:        k.cfg.App.Name,
 			RunID:        runId,
@@ -523,7 +520,7 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 
 // isValidHeader checks the valid header to filter out testcases
 // It returns true when any of the header matches with regular expression and returns false when it doesn't match.
-func (k *Keploy) isValidHeader(tcs regression.TestCaseReq) bool {
+func (k *Keploy) isValidHeader(tcs models.TestCaseReq) bool {
 	var fil = k.cfg.App.Filter
 	var t = tcs.HttpReq.Header
 	var valid bool = false
@@ -545,7 +542,7 @@ func (k *Keploy) isValidHeader(tcs regression.TestCaseReq) bool {
 // isRejectedUrl checks whether the request url matches any of the excluded
 // urls which should not be recorded. It returns true, if any of the RejectUrlRegex
 // matches to current url.
-func (k *Keploy) isRejectedUrl(tcs regression.TestCaseReq) bool {
+func (k *Keploy) isRejectedUrl(tcs models.TestCaseReq) bool {
 	var fil = k.cfg.App.Filter
 	var t = tcs.HttpReq.URL
 	var valid bool = true
@@ -563,7 +560,7 @@ func (k *Keploy) isRejectedUrl(tcs regression.TestCaseReq) bool {
 	return valid
 }
 
-func (k *Keploy) put(tcs regression.TestCaseReq) {
+func (k *Keploy) put(tcs models.TestCaseReq) {
 
 	if tcs.Type == models.HTTP {
 		var fil = k.cfg.App.Filter
@@ -631,7 +628,7 @@ func (k *Keploy) put(tcs regression.TestCaseReq) {
 	k.denoise(id, tcs)
 }
 
-func (k *Keploy) denoise(id string, tcs regression.TestCaseReq) {
+func (k *Keploy) denoise(id string, tcs models.TestCaseReq) {
 	// run the request again to find noisy fields
 	time.Sleep(2 * time.Second)
 	var (
@@ -663,7 +660,7 @@ func (k *Keploy) denoise(id string, tcs regression.TestCaseReq) {
 			return
 		}
 
-		bin2, err = json.Marshal(&regression.TestReq{
+		bin2, err = json.Marshal(&models.TestReq{
 			ID:           id,
 			AppID:        k.cfg.App.Name,
 			Resp:         *resp2,
@@ -686,7 +683,7 @@ func (k *Keploy) denoise(id string, tcs regression.TestCaseReq) {
 			return
 		}
 
-		bin2, err = json.Marshal(&regression.TestReq{
+		bin2, err = json.Marshal(&models.TestReq{
 			ID:           id,
 			AppID:        k.cfg.App.Name,
 			GrpcResp:     resp2Grpc,
