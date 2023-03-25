@@ -261,6 +261,9 @@ func main(){
 }
 ```
 ### 6. FastHttp
+
+Requirement: [valyala/fasthttp](https://github.com/valyala/fasthttp) version >= 1.41.0
+
 ```go
 mw := kfasthttp.FastHttpMiddleware(k)
 ```
