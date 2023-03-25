@@ -17,7 +17,6 @@ import (
 
 	"github.com/keploy/go-sdk/pkg/keploy"
 	proto "go.keploy.io/server/grpc/regression"
-	"go.keploy.io/server/http/regression"
 	"go.keploy.io/server/pkg/models"
 
 	"go.uber.org/zap"
@@ -184,7 +183,7 @@ func CaptureGrpcTC(k *Keploy, grpcCtx context.Context, req models.GrpcReq, resp 
 	}
 	deps := d.(*keploy.Context)
 
-	k.Capture(regression.TestCaseReq{
+	k.Capture(models.TestCaseReq{
 		Captured: time.Now().Unix(),
 		AppID:    k.cfg.App.Name,
 		GrpcReq:  req,
@@ -207,7 +206,7 @@ func CaptureHttpTC(k *Keploy, r *http.Request, reqBody []byte, resp models.HttpR
 	}
 	deps := d.(*keploy.Context)
 
-	k.Capture(regression.TestCaseReq{
+	k.Capture(models.TestCaseReq{
 		Captured: time.Now().Unix(),
 		AppID:    k.cfg.App.Name,
 		URI:      urlPath(r.URL.Path, params),
