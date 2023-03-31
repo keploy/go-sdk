@@ -102,9 +102,9 @@ func mw(k *keploy.Keploy) gin.HandlerFunc {
 			}
 		}
 		c.Request.Body = ioutil.NopCloser(bytes.NewBuffer(reqBody)) // Reset
+		params := urlParamsGin(c, k)
 
 		resp := captureRespGin(c)
-		params := urlParamsGin(c, k)
 		keploy.CaptureHttpTC(k, c.Request, reqBody, resp, params)
 	}
 }

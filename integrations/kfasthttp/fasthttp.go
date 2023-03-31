@@ -89,8 +89,9 @@ func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp
 			}
 			r := &http.Request{}
 			fasthttpadaptor.ConvertRequest(c, r, true) //converting fasthttp request to http
-			resp := captureResp(c, next)
 			params := pathParams(c)
+
+			resp := captureResp(c, next)
 
 			r = r.WithContext(c)
 
