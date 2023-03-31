@@ -9,12 +9,6 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"google.golang.org/grpc"
-
-	"github.com/creasty/defaults"
-	"github.com/go-playground/validator/v10"
-
-	// "github.com/benbjohnson/clock"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -26,11 +20,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/creasty/defaults"
+	"github.com/go-playground/validator/v10"
 	"github.com/keploy/go-sdk/mock"
 	"github.com/keploy/go-sdk/pkg/keploy"
 	proto "go.keploy.io/server/grpc/regression"
-	"go.keploy.io/server/grpc/utils"
-	"go.keploy.io/server/http/regression"
 	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -299,7 +293,7 @@ func (k *Keploy) PutRespGrpc(id string, resp GrpcResp) {
 }
 
 // Capture will capture request, response and output of external dependencies by making Call to keploy server.
-func (k *Keploy) Capture(req regression.TestCaseReq) {
+func (k *Keploy) Capture(req models.TestCaseReq) {
 	// req.Path, _ = os.Getwd()
 	req.Remove = k.cfg.App.Filter.Remove   //Setting the Remove field from config
 	req.Replace = k.cfg.App.Filter.Replace //Setting the Replace field from config
@@ -311,8 +305,7 @@ func (k *Keploy) Test() {
 	// fetch test cases from web server and save to memory
 	k.Log.Info("test starting in " + k.cfg.App.Delay.String())
 	time.Sleep(k.cfg.App.Delay)
-	tcs := k.fetch(models.HTTP)
-	tcs = append(tcs, k.fetch(models.GRPC_EXPORT)...)
+	tcs := k.fetch()
 	total := len(tcs)
 
 	// start a http test run
@@ -508,7 +501,7 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 			return false
 		}
 
-		bin, err = json.Marshal(&regression.TestReq{
+		bin, err = json.Marshal(&models.TestReq{
 			ID:           tc.ID,
 			AppID:        k.cfg.App.Name,
 			RunID:        runId,
@@ -525,7 +518,7 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 			return false
 		}
 
-		bin, err = json.Marshal(&regression.TestReq{
+		bin, err = json.Marshal(&models.TestReq{
 			ID:           tc.ID,
 			AppID:        k.cfg.App.Name,
 			RunID:        runId,
@@ -629,7 +622,7 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 
 // isValidHeader checks the valid header to filter out testcases
 // It returns true when any of the header matches with regular expression and returns false when it doesn't match.
-func (k *Keploy) isValidHeader(tcs regression.TestCaseReq) bool {
+func (k *Keploy) isValidHeader(tcs models.TestCaseReq) bool {
 	var fil = k.cfg.App.Filter
 	var t = tcs.HttpReq.Header
 	var valid bool = false
@@ -651,7 +644,7 @@ func (k *Keploy) isValidHeader(tcs regression.TestCaseReq) bool {
 // isRejectedUrl checks whether the request url matches any of the excluded
 // urls which should not be recorded. It returns true, if any of the RejectUrlRegex
 // matches to current url.
-func (k *Keploy) isRejectedUrl(tcs regression.TestCaseReq) bool {
+func (k *Keploy) isRejectedUrl(tcs models.TestCaseReq) bool {
 	var fil = k.cfg.App.Filter
 	var t = tcs.HttpReq.URL
 	var valid bool = true
@@ -669,7 +662,7 @@ func (k *Keploy) isRejectedUrl(tcs regression.TestCaseReq) bool {
 	return valid
 }
 
-func (k *Keploy) put(tcs regression.TestCaseReq) {
+func (k *Keploy) put(tcs models.TestCaseReq) {
 
 	if tcs.Type == models.HTTP {
 		var fil = k.cfg.App.Filter
@@ -790,7 +783,7 @@ func (k *Keploy) put(tcs regression.TestCaseReq) {
 	}
 }
 
-func (k *Keploy) denoise(id string, tcs regression.TestCaseReq) {
+func (k *Keploy) denoise(id string, tcs models.TestCaseReq) {
 	// run the request again to find noisy fields
 	time.Sleep(2 * time.Second)
 	var (
@@ -822,7 +815,7 @@ func (k *Keploy) denoise(id string, tcs regression.TestCaseReq) {
 			return
 		}
 
-		bin2, err = json.Marshal(&regression.TestReq{
+		bin2, err = json.Marshal(&models.TestReq{
 			ID:           id,
 			AppID:        k.cfg.App.Name,
 			Resp:         *resp2,
@@ -845,7 +838,7 @@ func (k *Keploy) denoise(id string, tcs regression.TestCaseReq) {
 			return
 		}
 
-		bin2, err = json.Marshal(&regression.TestReq{
+		bin2, err = json.Marshal(&models.TestReq{
 			ID:           id,
 			AppID:        k.cfg.App.Name,
 			GrpcResp:     resp2Grpc,
@@ -969,10 +962,37 @@ func (k *Keploy) newGet(url string) ([]byte, error) {
 
 }
 
-func (k *Keploy) fetch(reqType models.Kind) []models.TestCase {
+// fetch makes a get request to keploy API server and returns array of testcases
+func (k *Keploy) fetch() []models.TestCase {
+
 	var tcs []models.TestCase = []models.TestCase{}
 	pageSize := 25
 	for i := 0; ; i += pageSize {
+		url := fmt.Sprintf("%s/regression/testcase?app=%s&offset=%d&limit=%d&testCasePath=%s&mockPath=%s", k.cfg.Server.URL, k.cfg.App.Name, i, 25, k.cfg.App.TestPath, k.cfg.App.MockPath)
+
+		req, err := http.NewRequest("GET", url, http.NoBody)
+		if err != nil {
+			k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
+			return nil
+		}
+		k.setKey(req)
+		resp, err := k.client.Do(req)
+		if err != nil {
+			k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
+			return nil
+		}
+		if resp.StatusCode != http.StatusOK {
+			k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(errors.New("failed to send get request: "+resp.Status)))
+			return nil
+		}
+
+		defer resp.Body.Close()
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
+			return nil
+		}
+
 		var res []models.TestCase
 		if k.cfg.Server.GrpcEnabled {
 			resp, err := k.grpcClient.GetTCS(k.Ctx, &proto.GetTCSRequest{

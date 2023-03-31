@@ -14,6 +14,6 @@ type Context struct {
 	Deps       []models.Dependency
 	Mock       []*proto.Mock
 	Mu         *sync.Mutex
-	Remove		[]string
-	Replace		map[string]string
+	Remove     []string
+	Replace    map[string]string
 }
