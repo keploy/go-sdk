@@ -79,10 +79,6 @@ func (r Rows) Close() error {
 	switch mode {
 	case keploy.MODE_TEST:
 		// don't run actual rows.Close
-		// ignore the rows.Close which is not done manually.
-		if kctx.Deps == nil || len(kctx.Deps) == 0 || len(kctx.Deps[0].Data) != 1 {
-			return nil
-		}
 	case keploy.MODE_RECORD:
 		if r.Rows != nil {
 			err = r.Rows.Close()
