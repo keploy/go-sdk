@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/keploy/go-sdk/keploy"
+	internal "github.com/keploy/go-sdk/pkg/keploy"
 	"go.keploy.io/server/pkg/models"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -16,16 +17,16 @@ import (
 // information about Collection.DeleteOne.
 func (c *Collection) DeleteOne(ctx context.Context, filter interface{},
 	opts ...*options.DeleteOptions) (*mongo.DeleteResult, error) {
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		output, err := c.Collection.DeleteOne(ctx, filter, opts...)
 		return output, err
 	}
 
 	var (
 		output = &mongo.DeleteResult{}
-		err error
-		kerr = &keploy.KError{}
-		data []interface{}
+		err    error
+		kerr   = &keploy.KError{}
+		data   []interface{}
 	)
 	data = append(data, filter)
 	for _, j := range opts {
@@ -70,20 +71,20 @@ func (c *Collection) DeleteOne(ctx context.Context, filter interface{},
 	return output, err
 }
 
-// DeleteMany method mocks Collection.DeleteMany of mongo inorder to call it only in "capture" or "off" mode.
+// DeleteMany method mocks Collection.DeleteMany of mongo inorder to call it only in keploy.MODE_RECORD or "off" mode.
 //
 // See https://pkg.go.dev/go.mongodb.org/mongo-driver@v1.8.0/mongo#Collection.DeleteMany for information about Collection.DeleteMany.
 func (c *Collection) DeleteMany(ctx context.Context, filter interface{},
 	opts ...*options.DeleteOptions) (*mongo.DeleteResult, error) {
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		output, err := c.Collection.DeleteMany(ctx, filter, opts...)
 		return output, err
 	}
 	var (
 		output *mongo.DeleteResult = &mongo.DeleteResult{}
-		err error
-		kerr = &keploy.KError{}
-		data []interface{}
+		err    error
+		kerr   = &keploy.KError{}
+		data   []interface{}
 	)
 	data = append(data, filter)
 	for _, j := range opts {

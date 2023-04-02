@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"go.keploy.io/server/pkg/models"
 	"reflect"
 
+	"go.keploy.io/server/pkg/models"
+
 	"github.com/keploy/go-sdk/keploy"
+	internal "github.com/keploy/go-sdk/pkg/keploy"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -31,7 +33,7 @@ func clientInterceptor(k *keploy.Keploy) func(
 		opts ...grpc.CallOption,
 	) error {
 
-		if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+		if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 			err := invoker(ctx, method, req, reply, cc, opts...)
 			return err
 		}
@@ -40,16 +42,16 @@ func clientInterceptor(k *keploy.Keploy) func(
 			err  error
 			kerr = &keploy.KError{}
 		)
-		kctx, er := keploy.GetState(ctx)
+		kctx, er := internal.GetState(ctx)
 		if er != nil {
 			return er
 		}
 
 		mode := kctx.Mode
 		switch mode {
-		case "test":
+		case internal.MODE_TEST:
 			//dont run invoker
-		case "capture":
+		case internal.MODE_RECORD:
 			err = invoker(ctx, method, req, reply, cc, opts...)
 		default:
 			return errors.New("integrations: Not in a valid sdk mode")
@@ -93,7 +95,7 @@ func streamClientInterceptor(k *keploy.Keploy) func(ctx context.Context, desc *g
 		streamer grpc.Streamer,
 		opts ...grpc.CallOption) (grpc.ClientStream, error) {
 
-		if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+		if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 			clientStream, err := streamer(ctx, desc, cc, method, opts...)
 			return clientStream, err
 		}
@@ -101,7 +103,7 @@ func streamClientInterceptor(k *keploy.Keploy) func(ctx context.Context, desc *g
 			err          error
 			clientStream grpc.ClientStream
 		)
-		kctx, er := keploy.GetState(ctx)
+		kctx, er := internal.GetState(ctx)
 		if er != nil {
 			emptyCS := new(grpc.ClientStream)
 			clientStream = *emptyCS
@@ -110,11 +112,11 @@ func streamClientInterceptor(k *keploy.Keploy) func(ctx context.Context, desc *g
 		mode := kctx.Mode
 
 		switch mode {
-		case "test":
+		case internal.MODE_TEST:
 			//dont run invoker
 			clientStreamAdd := new(grpc.ClientStream)
 			clientStream = *clientStreamAdd
-		case "capture":
+		case internal.MODE_RECORD:
 			clientStream, err = streamer(ctx, desc, cc, method, opts...)
 		}
 
@@ -144,15 +146,15 @@ func (s *tracedClientStream) CloseSend() error {
 		err  error
 		kerr = &keploy.KError{}
 	)
-	kctx, er := keploy.GetState(s.context)
+	kctx, er := internal.GetState(s.context)
 	if er != nil {
 		return er
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "capture":
+	case internal.MODE_RECORD:
 		err = s.ClientStream.CloseSend()
-	case "test":
+	case internal.MODE_TEST:
 		// don't call CloseSend
 
 	}
@@ -185,15 +187,15 @@ func (s *tracedClientStream) SendMsg(m interface{}) error {
 		err  error
 		kerr = &keploy.KError{}
 	)
-	kctx, er := keploy.GetState(s.context)
+	kctx, er := internal.GetState(s.context)
 	if er != nil {
 		return er
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "capture":
+	case internal.MODE_RECORD:
 		err = s.ClientStream.SendMsg(m)
-	case "test":
+	case internal.MODE_TEST:
 		// don't call SendMsg
 
 	}
@@ -224,15 +226,15 @@ func (s *tracedClientStream) SendMsg(m interface{}) error {
 func (s *tracedClientStream) Context() context.Context {
 
 	var ctxOutput context.Context
-	kctx, er := keploy.GetState(s.context)
+	kctx, er := internal.GetState(s.context)
 	if er != nil {
 		return ctxOutput
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "capture":
+	case internal.MODE_RECORD:
 		ctxOutput = s.ClientStream.Context()
-	case "test":
+	case internal.MODE_TEST:
 		// don't call Context
 
 	}
@@ -261,15 +263,15 @@ func (s *tracedClientStream) RecvMsg(m interface{}) error {
 		err  error
 		kerr = &keploy.KError{}
 	)
-	kctx, er := keploy.GetState(s.context)
+	kctx, er := internal.GetState(s.context)
 	if er != nil {
 		return er
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "capture":
+	case internal.MODE_RECORD:
 		err = s.ClientStream.RecvMsg(m)
-	case "test":
+	case internal.MODE_TEST:
 		// don't call RecvMsg
 
 	}

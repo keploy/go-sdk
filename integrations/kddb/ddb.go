@@ -8,6 +8,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/keploy/go-sdk/keploy"
+	internal "github.com/keploy/go-sdk/pkg/keploy"
+
 	"go.uber.org/zap"
 )
 
@@ -29,12 +31,12 @@ type DynamoDB struct {
 
 func (c *DynamoDB) QueryWithContext(ctx aws.Context, input *dynamodb.QueryInput, opts ...request.Option) (*dynamodb.QueryOutput, error) {
 
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		return c.DynamoDB.QueryWithContext(ctx, input, opts...)
 	}
 	output, err := &dynamodb.QueryOutput{}, errors.New("")
 
-	if keploy.GetModeFromContext(ctx) != keploy.MODE_TEST {
+	if internal.GetModeFromContext(ctx) != internal.MODE_TEST {
 		output, err = c.DynamoDB.QueryWithContext(ctx, input, opts...)
 	}
 
@@ -66,13 +68,13 @@ func (c *DynamoDB) QueryWithContext(ctx aws.Context, input *dynamodb.QueryInput,
 
 func (c *DynamoDB) GetItemWithContext(ctx aws.Context, input *dynamodb.GetItemInput, opts ...request.Option) (*dynamodb.GetItemOutput, error) {
 
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		return c.DynamoDB.GetItemWithContext(ctx, input, opts...)
 	}
 
 	output, err := &dynamodb.GetItemOutput{}, errors.New("")
 
-	if keploy.GetModeFromContext(ctx) != keploy.MODE_TEST {
+	if internal.GetModeFromContext(ctx) != internal.MODE_TEST {
 		output, err = c.DynamoDB.GetItemWithContext(ctx, input, opts...)
 	}
 
@@ -106,13 +108,13 @@ func (c *DynamoDB) GetItemWithContext(ctx aws.Context, input *dynamodb.GetItemIn
 
 func (c *DynamoDB) PutItemWithContext(ctx aws.Context, input *dynamodb.PutItemInput, opts ...request.Option) (*dynamodb.PutItemOutput, error) {
 
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		return c.DynamoDB.PutItemWithContext(ctx, input, opts...)
 	}
 
 	output, err := &dynamodb.PutItemOutput{}, errors.New("")
 
-	if keploy.GetModeFromContext(ctx) != keploy.MODE_TEST {
+	if internal.GetModeFromContext(ctx) != internal.MODE_TEST {
 		output, err = c.DynamoDB.PutItemWithContext(ctx, input, opts...)
 	}
 

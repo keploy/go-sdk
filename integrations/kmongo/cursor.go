@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/keploy/go-sdk/keploy"
+	internal "github.com/keploy/go-sdk/pkg/keploy"
 	"go.keploy.io/server/pkg/models"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -15,51 +16,51 @@ import (
 // Cursor contains emedded mongo.Cursor in order to override its methods.
 type Cursor struct {
 	mongo.Cursor
-	filter interface{}
-	pipeline interface{}
-	findOpts   []options.FindOptions
+	filter        interface{}
+	pipeline      interface{}
+	findOpts      []options.FindOptions
 	aggregateOpts []options.AggregateOptions
-	ctx    context.Context
-	log    *zap.Logger
+	ctx           context.Context
+	log           *zap.Logger
 }
 
 // Err mocks mongo's Cursor.Err in order to store and replay its output according SDK mode.
 //
 // See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Cursor.Err for information about Cursor.Err.
 func (cr *Cursor) Err() error {
-	if keploy.GetModeFromContext(cr.ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(cr.ctx) == internal.MODE_OFF {
 		err := cr.Cursor.Err()
 		return err
 	}
 	var err error
 	var kerr = &keploy.KError{}
-	kctx, er := keploy.GetState(cr.ctx)
+	kctx, er := internal.GetState(cr.ctx)
 	if er != nil {
 		return er
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case internal.MODE_TEST:
 		//dont run mongo query as it is stored in context
 		err = nil
-	case "capture":
+	case internal.MODE_RECORD:
 		err = cr.Cursor.Err()
 	default:
 		return errors.New("integrations: Not in a valid sdk mode")
 	}
 
 	meta := map[string]string{
-		"name":        "mongodb",
-		"type":        string(models.NoSqlDB),
+		"name": "mongodb",
+		"type": string(models.NoSqlDB),
 	}
-	if cr.filter!=nil{
-		meta["filter"]      = fmt.Sprint(cr.filter)
+	if cr.filter != nil {
+		meta["filter"] = fmt.Sprint(cr.filter)
 		meta["FindOptions"] = fmt.Sprint(cr.findOpts)
-		meta["operation"]   = "Find.Err"
+		meta["operation"] = "Find.Err"
 	} else {
-		meta["pipeline"]         = fmt.Sprint(cr.pipeline)
+		meta["pipeline"] = fmt.Sprint(cr.pipeline)
 		meta["AggregateOptions"] = fmt.Sprint(cr.aggregateOpts)
-		meta["operation"]        = "Aggregate.Err"
+		meta["operation"] = "Aggregate.Err"
 
 	}
 
@@ -83,39 +84,39 @@ func (cr *Cursor) Err() error {
 //
 // See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Cursor.Close for information about Cursor.Close.
 func (cr *Cursor) Close(ctx context.Context) error {
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		err := cr.Cursor.Close(ctx)
 		return err
 	}
 	var err error
 	var kerr = &keploy.KError{}
-	kctx, er := keploy.GetState(cr.ctx)
+	kctx, er := internal.GetState(cr.ctx)
 	if er != nil {
 		return er
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case internal.MODE_TEST:
 		//dont run mongo query as it is stored in context
 		err = nil
-	case "capture":
+	case internal.MODE_RECORD:
 		err = cr.Cursor.Close(ctx)
 	default:
 		return errors.New("integrations: Not in a valid sdk mode")
 	}
 
 	meta := map[string]string{
-		"name":        "mongodb",
-		"type":        string(models.NoSqlDB),
+		"name": "mongodb",
+		"type": string(models.NoSqlDB),
 	}
-	if cr.filter!=nil{
-		meta["filter"]      = fmt.Sprint(cr.filter)
+	if cr.filter != nil {
+		meta["filter"] = fmt.Sprint(cr.filter)
 		meta["FindOptions"] = fmt.Sprint(cr.findOpts)
-		meta["operation"]   = "Find.Close"
+		meta["operation"] = "Find.Close"
 	} else {
-		meta["pipeline"]         = fmt.Sprint(cr.pipeline)
+		meta["pipeline"] = fmt.Sprint(cr.pipeline)
 		meta["AggregateOptions"] = fmt.Sprint(cr.aggregateOpts)
-		meta["operation"]        = "Aggregate.Close"
+		meta["operation"] = "Aggregate.Close"
 
 	}
 
@@ -139,21 +140,21 @@ func (cr *Cursor) Close(ctx context.Context) error {
 //
 // See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Cursor.TryNext for information about Cursor.TryNext.
 func (cr *Cursor) TryNext(ctx context.Context) bool {
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		return cr.Cursor.TryNext(ctx)
 	}
-	kctx, er := keploy.GetState(cr.ctx)
+	kctx, er := internal.GetState(cr.ctx)
 	if er != nil {
 		return false
 	}
 	var output *bool
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case internal.MODE_TEST:
 		//dont run mongo query as it is stored in context
 		n := false
 		output = &n
-	case "capture":
+	case internal.MODE_RECORD:
 		n := cr.Cursor.TryNext(ctx)
 		output = &n
 	default:
@@ -161,17 +162,17 @@ func (cr *Cursor) TryNext(ctx context.Context) bool {
 	}
 
 	meta := map[string]string{
-		"name":        "mongodb",
-		"type":        string(models.NoSqlDB),
+		"name": "mongodb",
+		"type": string(models.NoSqlDB),
 	}
-	if cr.filter!=nil{
-		meta["filter"]      = fmt.Sprint(cr.filter)
+	if cr.filter != nil {
+		meta["filter"] = fmt.Sprint(cr.filter)
 		meta["FindOptions"] = fmt.Sprint(cr.findOpts)
-		meta["operation"]   = "Find.TryNext"
+		meta["operation"] = "Find.TryNext"
 	} else {
-		meta["pipeline"]         = fmt.Sprint(cr.pipeline)
+		meta["pipeline"] = fmt.Sprint(cr.pipeline)
 		meta["AggregateOptions"] = fmt.Sprint(cr.aggregateOpts)
-		meta["operation"]        = "Aggregate.TryNext"
+		meta["operation"] = "Aggregate.TryNext"
 
 	}
 
@@ -189,39 +190,39 @@ func (cr *Cursor) TryNext(ctx context.Context) bool {
 //
 // See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Cursor.All for information about Cursor.All.
 func (cr *Cursor) All(ctx context.Context, results interface{}) error {
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		err := cr.Cursor.All(ctx, results)
 		return err
 	}
 	var err error
 	var kerr = &keploy.KError{}
-	kctx, er := keploy.GetState(cr.ctx)
+	kctx, er := internal.GetState(cr.ctx)
 	if er != nil {
 		return er
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case internal.MODE_TEST:
 		//dont run mongo query as it is stored in context
 		err = nil
-	case "capture":
+	case internal.MODE_RECORD:
 		err = cr.Cursor.All(ctx, results)
 	default:
 		return errors.New("integrations: Not in a valid sdk mode")
 	}
 
 	meta := map[string]string{
-		"name":        "mongodb",
-		"type":        string(models.NoSqlDB),
+		"name": "mongodb",
+		"type": string(models.NoSqlDB),
 	}
-	if cr.filter!=nil{
-		meta["filter"]      = fmt.Sprint(cr.filter)
+	if cr.filter != nil {
+		meta["filter"] = fmt.Sprint(cr.filter)
 		meta["FindOptions"] = fmt.Sprint(cr.findOpts)
-		meta["operation"]   = "Find.All"
+		meta["operation"] = "Find.All"
 	} else {
-		meta["pipeline"]         = fmt.Sprint(cr.pipeline)
+		meta["pipeline"] = fmt.Sprint(cr.pipeline)
 		meta["AggregateOptions"] = fmt.Sprint(cr.aggregateOpts)
-		meta["operation"]        = "Aggregate.All"
+		meta["operation"] = "Aggregate.All"
 
 	}
 
@@ -245,21 +246,21 @@ func (cr *Cursor) All(ctx context.Context, results interface{}) error {
 //
 // See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Cursor.Next for information about Cursor.Next.
 func (cr *Cursor) Next(ctx context.Context) bool {
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		return cr.Cursor.Next(ctx)
 	}
-	kctx, er := keploy.GetState(cr.ctx)
+	kctx, er := internal.GetState(cr.ctx)
 	if er != nil {
 		return false
 	}
 	var output *bool
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case internal.MODE_TEST:
 		//dont run mongo query as it is stored in context
 		n := false
 		output = &n
-	case "capture":
+	case internal.MODE_RECORD:
 		n := cr.Cursor.Next(ctx)
 		output = &n
 	default:
@@ -267,17 +268,17 @@ func (cr *Cursor) Next(ctx context.Context) bool {
 	}
 
 	meta := map[string]string{
-		"name":        "mongodb",
-		"type":        string(models.NoSqlDB),
+		"name": "mongodb",
+		"type": string(models.NoSqlDB),
 	}
-	if cr.filter!=nil{
-		meta["filter"]      = fmt.Sprint(cr.filter)
+	if cr.filter != nil {
+		meta["filter"] = fmt.Sprint(cr.filter)
 		meta["FindOptions"] = fmt.Sprint(cr.findOpts)
-		meta["operation"]   = "Find.Next"
+		meta["operation"] = "Find.Next"
 	} else {
-		meta["pipeline"]         = fmt.Sprint(cr.pipeline)
+		meta["pipeline"] = fmt.Sprint(cr.pipeline)
 		meta["AggregateOptions"] = fmt.Sprint(cr.aggregateOpts)
-		meta["operation"]        = "Aggregate.Next"
+		meta["operation"] = "Aggregate.Next"
 
 	}
 
@@ -295,39 +296,39 @@ func (cr *Cursor) Next(ctx context.Context) bool {
 //
 // See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Cursor.Decode for information about Cursor.Decode.
 func (cr *Cursor) Decode(v interface{}) error {
-	if keploy.GetModeFromContext(cr.ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(cr.ctx) == internal.MODE_OFF {
 		err := cr.Cursor.Decode(v)
 		return err
 	}
 	var err error
 	var kerr = &keploy.KError{}
-	kctx, er := keploy.GetState(cr.ctx)
+	kctx, er := internal.GetState(cr.ctx)
 	if er != nil {
 		return er
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case internal.MODE_TEST:
 		//dont run mongo query as it is stored in context
 		err = nil
-	case "capture":
+	case internal.MODE_RECORD:
 		err = cr.Cursor.Decode(v)
 	default:
 		return errors.New("integrations: Not in a valid sdk mode")
 	}
 
 	meta := map[string]string{
-		"name":        "mongodb",
-		"type":        string(models.NoSqlDB),
+		"name": "mongodb",
+		"type": string(models.NoSqlDB),
 	}
-	if cr.filter!=nil{
-		meta["filter"]      = fmt.Sprint(cr.filter)
+	if cr.filter != nil {
+		meta["filter"] = fmt.Sprint(cr.filter)
 		meta["FindOptions"] = fmt.Sprint(cr.findOpts)
-		meta["operation"]   = "Find.Decode"
+		meta["operation"] = "Find.Decode"
 	} else {
-		meta["pipeline"]         = fmt.Sprint(cr.pipeline)
+		meta["pipeline"] = fmt.Sprint(cr.pipeline)
 		meta["AggregateOptions"] = fmt.Sprint(cr.aggregateOpts)
-		meta["operation"]        = "Aggregate.Decode"
+		meta["operation"] = "Aggregate.Decode"
 
 	}
 
@@ -348,7 +349,7 @@ func (cr *Cursor) Decode(v interface{}) error {
 }
 
 // // Find creates and returns the instance of pointer to Cursor which have overridden methods of mongo.Cursor.
-// // Actual Collection.Find is called only in "capture" or "off" mode.
+// // Actual Collection.Find is called only in keploy.MODE_RECORD or "off" mode.
 // //
 // // For information about Collection.Find, See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Collection.Find.
 // func (c *Collection) Find(ctx context.Context, filter interface{},
@@ -382,7 +383,7 @@ func (cr *Cursor) Decode(v interface{}) error {
 // 		err    error
 // 	)
 // 	switch mode {
-// 	case "test":
+// 	case keploy.MODE_TEST:
 // 		//don't call method in test mode
 // 		return &Cursor{
 // 			filter: filter,
@@ -390,7 +391,7 @@ func (cr *Cursor) Decode(v interface{}) error {
 // 			log:    c.log,
 // 			ctx:    ctx,
 // 		}, err
-// 	case "capture":
+// 	case keploy.MODE_RECORD:
 // 		cursor, err = c.Collection.Find(ctx, filter, opts...)
 // 		return &Cursor{
 // 			Cursor: *cursor,

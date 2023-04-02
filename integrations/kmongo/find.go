@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/keploy/go-sdk/keploy"
+	internal "github.com/keploy/go-sdk/pkg/keploy"
+
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -14,7 +15,7 @@ import (
 //
 // See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Collection.FindOne for information about Collection.FindOne.
 func (c *Collection) FindOne(ctx context.Context, filter interface{}, opts ...*options.FindOneOptions) *SingleResult {
-	
+
 	derivedOpts := []options.FindOneOptions{}
 	for _, j := range opts {
 		derivedOpts = append(derivedOpts, *j)
@@ -26,15 +27,15 @@ func (c *Collection) FindOne(ctx context.Context, filter interface{}, opts ...*o
 		ctx:    ctx,
 	}
 
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		sr := c.Collection.FindOne(ctx, filter, opts...)
-		if sr!=nil{
+		if sr != nil {
 			singleResult.SingleResult = *sr
 		}
 		return singleResult
 	}
 
-	kctx, err := keploy.GetState(ctx)
+	kctx, err := internal.GetState(ctx)
 	if err != nil {
 		return singleResult
 	}
@@ -42,11 +43,11 @@ func (c *Collection) FindOne(ctx context.Context, filter interface{}, opts ...*o
 	var sr *mongo.SingleResult
 
 	switch mode {
-	case "test":
+	case internal.MODE_TEST:
 		return singleResult
-	case "capture":
+	case internal.MODE_RECORD:
 		sr = c.Collection.FindOne(ctx, filter, opts...)
-		if sr!=nil{
+		if sr != nil {
 			singleResult.SingleResult = *sr
 		}
 	default:
@@ -57,7 +58,7 @@ func (c *Collection) FindOne(ctx context.Context, filter interface{}, opts ...*o
 }
 
 // Find creates and returns the instance of pointer to  keploy Cursor struct which have overridden methods of mongo.Cursor.
-// Actual Collection.Find is called only in "capture" or "off" mode.
+// Actual Collection.Find is called only in keploy.MODE_RECORD or "off" mode.
 //
 // For information about Collection.Find, See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Collection.Find.
 func (c *Collection) Find(ctx context.Context, filter interface{},
@@ -68,21 +69,21 @@ func (c *Collection) Find(ctx context.Context, filter interface{},
 		derivedOpts = append(derivedOpts, *j)
 	}
 	var result = &Cursor{
-		filter  :   filter,
-		findOpts:   derivedOpts,
-		log     :   c.log,
-		ctx     :   ctx,
+		filter:   filter,
+		findOpts: derivedOpts,
+		log:      c.log,
+		ctx:      ctx,
 	}
 
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		cursor, err := c.Collection.Find(ctx, filter, opts...)
-		if cursor!=nil{
+		if cursor != nil {
 			result.Cursor = *cursor
 		}
 		return result, err
 	}
 
-	kctx, er := keploy.GetState(ctx)
+	kctx, er := internal.GetState(ctx)
 	if er != nil {
 		return result, er
 	}
@@ -91,14 +92,14 @@ func (c *Collection) Find(ctx context.Context, filter interface{},
 		cursor *mongo.Cursor
 		err    error
 	)
-	
+
 	switch mode {
-	case "test":
+	case internal.MODE_TEST:
 		//don't call method in test mode
 		return result, err
-	case "capture":
+	case internal.MODE_RECORD:
 		cursor, err = c.Collection.Find(ctx, filter, opts...)
-		if cursor!=nil{
+		if cursor != nil {
 			result.Cursor = *cursor
 		}
 		return result, err

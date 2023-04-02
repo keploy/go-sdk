@@ -354,7 +354,7 @@ func ExampleWebgoMiddlewareV4() {
 			Port: port,
 		},
 		Server: keploy.ServerConfig{
-			URL: "http://localhost:8081/api",
+			URL: "http://localhost:6789/api",
 		},
 	})
 	router := webgo.NewRouter(&webgo.Config{
@@ -376,7 +376,7 @@ func ExampleEchoMiddlewareV4() {
 			Port: port,
 		},
 		Server: keploy.ServerConfig{
-			URL: "http://localhost:8081/api",
+			URL: "http://localhost:6789/api",
 		},
 	})
 	// Remember to add echo middleware before route handling
@@ -396,7 +396,7 @@ func ExampleGinV1() {
 			Port: port,
 		},
 		Server: keploy.ServerConfig{
-			URL: "http://localhost:8081/api",
+			URL: "http://localhost:6789/api",
 		},
 	})
 	//Call integration.GinV1 before routes handling
@@ -416,7 +416,7 @@ func ExampleWithClientUnaryInterceptor() {
 			Port: "8080",
 		},
 		Server: keploy.ServerConfig{
-			URL: "http://localhost:8081/api",
+			URL: "http://localhost:6789/api",
 		},
 	})
 	conn, err := grpc.Dial("localhost:50051", grpc.WithInsecure(), kgrpc.WithClientUnaryInterceptor(k))
@@ -433,7 +433,7 @@ func ExampleWithClientStreamInterceptor() {
 			Port: "8080",
 		},
 		Server: keploy.ServerConfig{
-			URL: "http://localhost:8081/api",
+			URL: "http://localhost:6789/api",
 		},
 	})
 
@@ -455,7 +455,7 @@ func ExampleNewInterceptor() {
 			Port: port,
 		},
 		Server: keploy.ServerConfig{
-			URL: "http://localhost:8081/api",
+			URL: "http://localhost:6789/api",
 		},
 	})
 	// configure mux for integeration with keploy
@@ -479,7 +479,7 @@ func ExampleHttpClient_SetCtxHttpClient() {
 			Port: port,
 		},
 		Server: keploy.ServerConfig{
-			URL: "http://localhost:8081/api",
+			URL: "http://localhost:6789/api",
 		},
 	})
 	// configure mux for integeration with keploy
@@ -516,7 +516,7 @@ func ExampleHttpClient_Get() {
 			Port: port,
 		},
 		Server: keploy.ServerConfig{
-			URL: "http://localhost:8081/api",
+			URL: "http://localhost:6789/api",
 		},
 	})
 	// configure mux for integeration with keploy
@@ -553,7 +553,7 @@ func ExampleHttpClient_Do() {
 			Port: port,
 		},
 		Server: keploy.ServerConfig{
-			URL: "http://localhost:8081/api",
+			URL: "http://localhost:6789/api",
 		},
 	})
 	// configure mux for integeration with keploy
@@ -594,7 +594,7 @@ func ExampleHttpClient_Post() {
 			Port: port,
 		},
 		Server: keploy.ServerConfig{
-			URL: "http://localhost:8081/api",
+			URL: "http://localhost:6789/api",
 		},
 	})
 	// configure mux for integeration with keploy

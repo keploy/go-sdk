@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/keploy/go-sdk/keploy"
+	internal "github.com/keploy/go-sdk/pkg/keploy"
 	"go.keploy.io/server/pkg/models"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -15,16 +16,16 @@ import (
 // For information about Collection.UpdateOne, refer to https://pkg.go.dev/go.mongodb.org/mongo-driver@v1.8.0/mongo#Collection.UpdateOne.
 func (c *Collection) UpdateOne(ctx context.Context, filter interface{}, update interface{},
 	opts ...*options.UpdateOptions) (*mongo.UpdateResult, error) {
-		
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		output, err := c.Collection.UpdateOne(ctx, filter, update, opts...)
 		return output, err
 	}
 	var (
 		output = &mongo.UpdateResult{}
-		err error
-		kerr = &keploy.KError{}
-		data []interface{}
+		err    error
+		kerr   = &keploy.KError{}
+		data   []interface{}
 	)
 	data = append(data, filter)
 	data = append(data, update)
@@ -77,16 +78,16 @@ func (c *Collection) UpdateOne(ctx context.Context, filter interface{}, update i
 func (c *Collection) UpdateMany(ctx context.Context, filter interface{}, update interface{},
 	opts ...*options.UpdateOptions) (*mongo.UpdateResult, error) {
 
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		output, err := c.Collection.UpdateMany(ctx, filter, update, opts...)
 		return output, err
 	}
 
 	var (
 		output = &mongo.UpdateResult{}
-		err error
-		kerr *keploy.KError = &keploy.KError{}
-		data []interface{}
+		err    error
+		kerr   *keploy.KError = &keploy.KError{}
+		data   []interface{}
 	)
 	data = append(data, filter)
 	data = append(data, update)

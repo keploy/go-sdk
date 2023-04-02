@@ -1,55 +1,21 @@
 package keploy
 
 import (
-	"context"
-	"errors"
+	"github.com/keploy/go-sdk/pkg/keploy"
 )
-
-// Mode represents the mode at which the SDK is operating
-// MODE_RECORD is for recording API calls to generate testcases
-// MODE_TEST is for testing the application on previous recorded testcases
-// MODE_OFF disables keploy SDK automatically from the application
-type Mode string
 
 const (
-	MODE_RECORD Mode = "record"
-	MODE_TEST   Mode = "test"
-	MODE_OFF    Mode = "off"
+	MODE_RECORD keploy.Mode = keploy.MODE_RECORD
+	MODE_TEST   keploy.Mode = keploy.MODE_TEST
+	MODE_OFF    keploy.Mode = keploy.MODE_OFF
 )
 
-// Valid checks if the provided mode is valid
-func (m Mode) Valid() bool {
-	if m == MODE_RECORD || m == MODE_TEST || m == MODE_OFF {
-		return true
-	}
-	return false
-}
-
 // GetMode returns the mode of the keploy SDK
-func GetMode() Mode {
-	return mode
+func GetMode() keploy.Mode {
+	return keploy.GetMode()
 }
 
 // SetTestMode sets the keploy SDK mode to MODE_TEST
 func SetTestMode() {
-	_ = SetMode(MODE_TEST)
-}
-
-// SetMode sets the keploy SDK mode
-// error is returned if the mode is invalid
-func SetMode(m Mode) error {
-	if !m.Valid() {
-		return errors.New("invalid mode: " + string(m))
-	}
-	mode = m
-	return nil
-}
-
-// GetModeFromContext returns the mode on which SDK is configured by accessing environment variable.
-func GetModeFromContext(ctx context.Context) Mode {
-	kctx, err := GetState(ctx)
-	if err != nil {
-		return MODE_OFF
-	}
-	return kctx.Mode
+	_ = keploy.SetMode(MODE_TEST)
 }

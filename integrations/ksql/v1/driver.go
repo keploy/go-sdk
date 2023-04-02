@@ -3,13 +3,11 @@ package ksql
 import (
 	"context"
 	"database/sql/driver"
-	// "encoding/gob"
-	// "encoding/json"
 	"errors"
-	// "fmt"
-	// "reflect"
-	// "time"
+
+	"github.com/keploy/go-sdk/integrations/ksql/ksqlErr"
 	"github.com/keploy/go-sdk/keploy"
+	internal "github.com/keploy/go-sdk/pkg/keploy"
 	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
 )
@@ -30,7 +28,7 @@ func (ksql *Driver) Open(dsn string) (driver.Conn, error) {
 	)
 	conn, err := ksql.Driver.Open(dsn)
 
-	// if ksql.Mode == "test" {
+	// if ksql.Mode == keploy.MODE_TEST {
 	if keploy.GetMode() == keploy.MODE_TEST {
 		err = nil
 		conn = Conn{}
@@ -55,7 +53,7 @@ type Conn struct {
 }
 
 func (c Conn) Begin() (driver.Tx, error) {
-	// if c.mode == "test" {
+	// if c.mode == keploy.MODE_TEST {
 	if keploy.GetMode() == keploy.MODE_TEST {
 
 		return Tx{}, nil
@@ -64,7 +62,7 @@ func (c Conn) Begin() (driver.Tx, error) {
 }
 
 func (c Conn) Close() error {
-	// if c.mode == "test" {
+	// if c.mode == keploy.MODE_TEST {
 	if keploy.GetMode() == keploy.MODE_TEST {
 
 		return nil
@@ -73,7 +71,7 @@ func (c Conn) Close() error {
 }
 
 func (c Conn) Prepare(query string) (driver.Stmt, error) {
-	// if c.mode == "test" {
+	// if c.mode == keploy.MODE_TEST {
 	if keploy.GetMode() == keploy.MODE_TEST {
 
 		return Stmt{}, nil
@@ -96,22 +94,22 @@ func (c Conn) Ping(ctx context.Context) error {
 		return errors.New("returned var not implements ConnBeginTx interface")
 	}
 	// return pc.Ping(ctx)
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		return pc.Ping(ctx)
 	}
 	var (
 		err  error
 		kerr *keploy.KError = &keploy.KError{}
 	)
-	kctx, er := keploy.GetState(ctx)
+	kctx, er := internal.GetState(ctx)
 	if er != nil {
 		return er
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		// don't run
-	case "capture":
+	case keploy.MODE_RECORD:
 		err = pc.Ping(ctx)
 	default:
 		return errors.New("integrations: Not in a valid sdk mode")
@@ -131,7 +129,7 @@ func (c Conn) Ping(ctx context.Context) error {
 		if x.Err != nil {
 			mockErr = x.Err
 		}
-		mockErr = convertKError(mockErr)
+		mockErr = ksqlErr.ConvertKError(mockErr)
 		return mockErr
 	}
 	return err

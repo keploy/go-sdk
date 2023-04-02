@@ -2,37 +2,65 @@ package keploy
 
 import (
 	"bytes"
+	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/creasty/defaults"
-	"github.com/go-playground/validator/v10"
-	// "github.com/benbjohnson/clock"
-	"go.keploy.io/server/http/regression"
-	"go.keploy.io/server/pkg/models"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
+	"path/filepath"
+
 	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/creasty/defaults"
+	"github.com/go-playground/validator/v10"
+	"github.com/keploy/go-sdk/mock"
+	"github.com/keploy/go-sdk/pkg/keploy"
+	proto "go.keploy.io/server/grpc/regression"
+	"go.keploy.io/server/pkg/models"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
-var result = make(chan bool, 1)
+var (
 
-// mode is set to record, if unset
-var mode = MODE_RECORD
+	// mode   = keploy.MODE_OFF
+	result       = make(chan bool, 1)
+	RespChannels = map[string]chan bool{}
+)
+
+type HttpResp struct {
+	Resp models.HttpResp
+	L    *sync.Mutex
+}
+
+type GrpcResp struct {
+	Resp models.GrpcResp
+	L    *sync.Mutex
+}
+
+// // To avoid creating the duplicate mock yaml file
+// func (m *MockLib) Unique(name string) bool {
+// 	_, ok := m.mockIds.Load(name)
+// 	return !ok
+// }
+// func (m *MockLib) Load(name string) {
+// 	m.mockIds.Store(name, true)
+// }
 
 func init() {
-	m := Mode(os.Getenv("KEPLOY_MODE"))
+	m := keploy.Mode(os.Getenv("KEPLOY_MODE"))
 	if m == "" {
 		return
 	}
-	err := SetMode(m)
+	err := keploy.SetMode(m)
 	if err != nil {
 		fmt.Println("warning: ", err)
 	}
@@ -63,22 +91,28 @@ type Config struct {
 }
 
 type AppConfig struct {
-	Name    string        `validate:"required"`
-	Host    string        `default:"0.0.0.0"`
-	Port    string        `validate:"required"`
-	Delay   time.Duration `default:"5s"`
-	Timeout time.Duration `default:"60s"`
-	Filter  Filter
+	Name     string        `validate:"required"`
+	Host     string        `default:"localhost"`
+	Port     string        `validate:"required"`
+	Delay    time.Duration `default:"5s"`
+	Timeout  time.Duration `default:"60s"`
+	Filter   Filter
+	TestPath string `default:""`
+	MockPath string `default:""`
 }
 
 type Filter struct {
-	UrlRegex    string
-	HeaderRegex []string
+	AcceptUrlRegex string
+	HeaderRegex    []string
+	Remove         []string
+	Replace        map[string]string
+	RejectUrlRegex []string
 }
 
 type ServerConfig struct {
-	URL        string `default:"https://api.keploy.io"`
+	URL        string `default:"http://localhost:6789/api"`
 	LicenseKey string
+	AsyncCalls bool
 }
 
 func New(cfg Config) *Keploy {
@@ -105,6 +139,33 @@ func New(cfg Config) *Keploy {
 		logger.Error("conf missing important field", zap.Error(err))
 	}
 
+	if len(cfg.App.TestPath) > 0 && cfg.App.TestPath[0] != '/' {
+		path, err := filepath.Abs(cfg.App.TestPath)
+		if err != nil {
+			logger.Error("Failed to get the absolute path from relative conf.path", zap.Error(err))
+		}
+		cfg.App.TestPath = path
+	} else if len(cfg.App.TestPath) == 0 {
+		path, err := os.Getwd()
+		if err != nil {
+			logger.Error("Failed to get the path of current directory", zap.Error(err))
+		}
+		cfg.App.TestPath = path + "/keploy/tests"
+	}
+	if len(cfg.App.MockPath) > 0 && cfg.App.MockPath[0] != '/' {
+		path, err := filepath.Abs(cfg.App.MockPath)
+		if err != nil {
+			logger.Error("Failed to get the absolute path from relative conf.path", zap.Error(err))
+		}
+		cfg.App.MockPath = path
+	} else if len(cfg.App.MockPath) == 0 {
+		path, err := os.Getwd()
+		if cfg.App.TestPath == "" {
+			logger.Error("Failed to get the path of current directory", zap.Error(err))
+		}
+		cfg.App.MockPath = path + "/keploy/mocks"
+	}
+
 	k := &Keploy{
 		cfg: cfg,
 		Log: logger,
@@ -115,7 +176,16 @@ func New(cfg Config) *Keploy {
 		resp:     sync.Map{},
 		mocktime: sync.Map{},
 	}
-	if mode == MODE_TEST {
+	if k.cfg.Server.AsyncCalls {
+		k.Ctx = mock.NewContext(mock.Config{
+			Mode:      GetMode(),
+			Name:      k.cfg.App.Name,
+			CTX:       context.Background(),
+			Path:      strings.TrimSuffix(cfg.App.MockPath, "/mocks"),
+			OverWrite: true,
+		})
+	}
+	if GetMode() == keploy.MODE_TEST {
 		go k.Test()
 	}
 	return k
@@ -123,6 +193,7 @@ func New(cfg Config) *Keploy {
 
 type Keploy struct {
 	cfg    Config
+	Ctx    context.Context
 	Log    *zap.Logger
 	client *http.Client
 	deps   sync.Map
@@ -130,6 +201,20 @@ type Keploy struct {
 	resp sync.Map
 	//Resp map[string]models.HttpResp
 	mocktime sync.Map
+	mocks    sync.Map
+}
+
+func (k *Keploy) GetMocks(id string) []*proto.Mock {
+	val, ok := k.mocks.Load(id)
+	if !ok {
+		return nil
+	}
+	mocks, ok := val.([]*proto.Mock)
+	if !ok {
+		k.Log.Error("failed fetching dependencies for testcases", zap.String("test case id", id))
+		return nil
+	}
+	return mocks
 }
 
 func (k *Keploy) GetDependencies(id string) []models.Dependency {
@@ -159,25 +244,46 @@ func (k *Keploy) GetClock(id string) int64 {
 	return mocktime
 }
 
-func (k *Keploy) GetResp(id string) models.HttpResp {
+func (k *Keploy) GetResp(id string) HttpResp {
 	val, ok := k.resp.Load(id)
 	if !ok {
-		return models.HttpResp{}
+		return HttpResp{}
 	}
-	resp, ok := val.(models.HttpResp)
+	resp, ok := val.(HttpResp)
 	if !ok {
 		k.Log.Error("failed getting response for http request", zap.String("test case id", id))
-		return models.HttpResp{}
+		return HttpResp{}
 	}
 	return resp
 }
 
-func (k *Keploy) PutResp(id string, resp models.HttpResp) {
+func (k *Keploy) GetRespGrpc(id string) GrpcResp {
+	val, ok := k.resp.Load(id)
+	if !ok {
+		k.Log.Error("failed getting response for grpc request", zap.String("test case id", id))
+		return GrpcResp{}
+	}
+	resp, ok := val.(GrpcResp)
+	if !ok {
+		k.Log.Error("stored grpc response type is invalid", zap.String("test case id", id))
+		return GrpcResp{}
+	}
+	return resp
+}
+
+func (k *Keploy) PutResp(id string, resp HttpResp) {
+	k.resp.Store(id, resp)
+}
+
+func (k *Keploy) PutRespGrpc(id string, resp GrpcResp) {
 	k.resp.Store(id, resp)
 }
 
 // Capture will capture request, response and output of external dependencies by making Call to keploy server.
-func (k *Keploy) Capture(req regression.TestCaseReq) {
+func (k *Keploy) Capture(req models.TestCaseReq) {
+	// req.Path, _ = os.Getwd()
+	req.Remove = k.cfg.App.Filter.Remove   //Setting the Remove field from config
+	req.Replace = k.cfg.App.Filter.Replace //Setting the Replace field from config
 	go k.put(req)
 }
 
@@ -189,7 +295,7 @@ func (k *Keploy) Test() {
 	tcs := k.fetch()
 	total := len(tcs)
 
-	// start a test run
+	// start a http test run
 	id, err := k.start(total)
 	if err != nil {
 		k.Log.Error("failed to start test run", zap.Error(err))
@@ -219,7 +325,7 @@ func (k *Keploy) Test() {
 	}
 	wg.Wait()
 
-	// end the test run
+	// end the http test run
 	err = k.end(id, passed)
 	if err != nil {
 		k.Log.Error("failed to end test run", zap.Error(err))
@@ -230,7 +336,7 @@ func (k *Keploy) Test() {
 }
 
 func (k *Keploy) start(total int) (string, error) {
-	url := fmt.Sprintf("%s/regression/start?app=%s&total=%d", k.cfg.Server.URL, k.cfg.App.Name, total)
+	url := fmt.Sprintf("%s/regression/start?app=%s&total=%d&testCasePath=%s&mockPath=%s", k.cfg.Server.URL, k.cfg.App.Name, total, k.cfg.App.TestPath, k.cfg.App.MockPath)
 	body, err := k.newGet(url)
 	if err != nil {
 		return "", err
@@ -258,15 +364,16 @@ func (k *Keploy) simulate(tc models.TestCase) (*models.HttpResp, error) {
 	// add dependencies to shared context
 	k.deps.Store(tc.ID, tc.Deps)
 	defer k.deps.Delete(tc.ID)
-	// mock := clock.NewMock()
-	// t:=tc.Captured
-	// mock.Add(time.Duration(t) * time.Second)
-	// tc.Captured = mock.Now().UTC().Unix()
+
+	// add mocks to shared context
+	k.mocks.Store(tc.ID, tc.Mocks)
+	defer k.mocks.Delete(tc.ID)
+
 	k.mocktime.Store(tc.ID, tc.Captured)
 	defer k.mocktime.Delete(tc.ID)
-	//k.Deps[tc.ID] = tc.Deps
-	//defer delete(k.Deps, tc.ID)
-	req, err := http.NewRequest(string(tc.HttpReq.Method), "http://"+k.cfg.App.Host+":"+k.cfg.App.Port+tc.HttpReq.URL, bytes.NewBufferString(tc.HttpReq.Body))
+
+	ctx := context.WithValue(context.Background(), keploy.KTime, tc.Captured)
+	req, err := http.NewRequestWithContext(ctx, string(tc.HttpReq.Method), "http://"+k.cfg.App.Host+":"+k.cfg.App.Port+tc.HttpReq.URL, bytes.NewBufferString(tc.HttpReq.Body))
 	if err != nil {
 		panic(err)
 	}
@@ -274,6 +381,11 @@ func (k *Keploy) simulate(tc models.TestCase) (*models.HttpResp, error) {
 	req.Header.Set("KEPLOY_TEST_ID", tc.ID)
 	req.ProtoMajor = tc.HttpReq.ProtoMajor
 	req.ProtoMinor = tc.HttpReq.ProtoMinor
+	req.Close = true
+
+	m := sync.Mutex{}
+	m.Lock()
+	k.PutResp(tc.ID, HttpResp{L: &m})
 
 	httpresp, err := k.client.Do(req)
 	if err != nil {
@@ -281,37 +393,96 @@ func (k *Keploy) simulate(tc models.TestCase) (*models.HttpResp, error) {
 		return nil, err
 	}
 
-	defer httpresp.Body.Close()
-	resp := k.GetResp(tc.ID)
-	defer k.resp.Delete(tc.ID)
-
-	body, err := ioutil.ReadAll(httpresp.Body)
+	_, err = ioutil.ReadAll(httpresp.Body)
 	if err != nil {
 		k.Log.Error("failed reading simulated response from app", zap.Error(err))
 		return nil, err
 	}
-  
-	if (resp.StatusCode < 300 || resp.StatusCode >= 400) && resp.Body != string(body) {
-		resp.Body = string(body)
-		resp.Header = httpresp.Header
-		resp.StatusCode = httpresp.StatusCode
-	}
 
-	return &resp, nil
+	// Since, execution of simulate function continues post http.ResponseWriter.Flush therefore it needs to ensure that
+	// response has been written to map for the testcase id before accessing
+	m.Lock()
+	defer m.Unlock()
+
+	resp := k.GetResp(tc.ID)
+	defer k.resp.Delete(tc.ID)
+
+	return &resp.Resp, nil
+}
+
+func (k *Keploy) simulateGrpc(tc models.TestCase) (models.GrpcResp, error) {
+	// add dependencies to shared context
+	k.deps.Store(tc.ID, tc.Deps)
+	defer k.deps.Delete(tc.ID)
+	// add mocks to shared context
+	k.mocks.Store(tc.ID, tc.Mocks)
+	defer k.mocks.Delete(tc.ID)
+	k.mocktime.Store(tc.ID, tc.Captured)
+	defer k.mocktime.Delete(tc.ID)
+	tid := string(tc.ID)
+	port := k.cfg.App.Port
+	if port[0] != ':' {
+		port = ":" + port
+	}
+	m := sync.Mutex{}
+	m.Lock()
+	k.PutRespGrpc(tc.ID, GrpcResp{L: &m})
+
+	// The simulate call is done via grpcurl which acts as a grpc client
+	err := GrpCurl(tc.GrpcReq.Body, `tid:`+tid, "localhost"+port, tc.GrpcReq.Method)
+	if err != nil {
+		k.Log.Error("failed to simulate grpc request", zap.String("testcase id:", tc.ID), zap.Error(err))
+	}
+	m.Lock()
+	m.Unlock()
+	resp := k.GetRespGrpc(tc.ID)
+	defer k.resp.Delete(tc.ID)
+	return resp.Resp, nil
 }
 
 func (k *Keploy) check(runId string, tc models.TestCase) bool {
-	resp, err := k.simulate(tc)
-	if err != nil {
-		k.Log.Error("failed to simulate request on local server", zap.Error(err))
-		return false
+	var (
+		resp     *models.HttpResp
+		respGrpc models.GrpcResp
+		bin      []byte
+		err      error
+	)
+	switch tc.Type {
+	case string(models.HTTP):
+		resp, err = k.simulate(tc)
+		if err != nil {
+			k.Log.Error("failed to simulate request on local server", zap.Error(err))
+			return false
+		}
+
+		bin, err = json.Marshal(&models.TestReq{
+			ID:           tc.ID,
+			AppID:        k.cfg.App.Name,
+			RunID:        runId,
+			Resp:         *resp,
+			TestCasePath: k.cfg.App.TestPath,
+			MockPath:     k.cfg.App.MockPath,
+			Type:         models.HTTP,
+		})
+
+	case string(models.GRPC_EXPORT):
+		respGrpc, err = k.simulateGrpc(tc)
+		if err != nil {
+			k.Log.Error("failed to simulate request on local server", zap.Error(err))
+			return false
+		}
+
+		bin, err = json.Marshal(&models.TestReq{
+			ID:           tc.ID,
+			AppID:        k.cfg.App.Name,
+			RunID:        runId,
+			GrpcResp:     respGrpc,
+			Type:         models.GRPC_EXPORT,
+			TestCasePath: k.cfg.App.TestPath,
+			MockPath:     k.cfg.App.MockPath,
+		})
 	}
-	bin, err := json.Marshal(&regression.TestReq{
-		ID:    tc.ID,
-		AppID: k.cfg.App.Name,
-		RunID: runId,
-		Resp:  *resp,
-	})
+
 	if err != nil {
 		k.Log.Error("failed to marshal testcase request", zap.String("url", tc.URI), zap.Error(err))
 		return false
@@ -349,43 +520,71 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 
 // isValidHeader checks the valid header to filter out testcases
 // It returns true when any of the header matches with regular expression and returns false when it doesn't match.
-func (k *Keploy) isValidHeader(tcs regression.TestCaseReq) bool {
-    var fil = k.cfg.App.Filter
-    var t = tcs.HttpReq.Header
-    var valid bool = false
-    for _, v := range fil.HeaderRegex {
-        headReg := regexp.MustCompile(v)
-        for key := range t {
-            if headReg.FindString(key) != "" {
-                valid = true
-                break
-            }
-        }
-        if valid {
-            break
-        }
-    }
-    if !valid {
-        return false
-    }
-    return true
+func (k *Keploy) isValidHeader(tcs models.TestCaseReq) bool {
+	var fil = k.cfg.App.Filter
+	var t = tcs.HttpReq.Header
+	var valid bool = false
+	for _, v := range fil.HeaderRegex {
+		headReg := regexp.MustCompile(v)
+		for key := range t {
+			if headReg.FindString(key) != "" {
+				valid = true
+				break
+			}
+		}
+		if valid {
+			break
+		}
+	}
+	return valid
 }
 
-func (k *Keploy) put(tcs regression.TestCaseReq) {
-
+// isRejectedUrl checks whether the request url matches any of the excluded
+// urls which should not be recorded. It returns true, if any of the RejectUrlRegex
+// matches to current url.
+func (k *Keploy) isRejectedUrl(tcs models.TestCaseReq) bool {
 	var fil = k.cfg.App.Filter
-	
-	if fil.HeaderRegex != nil {
-        if k.isValidHeader(tcs) == false {
-            return
-        }
-    }
+	var t = tcs.HttpReq.URL
+	var valid bool = true
+	for _, v := range fil.RejectUrlRegex {
+		headReg := regexp.MustCompile(v)
+		if headReg.FindString(t) != "" {
+			valid = false
+			break
+		}
 
-	reg := regexp.MustCompile(fil.UrlRegex)
-	if fil.UrlRegex != "" && reg.FindString(tcs.URI) == "" {
-		return
+		if !valid {
+			break
+		}
 	}
+	return valid
+}
 
+func (k *Keploy) put(tcs models.TestCaseReq) {
+
+	if tcs.Type == models.HTTP {
+		var fil = k.cfg.App.Filter
+
+		if fil.HeaderRegex != nil {
+			if !k.isValidHeader(tcs) {
+				return
+			}
+		}
+		if fil.RejectUrlRegex != nil {
+			if !k.isRejectedUrl(tcs) {
+				return
+			}
+		}
+
+		reg := regexp.MustCompile(fil.AcceptUrlRegex)
+		if fil.AcceptUrlRegex != "" && reg.FindString(tcs.URI) == "" {
+			return
+		}
+
+		if strings.Contains(strings.Join(tcs.HttpReq.Header["Content-Type"], ", "), "multipart/form-data") {
+			tcs.HttpReq.Body = base64.StdEncoding.EncodeToString([]byte(tcs.HttpReq.Body))
+		}
+	}
 	bin, err := json.Marshal(tcs)
 	if err != nil {
 		k.Log.Error("failed to marshall testcase request", zap.String("url", tcs.URI), zap.Error(err))
@@ -429,27 +628,70 @@ func (k *Keploy) put(tcs regression.TestCaseReq) {
 	k.denoise(id, tcs)
 }
 
-func (k *Keploy) denoise(id string, tcs regression.TestCaseReq) {
+func (k *Keploy) denoise(id string, tcs models.TestCaseReq) {
 	// run the request again to find noisy fields
 	time.Sleep(2 * time.Second)
-	resp2, err := k.simulate(models.TestCase{
-		ID:       id,
-		Captured: tcs.Captured,
-		URI:      tcs.URI,
-		HttpReq:  tcs.HttpReq,
-		Deps:     tcs.Deps,
-	})
-	if err != nil {
-		k.Log.Error("failed to simulate request on local server", zap.Error(err))
-		return
+	var (
+		err       error
+		resp2     *models.HttpResp
+		resp2Grpc models.GrpcResp
+		bin2      []byte
+	)
+	switch tcs.Type {
+	case models.HTTP:
+		if strings.Contains(strings.Join(tcs.HttpReq.Header["Content-Type"], ", "), "multipart/form-data") {
+			bin, err := base64.StdEncoding.DecodeString(tcs.HttpReq.Body)
+			if err != nil {
+				k.Log.Error("failed to decode the base64 encoded request body", zap.Error(err))
+				return
+			}
+			tcs.HttpReq.Body = string(bin)
+		}
+		resp2, err = k.simulate(models.TestCase{
+			ID:       id,
+			Captured: tcs.Captured,
+			URI:      tcs.URI,
+			HttpReq:  tcs.HttpReq,
+			Deps:     tcs.Deps,
+			Mocks:    tcs.Mocks,
+		})
+		if err != nil {
+			k.Log.Error("failed to simulate request on local http server", zap.Error(err))
+			return
+		}
+
+		bin2, err = json.Marshal(&models.TestReq{
+			ID:           id,
+			AppID:        k.cfg.App.Name,
+			Resp:         *resp2,
+			TestCasePath: k.cfg.App.TestPath,
+			MockPath:     k.cfg.App.MockPath,
+			Type:         models.HTTP,
+		})
+
+	case models.GRPC_EXPORT:
+		resp2Grpc, err = k.simulateGrpc(models.TestCase{
+			ID:       id,
+			Captured: tcs.Captured,
+			Deps:     tcs.Deps,
+			Mocks:    tcs.Mocks,
+			// GrpcMethod: tcs.GrpcMethod,
+			GrpcReq: tcs.GrpcReq,
+		})
+		if err != nil {
+			k.Log.Error("failed to simulate request on local grpc server", zap.Error(err))
+			return
+		}
+
+		bin2, err = json.Marshal(&models.TestReq{
+			ID:           id,
+			AppID:        k.cfg.App.Name,
+			GrpcResp:     resp2Grpc,
+			Type:         models.GRPC_EXPORT,
+			TestCasePath: k.cfg.App.TestPath,
+			MockPath:     k.cfg.App.MockPath,
+		})
 	}
-
-	bin2, err := json.Marshal(&regression.TestReq{
-		ID:    id,
-		AppID: k.cfg.App.Name,
-		Resp:  *resp2,
-	})
-
 	if err != nil {
 		k.Log.Error("failed to marshall testcase request", zap.String("url", tcs.URI), zap.Error(err))
 		return
@@ -510,12 +752,33 @@ func (k *Keploy) newGet(url string) ([]byte, error) {
 	return body, nil
 }
 
+// fetch makes a get request to keploy API server and returns array of testcases
 func (k *Keploy) fetch() []models.TestCase {
-	var tcs []models.TestCase = []models.TestCase{}
 
-	for i := 0; ; i += 25 {
-		url := fmt.Sprintf("%s/regression/testcase?app=%s&offset=%d&limit=%d", k.cfg.Server.URL, k.cfg.App.Name, i, 25)
-		body, err := k.newGet(url)
+	var tcs []models.TestCase = []models.TestCase{}
+	pageSize := 25
+
+	for i := 0; ; i += pageSize {
+		url := fmt.Sprintf("%s/regression/testcase?app=%s&offset=%d&limit=%d&testCasePath=%s&mockPath=%s", k.cfg.Server.URL, k.cfg.App.Name, i, 25, k.cfg.App.TestPath, k.cfg.App.MockPath)
+
+		req, err := http.NewRequest("GET", url, http.NoBody)
+		if err != nil {
+			k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
+			return nil
+		}
+		k.setKey(req)
+		resp, err := k.client.Do(req)
+		if err != nil {
+			k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
+			return nil
+		}
+		if resp.StatusCode != http.StatusOK {
+			k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(errors.New("failed to send get request: "+resp.Status)))
+			return nil
+		}
+
+		defer resp.Body.Close()
+		body, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
 			return nil
@@ -527,10 +790,25 @@ func (k *Keploy) fetch() []models.TestCase {
 			k.Log.Error("failed to reading testcases from keploy cloud", zap.Error(err))
 			return nil
 		}
-		if len(res) == 0 {
+		tcs = append(tcs, res...)
+		if len(res) < pageSize {
 			break
 		}
-		tcs = append(tcs, res...)
+		eof := resp.Header.Get("EOF")
+		if eof == "true" {
+			break
+		}
+	}
+
+	for i, j := range tcs {
+		if strings.Contains(strings.Join(j.HttpReq.Header["Content-Type"], ", "), "multipart/form-data") {
+			bin, err := base64.StdEncoding.DecodeString(j.HttpReq.Body)
+			if err != nil {
+				k.Log.Error("failed to decode the base64 encoded request body", zap.Error(err))
+				return nil
+			}
+			tcs[i].HttpReq.Body = string(bin)
+		}
 	}
 	return tcs
 }

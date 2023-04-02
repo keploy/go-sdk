@@ -6,8 +6,9 @@ import (
 	"errors"
 	"fmt"
 
-	// "github.com/keploy/go-sdk/integrations/ksql"
+	"github.com/keploy/go-sdk/integrations/ksql/ksqlErr"
 	"github.com/keploy/go-sdk/keploy"
+	internal "github.com/keploy/go-sdk/pkg/keploy"
 	"go.keploy.io/server/pkg/models"
 )
 
@@ -35,7 +36,7 @@ func (c Conn) ExecContext(ctx context.Context, query string, args []driver.Named
 	if !ok {
 		return nil, errors.New("mocked Driver.Conn var not implements ExecerContext interface")
 	}
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		return execerContext.ExecContext(ctx, query, args)
 	}
 	var (
@@ -44,7 +45,7 @@ func (c Conn) ExecContext(ctx context.Context, query string, args []driver.Named
 		result       driver.Result
 		driverResult *Result = &Result{}
 	)
-	kctx, er := keploy.GetState(ctx)
+	kctx, er := internal.GetState(ctx)
 	if er != nil {
 		return result, er
 	}
@@ -57,9 +58,9 @@ func (c Conn) ExecContext(ctx context.Context, query string, args []driver.Named
 		"arguments": fmt.Sprint(args),
 	}
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		//don't call Find method
-	case "capture":
+	case keploy.MODE_RECORD:
 		result, err = execerContext.ExecContext(ctx, query, args)
 		if result != nil {
 			// calls LastInsertId to capture their outputs
@@ -90,7 +91,7 @@ func (c Conn) ExecContext(ctx context.Context, query string, args []driver.Named
 		if x.Err != nil {
 			mockErr = x.Err
 		}
-		mockErr = convertKError(mockErr)
+		mockErr = ksqlErr.ConvertKError(mockErr)
 		return driverResult, mockErr
 	}
 	return result, err

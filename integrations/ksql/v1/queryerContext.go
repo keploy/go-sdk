@@ -9,7 +9,9 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/keploy/go-sdk/integrations/ksql/ksqlErr"
 	"github.com/keploy/go-sdk/keploy"
+	internal "github.com/keploy/go-sdk/pkg/keploy"
 	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
 )
@@ -25,21 +27,21 @@ type Rows struct {
 
 // Columns mocks the output of Columns method of your SQL driver.
 func (r Rows) Columns() []string {
-	if keploy.GetModeFromContext(r.ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(r.ctx) == internal.MODE_OFF {
 		return r.Rows.Columns()
 	}
 	var (
 		output *[]string = &[]string{}
 	)
-	kctx, er := keploy.GetState(r.ctx)
+	kctx, er := internal.GetState(r.ctx)
 	if er != nil {
 		return nil
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		// don't run
-	case "capture":
+	case keploy.MODE_RECORD:
 		if r.Rows != nil {
 			o := r.Rows.Columns()
 			output = &o
@@ -62,26 +64,26 @@ func (r Rows) Columns() []string {
 
 // Close mocks the output of Close method of your SQL driver.
 func (r Rows) Close() error {
-	if keploy.GetModeFromContext(r.ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(r.ctx) == internal.MODE_OFF {
 		return r.Rows.Close()
 	}
 	var (
 		err  error
 		kerr *keploy.KError = &keploy.KError{}
 	)
-	kctx, er := keploy.GetState(r.ctx)
+	kctx, er := internal.GetState(r.ctx)
 	if er != nil {
 		return er
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		// don't run actual rows.Close
 		// ignore the rows.Close which is not done manually.
 		if kctx.Deps == nil || len(kctx.Deps) == 0 || len(kctx.Deps[0].Data) != 1 {
 			return nil
 		}
-	case "capture":
+	case keploy.MODE_RECORD:
 		if r.Rows != nil {
 			err = r.Rows.Close()
 		}
@@ -104,7 +106,7 @@ func (r Rows) Close() error {
 		if x.Err != nil {
 			mockErr = x.Err
 		}
-		mockErr = convertKError(mockErr)
+		mockErr = ksqlErr.ConvertKError(mockErr)
 		return mockErr
 	}
 	return err
@@ -224,7 +226,7 @@ func (d *Value) GobDecode(b []byte) error {
 
 // Next mocks the outputs of Next method of sql Driver.
 func (r Rows) Next(dest []driver.Value) error {
-	if keploy.GetModeFromContext(r.ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(r.ctx) == internal.MODE_OFF {
 		return r.Rows.Next(dest)
 	}
 	var (
@@ -232,15 +234,15 @@ func (r Rows) Next(dest []driver.Value) error {
 		kerr   *keploy.KError = &keploy.KError{}
 		output *Value         = &Value{Value: dest}
 	)
-	kctx, er := keploy.GetState(r.ctx)
+	kctx, er := internal.GetState(r.ctx)
 	if er != nil {
 		return er
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		// don't run
-	case "capture":
+	case keploy.MODE_RECORD:
 		if r.Rows != nil {
 			err = r.Rows.Next(dest)
 			output.Value = dest
@@ -268,7 +270,7 @@ func (r Rows) Next(dest []driver.Value) error {
 				dest[i] = output.Value[i]
 			}
 		}
-		mockErr = convertKError(mockErr)
+		mockErr = ksqlErr.ConvertKError(mockErr)
 		return mockErr
 	}
 	return err
@@ -280,7 +282,7 @@ func (c Conn) QueryContext(ctx context.Context, query string, args []driver.Name
 	if !ok {
 		return nil, errors.New("returned var not implements QueryerContext interface")
 	}
-	if keploy.GetModeFromContext(ctx) == keploy.MODE_OFF {
+	if internal.GetModeFromContext(ctx) == internal.MODE_OFF {
 		return queryerContext.QueryContext(ctx, query, args)
 	}
 	var (
@@ -294,15 +296,15 @@ func (c Conn) QueryContext(ctx context.Context, query string, args []driver.Name
 		}
 		rows driver.Rows
 	)
-	kctx, er := keploy.GetState(ctx)
+	kctx, er := internal.GetState(ctx)
 	if er != nil {
 		return nil, er
 	}
 	mode := kctx.Mode
 	switch mode {
-	case "test":
+	case keploy.MODE_TEST:
 		// don't run
-	case "capture":
+	case keploy.MODE_RECORD:
 		rows, err = queryerContext.QueryContext(ctx, query, args)
 		driverRows.Rows = rows
 	default:
@@ -325,7 +327,7 @@ func (c Conn) QueryContext(ctx context.Context, query string, args []driver.Name
 		if x.Err != nil {
 			mockErr = x.Err
 		}
-		mockErr = convertKError(mockErr)
+		mockErr = ksqlErr.ConvertKError(mockErr)
 		return driverRows, mockErr
 	}
 	return driverRows, err

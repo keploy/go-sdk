@@ -2,13 +2,13 @@ package kfasthttp
 
 import (
 	"bytes"
-	"context"
 	"io"
 	"io/ioutil"
 	"net/http"
+	"sync"
 
-	//"github.com/fasthttp/router"
 	"github.com/keploy/go-sdk/keploy"
+	internal "github.com/keploy/go-sdk/pkg/keploy"
 
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/fasthttp/fasthttpadaptor"
@@ -36,11 +36,12 @@ func captureResp(c *fasthttp.RequestCtx, next fasthttp.RequestHandler) models.Ht
 }
 
 func setContextValFast(c *fasthttp.RequestCtx, val interface{}) {
-	c.SetUserValue(string(keploy.KCTX), val)
+	c.SetUserValue(internal.KCTX, val)
 
 }
+
 func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp.RequestHandler {
-	if k == nil || keploy.GetMode() == keploy.MODE_OFF {
+	if k == nil || internal.GetMode() == internal.MODE_OFF {
 		return func(next fasthttp.RequestHandler) fasthttp.RequestHandler {
 			return next
 		}
@@ -49,19 +50,32 @@ func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp
 		return fasthttp.RequestHandler(func(c *fasthttp.RequestCtx) {
 
 			id := string(c.Request.Header.Peek("KEPLOY_TEST_ID"))
+			if id == "" && internal.GetMode() == internal.MODE_TEST {
+				next(c)
+				return
+			}
 			if id != "" {
-				setContextValFast(c, &keploy.Context{
-					Mode:   "test",
+				setContextValFast(c, &internal.Context{
+					Mode:   internal.MODE_TEST,
 					TestID: id,
 					Deps:   k.GetDependencies(id),
+					Mock:   k.GetMocks(id),
+					Mu:     &sync.Mutex{},
 				})
 				resp := captureResp(c, next)
-				k.PutResp(id, resp)
+				response := k.GetResp(id)
+				response.Resp = resp
+				k.PutResp(id, response)
+
+				// Continue further execution after client call in simulate function
+				response.L.Unlock()
+				// k.PutResp(id, keploy.HttpResp{Resp: resp})
 				return
 
 			}
-			setContextValFast(c, &keploy.Context{
-				Mode: "capture",
+			setContextValFast(c, &internal.Context{
+				Mode: internal.MODE_RECORD,
+				Mu:   &sync.Mutex{},
 			})
 			var reqBody []byte
 			var err error
@@ -78,23 +92,13 @@ func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp
 			resp := captureResp(c, next)
 			params := pathParams(c)
 
-			ctx := context.TODO()
-			c.VisitUserValues(func(key []byte, val interface{}) {
-				if string(key) == string(keploy.KCTX) {
-					ctx = context.WithValue(ctx, keploy.KCTX, val)
-					return
-				}
-				ctx = context.WithValue(ctx, string(key), val)
+			r = r.WithContext(c)
 
-			})
-
-			r = r.WithContext(ctx)
-
-			keploy.CaptureTestcase(k, r, reqBody, resp, params)
-			return
+			keploy.CaptureHttpTC(k, r, reqBody, resp, params)
 		})
 	}
 }
+
 func pathParams(c *fasthttp.RequestCtx) map[string]string {
 	var result map[string]string = make(map[string]string)
 	c.URI().QueryArgs().VisitAll(func(key, value []byte) {

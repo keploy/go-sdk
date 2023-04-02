@@ -5,16 +5,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"go.keploy.io/server/pkg/models"
-	"io/ioutil"
-
-	// "fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"net/http"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/keploy/go-sdk/keploy"
+	internal "github.com/keploy/go-sdk/pkg/keploy"
+	"go.keploy.io/server/pkg/models"
 	"go.uber.org/zap"
 )
 
@@ -25,7 +25,7 @@ import (
 //
 // r is the gin v1 router instance
 func GinV1(k *keploy.Keploy, r *gin.Engine) {
-	if keploy.GetMode() == keploy.MODE_OFF {
+	if internal.GetMode() == internal.MODE_OFF {
 		return
 	}
 	r.Use(mw(k))
@@ -51,7 +51,7 @@ func captureRespGin(c *gin.Context) models.HttpResp {
 
 // from here https://stackoverflow.com/questions/67267065/how-to-propagate-context-values-from-gin-middleware-to-gqlgen-resolvers
 func setContextValGin(c *gin.Context, val interface{}) {
-	ctx := context.WithValue(c.Request.Context(), keploy.KCTX, val)
+	ctx := context.WithValue(c.Request.Context(), internal.KCTX, val)
 	c.Request = c.Request.WithContext(ctx)
 }
 
@@ -63,20 +63,32 @@ func mw(k *keploy.Keploy) gin.HandlerFunc {
 	}
 	return func(c *gin.Context) {
 		id := c.Request.Header.Get("KEPLOY_TEST_ID")
+		if id == "" && internal.GetMode() == internal.MODE_TEST {
+			c.Next()
+			return
+		}
 		if id != "" {
 			// id is only present during simulation
 			// run it similar to how testcases would run
-			setContextValGin(c, &keploy.Context{
-				Mode:   "test",
+			setContextValGin(c, &internal.Context{
+				Mode:   internal.MODE_TEST,
 				TestID: id,
 				Deps:   k.GetDependencies(id),
+				Mock:   k.GetMocks(id),
+				Mu:     &sync.Mutex{},
 			})
 			resp := captureRespGin(c)
-			k.PutResp(id, resp)
+			response := k.GetResp(id)
+			response.Resp = resp
+			k.PutResp(id, response)
+
+			// Continue further execution after client call in simulate function
+			response.L.Unlock()
+			// k.PutResp(id, keploy.HttpResp{Resp: resp})
 			return
 		}
 
-		setContextValGin(c, &keploy.Context{Mode: "capture"})
+		setContextValGin(c, &internal.Context{Mode: internal.MODE_RECORD, Mu: &sync.Mutex{}})
 
 		// Request
 		var reqBody []byte
@@ -93,7 +105,7 @@ func mw(k *keploy.Keploy) gin.HandlerFunc {
 
 		resp := captureRespGin(c)
 		params := urlParamsGin(c, k)
-		keploy.CaptureTestcase(k, c.Request, reqBody, resp, params)
+		keploy.CaptureHttpTC(k, c.Request, reqBody, resp, params)
 	}
 }
 
@@ -117,7 +129,7 @@ func urlParamsGin(c *gin.Context, k *keploy.Keploy) map[string]string {
 		j := k.(map[string]interface{})
 		key := j["Key"].(string)
 		val := j["Value"].(string)
-		if len(val)>0 && val[0] == '/' {
+		if len(val) > 0 && val[0] == '/' {
 			params[key] = val[1:]
 		} else {
 			params[key] = val
