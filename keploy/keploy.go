@@ -512,6 +512,36 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 			MockPath:     k.cfg.App.MockPath,
 			Type:         models.HTTP,
 		})
+		if k.cfg.Server.GrpcEnabled {
+			var r *proto.TestResponse
+			var err error
+				r, err = k.grpcClient.Test(k.Ctx, &proto.TestReq{
+					ID:    tc.ID,
+					AppID: k.cfg.App.Name,
+					Type: string(tc.Type),
+					RunID: runId,
+						Resp: &proto.HttpResp{
+							Body:          resp.Body,
+							Header:        utils.GetProtoMap(resp.Header),
+							StatusCode:    int64(resp.StatusCode),
+							StatusMessage: resp.StatusMessage,
+							ProtoMajor:    int64(resp.ProtoMajor),
+							ProtoMinor:    int64(resp.ProtoMinor),
+							Binary:        resp.Binary,
+						},
+
+					TestCasePath: k.cfg.App.TestPath,
+					MockPath:     k.cfg.App.MockPath,
+				})
+				if err != nil {
+					k.Log.Error("failed to create test request request server", zap.String("id", tc.ID), zap.String("url", tc.URI), zap.Error(err))
+					return false
+				}
+			res := r.GetPass()
+			if res["pass"] {
+				return true
+			}
+		}
 
 	case string(models.GRPC_EXPORT):
 		respGrpc, err = k.simulateGrpc(tc)
@@ -529,19 +559,9 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 			TestCasePath: k.cfg.App.TestPath,
 			MockPath:     k.cfg.App.MockPath,
 		})
-	}
-
-	if err != nil {
-		k.Log.Error("failed to marshal testcase request", zap.String("url", tc.URI), zap.Error(err))
-		return false
-	}
-
-	// test application reponse
-	if k.cfg.Server.GrpcEnabled {
-		var r *proto.TestResponse
-		var err error
-		switch tc.Type{
-		case string(models.HTTP):
+		if k.cfg.Server.GrpcEnabled {
+			var r *proto.TestResponse
+			var err error
 			r, err = k.grpcClient.Test(k.Ctx, &proto.TestReq{
 				ID:    tc.ID,
 				AppID: k.cfg.App.Name,
@@ -558,41 +578,27 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 				},
 				TestCasePath: k.cfg.App.TestPath,
 				MockPath:     k.cfg.App.MockPath,
+				GrpcResp: &proto.GrpcResp{
+					Body: respGrpc.Body,
+					Err: respGrpc.Err,
+				},
+
 			})
-			if err != nil {
-				k.Log.Error("failed to create test request request server", zap.String("id", tc.ID), zap.String("url", tc.URI), zap.Error(err))
-				return false
+				if err != nil {
+					k.Log.Error("failed to create test request request server", zap.String("id", tc.ID), zap.String("url", tc.URI), zap.Error(err))
+					return false
+				}
+			res := r.GetPass()
+			if res["pass"] {
+				return true
 			}
-			case string(models.GRPC_EXPORT):
-				r, err = k.grpcClient.Test(k.Ctx, &proto.TestReq{
-					ID:    tc.ID,
-					AppID: k.cfg.App.Name,
-					Type: string(tc.Type),
-					RunID: runId,
-					Resp: &proto.HttpResp{
-						Body:          resp.Body,
-						Header:        utils.GetProtoMap(resp.Header),
-						StatusCode:    int64(resp.StatusCode),
-						StatusMessage: resp.StatusMessage,
-						ProtoMajor:    int64(resp.ProtoMajor),
-						ProtoMinor:    int64(resp.ProtoMinor),
-						Binary:        resp.Binary,
-					},
-					TestCasePath: k.cfg.App.TestPath,
-					MockPath:     k.cfg.App.MockPath,
-					GrpcResp: &proto.GrpcResp{
-						Body: respGrpc.Body,
-						Err: respGrpc.Err,
-					},
-
-				})
 		}
-		res := r.GetPass()
-		if res["pass"] {
-			return true
-		}
+	}
 
-	} else {
+	if err != nil {
+		k.Log.Error("failed to marshal testcase request", zap.String("url", tc.URI), zap.Error(err))
+		return false
+	}
 		r, err := http.NewRequest("POST", k.cfg.Server.URL+"/regression/test", bytes.NewBuffer(bin))
 		if err != nil {
 			k.Log.Error("failed to create test request request server", zap.String("id", tc.ID), zap.String("url", tc.URI), zap.Error(err))
@@ -619,7 +625,6 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 		if res["pass"] {
 			return true
 		}
-	}
 
 	return false
 }
