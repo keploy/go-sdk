@@ -21,8 +21,10 @@ import (
 	"time"
 
 	"github.com/creasty/defaults"
+	"google.golang.org/grpc"
 	"github.com/go-playground/validator/v10"
 	"github.com/keploy/go-sdk/mock"
+	"go.keploy.io/server/grpc/utils"
 	"github.com/keploy/go-sdk/pkg/keploy"
 	proto "go.keploy.io/server/grpc/regression"
 	"go.keploy.io/server/pkg/models"
@@ -543,6 +545,7 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 			r, err = k.grpcClient.Test(k.Ctx, &proto.TestReq{
 				ID:    tc.ID,
 				AppID: k.cfg.App.Name,
+				Type: string(tc.Type),
 				RunID: runId,
 				Resp: &proto.HttpResp{
 					Body:          resp.Body,
@@ -564,6 +567,7 @@ func (k *Keploy) check(runId string, tc models.TestCase) bool {
 				r, err = k.grpcClient.Test(k.Ctx, &proto.TestReq{
 					ID:    tc.ID,
 					AppID: k.cfg.App.Name,
+					Type: string(tc.Type),
 					RunID: runId,
 					Resp: &proto.HttpResp{
 						Body:          resp.Body,
@@ -859,6 +863,7 @@ func (k *Keploy) denoise(id string, tcs models.TestCaseReq) {
 			_, err = k.grpcClient.DeNoise(k.Ctx, &proto.TestReq{
 				ID:    id,
 				AppID: k.cfg.App.Name,
+				Type: string(tcs.Type),
 				Resp: &proto.HttpResp{
 					Body:          resp2.Body,
 					Header:        utils.GetProtoMap(resp2.Header),
@@ -879,6 +884,7 @@ func (k *Keploy) denoise(id string, tcs models.TestCaseReq) {
 			_, err = k.grpcClient.DeNoise(k.Ctx, &proto.TestReq{
 				ID:    id,
 				AppID: k.cfg.App.Name,
+				Type: string(tcs.Type),
 				Resp: &proto.HttpResp{
 					Body:          resp2.Body,
 					Header:        utils.GetProtoMap(resp2.Header),
@@ -968,31 +974,6 @@ func (k *Keploy) fetch() []models.TestCase {
 	var tcs []models.TestCase = []models.TestCase{}
 	pageSize := 25
 	for i := 0; ; i += pageSize {
-		url := fmt.Sprintf("%s/regression/testcase?app=%s&offset=%d&limit=%d&testCasePath=%s&mockPath=%s", k.cfg.Server.URL, k.cfg.App.Name, i, 25, k.cfg.App.TestPath, k.cfg.App.MockPath)
-
-		req, err := http.NewRequest("GET", url, http.NoBody)
-		if err != nil {
-			k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
-			return nil
-		}
-		k.setKey(req)
-		resp, err := k.client.Do(req)
-		if err != nil {
-			k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
-			return nil
-		}
-		if resp.StatusCode != http.StatusOK {
-			k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(errors.New("failed to send get request: "+resp.Status)))
-			return nil
-		}
-
-		defer resp.Body.Close()
-		body, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
-			return nil
-		}
-
 		var res []models.TestCase
 		if k.cfg.Server.GrpcEnabled {
 			resp, err := k.grpcClient.GetTCS(k.Ctx, &proto.GetTCSRequest{
@@ -1016,7 +997,7 @@ func (k *Keploy) fetch() []models.TestCase {
 			}
 
 		} else {
-			url := fmt.Sprintf("%s/regression/testcase?app=%s&offset=%d&limit=%d&testCasePath=%s&mockPath=%s&reqType=%s", k.cfg.Server.URL, k.cfg.App.Name, i, 25, k.cfg.App.TestPath, k.cfg.App.MockPath, reqType)
+			url := fmt.Sprintf("%s/regression/testcase?app=%s&offset=%d&limit=%d&testCasePath=%s&mockPath=%s&reqType=%s", k.cfg.Server.URL, k.cfg.App.Name, i, 25, k.cfg.App.TestPath, k.cfg.App.MockPath)
 
 			req, err := http.NewRequest("GET", url, http.NoBody)
 			if err != nil {
