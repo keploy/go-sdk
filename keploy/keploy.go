@@ -1002,7 +1002,7 @@ func (k *Keploy) fetch() []models.TestCase {
 			}
 
 		} else {
-			url := fmt.Sprintf("%s/regression/testcase?app=%s&offset=%d&limit=%d&testCasePath=%s&mockPath=%s&reqType=%s", k.cfg.Server.URL, k.cfg.App.Name, i, 25, k.cfg.App.TestPath, k.cfg.App.MockPath)
+			url := fmt.Sprintf("%s/regression/testcase?app=%s&offset=%d&limit=%d&testCasePath=%s&mockPath=%s", k.cfg.Server.URL, k.cfg.App.Name, i, 25, k.cfg.App.TestPath, k.cfg.App.MockPath)
 
 			req, err := http.NewRequest("GET", url, http.NoBody)
 			if err != nil {
