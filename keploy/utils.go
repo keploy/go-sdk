@@ -330,3 +330,122 @@ func ProcessRequest(rw http.ResponseWriter, r *http.Request, k *Keploy) (*BodyDu
 
 	return writer, r, resBody, reqBody, nil
 }
+func GetProtoFormData(formData []models.FormData) []*proto.FormData {
+
+	protoFormDataList := []*proto.FormData{}
+
+	for _, j := range formData {
+		protoFormDataList = append(protoFormDataList, &proto.FormData{
+			Key:    j.Key,
+			Values: j.Values,
+			Paths:  j.Paths,
+		})
+	}
+	return protoFormDataList
+}
+
+// TODO: add this to keploy
+func ModelDepsToProtoDeps(deps []models.Dependency) []*proto.Dependency {
+	res := []*proto.Dependency{}
+	for _, j := range deps {
+		data := []*proto.DataBytes{}
+		for _, k := range j.Data {
+			data = append(data, &proto.DataBytes{
+				Bin: k,
+			})
+		}
+		res = append(res, &proto.Dependency{
+			Name: j.Name,
+			Type: string(j.Type),
+			Meta: j.Meta,
+			Data: data,
+		})
+	}
+	return res
+}
+
+func GetHttpHeader(m map[string]*proto.StrArr) map[string][]string {
+	res := map[string][]string{}
+	for k, v := range m {
+		res[k] = v.Value
+	}
+	return res
+}
+func GetMockFormData(formData []*proto.FormData) []models.FormData {
+	mockFormDataList := []models.FormData{}
+
+	for _, j := range formData {
+		mockFormDataList = append(mockFormDataList, models.FormData{
+			Key:    j.Key,
+			Values: j.Values,
+			Paths:  j.Paths,
+		})
+	}
+	return mockFormDataList
+}
+func ProtoDepsToModelDeps(request []*proto.Dependency) []models.Dependency {
+
+	deps := []models.Dependency{}
+	for _, j := range request {
+		data := [][]byte{}
+		for _, k := range j.Data {
+			data = append(data, k.Bin)
+		}
+		deps = append(deps, models.Dependency{
+			Name: j.Name,
+			Type: models.DependencyType(j.Type),
+			Meta: j.Meta,
+			Data: data,
+		})
+	}
+	return deps
+}
+
+func ProtoToModelsTestCase(tc []*proto.TestCase) []models.TestCase {
+	var res []models.TestCase
+	for _, v := range tc {
+		tcs := models.TestCase{
+			ID:       v.Id,
+			URI:      v.URI,
+			Created:  v.Created,
+			Updated:  v.Updated,
+			Captured: v.Captured,
+			CID:      v.CID,
+			AppID:    v.AppID,
+			HttpReq: models.HttpReq{
+				Method:     models.Method(v.HttpReq.Method),
+				ProtoMajor: int(v.HttpReq.ProtoMajor),
+				ProtoMinor: int(v.HttpReq.ProtoMinor),
+				URL:        v.HttpReq.URL,
+				URLParams:  v.HttpReq.URLParams,
+				Header:     GetHttpHeader(v.HttpReq.Header),
+				Body:       v.HttpReq.Body,
+				Binary:     v.HttpReq.Binary,
+				Form:       GetMockFormData(v.HttpReq.Form),
+			},
+			HttpResp: models.HttpResp{
+				StatusCode:    int(v.HttpResp.StatusCode),
+				ProtoMajor:    int(v.HttpResp.ProtoMajor),
+				ProtoMinor:    int(v.HttpResp.ProtoMinor),
+				Header:        GetHttpHeader(v.HttpResp.Header),
+				Body:          v.HttpResp.Body,
+				StatusMessage: v.HttpResp.StatusMessage,
+				Binary:        v.HttpResp.Binary,
+			},
+			GrpcReq: models.GrpcReq{
+				Body:   v.GrpcReq.Body,
+				Method: v.GrpcReq.Method,
+			},
+			GrpcResp: models.GrpcResp{
+				Body: v.GrpcResp.Body,
+				Err:  v.GrpcResp.Err,
+			},
+			Noise:   v.Noise,
+			Deps:    ProtoDepsToModelDeps(v.Deps),
+			Mocks:   (v.Mocks),
+		}
+		res = append(res, tcs)
+	}
+	return res
+
+}
