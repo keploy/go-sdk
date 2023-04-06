@@ -53,6 +53,8 @@ func captureRespGin(c *gin.Context) models.HttpResp {
 func setContextValGin(c *gin.Context, val interface{}) {
 	ctx := context.WithValue(c.Request.Context(), internal.KCTX, val)
 	c.Request = c.Request.WithContext(ctx)
+	// also set directly on gin context
+	c.Set(string(internal.KCTX), val)
 }
 
 func mw(k *keploy.Keploy) gin.HandlerFunc {
