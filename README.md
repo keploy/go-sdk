@@ -1,7 +1,8 @@
 # Keploy Go-SDK
+
 [![PkgGoDev](https://pkg.go.dev/badge/github.com/keploy/go-sdk#readme-contents)](https://pkg.go.dev/github.com/keploy/go-sdk#readme-contents)
 
-This is the client SDK for the [Keploy](https://github.com/keploy/keploy) testing platform. You can use this to generate realistic mock files or entire e2e tests for your applications. The **HTTP mocks/stubs and tests are the same format** are are inter-exchangeable.  
+This is the client SDK for the [Keploy](https://github.com/keploy/keploy) testing platform. You can use this to generate realistic mock files or entire e2e tests for your applications. The **HTTP mocks/stubs and tests are the same format** are are inter-exchangeable.
 
 ## Contents
 
@@ -14,14 +15,20 @@ This is the client SDK for the [Keploy](https://github.com/keploy/keploy) testin
 7. [Mocking/Stubbing for unit tests](#mockingstubbing-for-unit-tests)
 
 ## Installation
+
 ```bash
 go get -u github.com/keploy/go-sdk
 ```
+
 ## Usage
+
 ### Create mocks/stubs for your unit-test
+
 These mocks/stubs are realistic and frees you up from writing them manually. Keploy creates `readable/editable` mocks/stubs yaml files which can be referenced in any of your unit-tests tests. An example is mentioned in [Mocking/Stubbing for unit tests](#mockingstubbing-for-unit-tests) section
+
 1. **Wrap your depedency**: To wrap your depdencies, you need to integrate them with the keploy supported wrappers as metioned below. If your dependency is not supported please open a [feature request.](https://github.com/keploy/go-sdk/issues/new?assignees=&labels=&template=feature_request.md&title=)
-2. **Record**: To record you can import the keploy mocking library and set the mode to record mode. This should generate a file containing the mocks/stubs. 
+2. **Record**: To record you can import the keploy mocking library and set the mode to record mode. This should generate a file containing the mocks/stubs.
+
 ```go
 import(
     "github.com/keploy/go-sdk/keploy"
@@ -31,28 +38,32 @@ import(
 // Inside your unit test
 ...
 ctx := mock.NewContext(mock.Config{
-	Name: "<name_for_yamls>", // It is unique for every mock/stub. If you dont provide during record it would be generated. Its compulsory during tests. 
+	Name: "<name_for_yamls>", // It is unique for every mock/stub. If you dont provide during record it would be generated. Its compulsory during tests.
 	Mode: keploy.MODE_RECORD, // It can be MODE_TEST or MODE_OFF. Default is MODE_TEST
 	Path: "<local_path_for_yaml>", // optional. It can be relative(./internals) or absolute(/users/xyz/...)
-	CTX: <existing context>, // optional. can be used to pass existing running context. 
+	CTX: <existing context>, // optional. can be used to pass existing running context.
 })
 ...
 ```
-3. **Mock**: To mock dependency as per the content of the generated file (during testing) - just set the `Mode` config to `keploy.MODE_TEST` or remove the variable all together (default is test mode). eg: 
+
+3. **Mock**: To mock dependency as per the content of the generated file (during testing) - just set the `Mode` config to `keploy.MODE_TEST` or remove the variable all together (default is test mode). eg:
+
 ```go
 ctx := mock.NewContext(mock.Config{
-	Name: "<name_for_yamls>", // Should be unique for every mock/stub. Its compulsory during tests. 
-	Mode: keploy.MODE_TEST, 
+	Name: "<name_for_yamls>", // Should be unique for every mock/stub. Its compulsory during tests.
+	Mode: keploy.MODE_TEST,
 	Path: "<local_path_for_yaml>", // Optional. It should be the path to the recorded mocks/stubs.It can be relative(./internals) or absolute(/users/xyz/...)
-	CTX: <existing context>, // Optional. It can be used to pass existing running context. 
+	CTX: <existing context>, // Optional. It can be used to pass existing running context.
 })
 ```
 
+### Generate E2E tests
 
-### Generate E2E tests 
-These tests can be run alongside your manually written `go-tests`and adds coverage to them. This way you can focus on only writing those tests that are hard to e2e test with keploy. Mocks/stubs are also generated and linked to their respective tests. As mentioned above, the tests can also be shared with the clients for mocking (and vice versa!).    
+These tests can be run alongside your manually written `go-tests`and adds coverage to them. This way you can focus on only writing those tests that are hard to e2e test with keploy. Mocks/stubs are also generated and linked to their respective tests. As mentioned above, the tests can also be shared with the clients for mocking (and vice versa!).
+
 1. **Wrap your depedency**: (same as above)
 2. **Intialize SDK**: You would need to initialize the keploy SDK
+
 ```go
 import"github.com/keploy/go-sdk/keploy"
 
@@ -75,8 +86,10 @@ k := keploy.New(keploy.Config{
      },
     })
 ```
+
 **Note**: Testcases can be stored on either mongoDB or in yaml files locally. By default, testcases are generated in yaml files locally.
-For example: 
+For example:
+
 ```go
 port := "8080"
  k := keploy.New(keploy.Config{
@@ -88,26 +101,34 @@ port := "8080"
          URL: "http://localhost:6789/api",
      },
  })
- 
+
 ```
+
 3. **Record or Test**: You can use the `KEPLOY_MODE` to record or test your application. Eg:
+
 ```
 export KEPLOY_MODE=keploy.MODE_TEST
 ```
-There are 3 modes:
- - **Record**: Sets to record mode.
- - **Test**: Sets to test mode. 
- - **Off**: Turns off all the functionality provided by the API
 
-**Note:** `KEPLOY_MODE` value is case sensitive. 
+There are 3 modes:
+
+- **Record**: Sets to record mode.
+- **Test**: Sets to test mode.
+- **Off**: Turns off all the functionality provided by the API
+
+**Note:** `KEPLOY_MODE` value is case sensitive.
 
 ## Supported Routers
+
 ### 1. Chi
+
 ```go
 r := chi.NewRouter()
 r.Use(kchi.ChiMiddlewareV5(k))
 ```
+
 #### Example
+
 ```go
 import(
   "github.com/keploy/go-sdk/integrations/kchi"
@@ -131,12 +152,16 @@ func main(){
     http.ListenAndServe(":" + port, r)
 }
 ```
+
 ### 2. Gin
+
 ```go
 r:=gin.New()
 kgin.GinV1(k, r)
 ```
+
 #### Example
+
 ```go
 import(
   "github.com/keploy/go-sdk/integrations/kgin/v1"
@@ -159,12 +184,16 @@ func main(){
 	r.Run(":" + port)
 }
 ```
+
 ### 3. Echo
+
 ```go
 e := echo.New()
 e.Use(kecho.EchoMiddlewareV4(k))
 ```
+
 #### Example
+
 ```go
 import(
   "github.com/keploy/go-sdk/integrations/kecho/v4"
@@ -188,20 +217,27 @@ func main(){
     e.Start(":" + port)
 }
 ```
+
 ### 4. WebGo
+
 #### WebGoV4
+
 ```go
 router := webgo.NewRouter(cfg, getRoutes())
 router.Use(kwebgo.WebgoMiddlewareV4(k))
 router.Start()
 ```
+
 #### WebGoV6
+
 ```go
 router := webgo.NewRouter(cfg, getRoutes())
 router.Use(kwebgo.WebgoMiddlewareV6(k))
 router.Start()
 ```
+
 #### Example
+
 ```go
 import(
   "github.com/keploy/go-sdk/integrations/kwebgo/v4"
@@ -230,12 +266,16 @@ func main(){
     router.Start()
 }
 ```
-### 5. Gorilla/Mux 
+
+### 5. Gorilla/Mux
+
 ```go
 r := mux.NewRouter()
 r.Use(kmux.MuxMiddleware(k))
 ```
+
 #### Example
+
 ```go
 import(
   "github.com/keploy/go-sdk/integrations/kmux"
@@ -260,6 +300,7 @@ func main(){
     http.ListenAndServe(":"+port, r)
 }
 ```
+
 ### 6. FastHttp
 
 Requirement: [valyala/fasthttp](https://github.com/valyala/fasthttp) version >= 1.41.0
@@ -267,7 +308,9 @@ Requirement: [valyala/fasthttp](https://github.com/valyala/fasthttp) version >= 
 ```go
 mw := kfasthttp.FastHttpMiddleware(k)
 ```
+
 #### Example
+
 ```go
 import(
 	"github.com/keploy/go-sdk/integrations/kfasthttp"
@@ -298,9 +341,76 @@ func main() {
 	log.Fatal(fasthttp.ListenAndServe(":8080", mw(m)))
 }
 ```
-### 7. gRPC Server
-Testcases can be generated for gRPC unary methods by just registering keploy's gRPC Unary interceptor(from go-sdk/integrations/kgrpcserver package) in grpc.NewServer and enabling reflection for server.
+
+### 7. net/http (core)
+
+```go
+handler := khttp.KMiddleware(handler, k)
+```
+
 #### Example
+
+```go
+import(
+
+	"github.com/keploy/go-sdk/integrations/khttp"
+	"github.com/keploy/go-sdk/keploy"
+)
+
+func main(){
+
+   	var handler http.Handler = &myHandler{}
+	port := "8080"
+	k := keploy.New(keploy.Config{
+		App: keploy.AppConfig{
+			Name: "my_app",
+			Port: port,
+		},
+		Server: keploy.ServerConfig{
+			URL: "http://localhost:6789/api",
+		},
+	})
+
+	handler = khttp.KMiddleware(handler, k)
+
+	http.Handle("/hello", handler)
+
+	err := http.ListenAndServe(":8080", handler)
+	if err != nil {
+		panic(err)
+	}
+}
+```
+
+#### Example with goswagger
+
+```go
+import(
+	"github.com/keploy/go-sdk/integrations/khttp"
+	"github.com/keploy/go-sdk/keploy"
+)
+	//This function is used to add middlewares in your configurable file
+	func setupMiddlewares(handler http.Handler) http.Handler {
+	port := "8080"
+	k := keploy.New(keploy.Config{
+		App: keploy.AppConfig{
+			Name: "my_app",
+			Port: port,
+		},
+		Server: keploy.ServerConfig{
+			URL: "http://localhost:6789/api",
+		},
+	})
+	return khttp.KMiddleware(handler, k)
+}
+```
+
+### 8. gRPC Server
+
+Testcases can be generated for gRPC unary methods by just registering keploy's gRPC Unary interceptor(from go-sdk/integrations/kgrpcserver package) in grpc.NewServer and enabling reflection for server.
+
+#### Example
+
 ```go
 import(
 	"google.golang.org/grpc"
@@ -321,21 +431,26 @@ func main() {
 		  URL: "http://localhost:6789/api",
 	  },
 	})
-	
+
 	// make new gRPC server with keploy unary interceptor
 	srv := grpc.NewServer(kgrpcserver.UnaryInterceptor(k))
 	reflection.Register(srv)
 }
 ```
+
 ## Supported Databases
+
 ### 1. MongoDB
+
 ```go
 import("github.com/keploy/go-sdk/integrations/kmongo")
 
 db  := client.Database("testDB")
 col := kmongo.NewCollection(db.Collection("Demo-Collection"))
 ```
+
 Following operations are supported:<br>
+
 - FindOne - Err and Decode method of mongo.SingleResult<br>
 - Find - Next, TryNext, Err, Close, All and Decode methods of mongo.cursor<br>
 - InsertOne<br>
@@ -347,59 +462,70 @@ Following operations are supported:<br>
 - CountDocuments<br>
 - Distinct<br>
 - Aggregate - Next, TryNext, Err, Close, All and Decode methods of mongo.cursor
+
 ### 2. DynamoDB
+
 ```go
 import("github.com/keploy/go-sdk/integrations/kddb")
 
 client := kddb.NewDynamoDB(dynamodb.New(sess))
 ```
+
 Following operations are supported:<br>
+
 - QueryWithContext
 - GetItemWithContext
 - PutItemWithContext
+
 ### 3. SQL Driver
-Keploy inplements most of the sql driver's interface for mocking the outputs of sql queries which are called from your API handler.  
+
+Keploy inplements most of the sql driver's interface for mocking the outputs of sql queries which are called from your API handler.
 
 Since, keploy uses request context for mocking outputs of SQL queries thus, SQL methods having request context as parameter should be called from API handler.
 
 #### v1
+
 This version records the outputs and store them as binary in exported yaml files
+
 #### v2
+
 This version records and stores the outputs as readable/editable format in exported yaml file.
-Sample: 
+Sample:
+
 ```yaml
 version: api.keploy.io/v1beta1
 kind: SQL
 name: Sample-App # App_Id from keploy config or mock name from mock.Config
 spec:
-    metadata:
-        name: SQL
-        operation: QueryContext.Close
-        type: SQL_DB
-    type: table
-    table:
-        cols:
-            - name: id
-              type: int64
-              precision: 0
-              scale: 0
-            - name: uuid
-              type: '[]uint8'
-              precision: 0
-              scale: 0
-            - name: name
-              type: string
-              precision: 0
-              scale: 0
-        rows:
-            - "[`3` | `[50 101 101]` | `qwertt2` | ]"
-    int: 0
-    error:
-        - nil
-        - nil
+  metadata:
+    name: SQL
+    operation: QueryContext.Close
+    type: SQL_DB
+  type: table
+  table:
+    cols:
+      - name: id
+        type: int64
+        precision: 0
+        scale: 0
+      - name: uuid
+        type: "[]uint8"
+        precision: 0
+        scale: 0
+      - name: name
+        type: string
+        precision: 0
+        scale: 0
+    rows:
+      - "[`3` | `[50 101 101]` | `qwertt2` | ]"
+  int: 0
+  error:
+    - nil
+    - nil
 ```
 
 Here is an example for postgres driver and binary encoded outputs -
+
 ```go
     import (
         "github.com/keploy/go-sdk/integrations/ksql/v1" // the outputs of sql queries are stored as binary encoded in exported yaml files
@@ -409,7 +535,7 @@ Here is an example for postgres driver and binary encoded outputs -
         // Register keploy sql driver to database/sql package.
         driver := ksql.Driver{Driver: pq.Driver{}}
 		sql.Register("keploy", &driver)
-        
+
         pSQL_URI := fmt.Sprintf("host=%s user=%s dbname=%s sslmode=disable password=%s port=%s", "localhost", "postgres", "Book_Keeper", "8789", "5432")
         // keploy driver will internally open the connection using dataSourceName string parameter
         db, err := sql.Open("keploy", pSQL_URI)
@@ -436,8 +562,10 @@ Here is an example for postgres driver and binary encoded outputs -
         }))
     }
 ```
-**Note**: Its compatible with gORM. To integerate with gORM set DisableAutomaticPing of gorm.Config to true. Also pass request context to methods as params. 
+
+**Note**: Its compatible with gORM. To integerate with gORM set DisableAutomaticPing of gorm.Config to true. Also pass request context to methods as params.
 Example for gORM with GCP-Postgres driver:
+
 ```go
     import (
 		gcppostgres "github.com/GoogleCloudPlatform/cloudsql-proxy/proxy/dialers/postgres"
@@ -467,10 +595,10 @@ Example for gORM with GCP-Postgres driver:
 
         // set DisableAutomaticPing to true so that .
         pSQL_DB, err :=  gorm.Open( postgres.New(postgres.Config{
-                DriverName: "keploy", 
+                DriverName: "keploy",
                 DSN: pSQL_URI
-            }), &gorm.Config{ 
-                DisableAutomaticPing: true 
+            }), &gorm.Config{
+                DisableAutomaticPing: true
         }
         pSQL_DB.AutoMigrate(&Person{})
         pSQL_DB.AutoMigrate(&Book{})
@@ -487,9 +615,12 @@ Example for gORM with GCP-Postgres driver:
         }))
     }
 ```
+
 ### 4. Elasticsearch
-The elastic-search client uses http client to do CRUD operations. There is a Transport field in *elasticsearch.config* which allows you to completely replace the default HTTP client used by the package.So, we use *khttp* as an interceptor and assign it to the Transport field.
+
+The elastic-search client uses http client to do CRUD operations. There is a Transport field in _elasticsearch.config_ which allows you to completely replace the default HTTP client used by the package.So, we use _khttp_ as an interceptor and assign it to the Transport field.
 Here is an example of making elastic search client with keploy's http interceptor -
+
 ```go
 import (
 	"net/http"
@@ -513,7 +644,9 @@ func ConnectWithElasticsearch(ctx context.Context) *elasticsearch.Client {
 	return newClient
 }
 ```
+
 ### 5. Redis
+
 ```go
 import(
 	"context"
@@ -537,20 +670,26 @@ func (cache *redisCache) getClient() redis.UniversalClient {
 	return kredis.NewRedisClient(client)
 }
 ```
+
 Following operations are supported:<br>
+
 - Get
 - Set
 - Del
 
 ## Supported Clients
+
 ### net/http
+
 ```go
 interceptor := khttpclient.NewInterceptor(http.DefaultTransport)
 client := http.Client{
     Transport: interceptor,
 }
 ```
+
 #### Example
+
 ```go
 import("github.com/keploy/go-sdk/integrations/khttpclient")
 
@@ -575,7 +714,7 @@ func main(){
 	client := http.Client{
 		Transport: interceptor,
 	}
-	
+
 	r.HandleFunc("/mux/httpGet",func (w http.ResponseWriter, r *http.Request)  {
 		// SetContext should always be called once in a http handler before http.Client's Get or Post or Head or PostForm method.
         // Passing requests context as parameter.
@@ -632,14 +771,19 @@ func main(){
 	})
 }
 ```
-**Note**: ensure to pass request context to all external requests like http requests, db calls, etc. 
+
+**Note**: ensure to pass request context to all external requests like http requests, db calls, etc.
 
 ### gRPC Client
- The outputs of external gRPC calls from API handlers can be mocked by registering keploy's gRPC client interceptor(called WithClientUnaryInterceptor of go-sdk/integrations/kgrpc package). 
+
+The outputs of external gRPC calls from API handlers can be mocked by registering keploy's gRPC client interceptor(called WithClientUnaryInterceptor of go-sdk/integrations/kgrpc package).
+
 ```go
 conn, err := grpc.Dial(address, grpc.WithInsecure(), kgrpc.WithClientUnaryInterceptor(k))
 ```
+
 #### Example
+
 ```go
 import(
 	"github.com/keploy/go-sdk/integrations/kgrpc"
@@ -657,18 +801,22 @@ func main() {
 		  URL: "http://localhost:6789/api",
 	  },
 	})
-	
+
 	// Make gRPC client connection
 	conn, err := grpc.Dial(address, grpc.WithInsecure(), kgrpc.WithClientUnaryInterceptor(k))
 }
 ```
-**Note**: Currently streaming is not yet supported. 
+
+**Note**: Currently streaming is not yet supported.
 
 ## Supported JWT Middlewares
+
 ### jwtauth
+
 Middlewares which can be used to authenticate. It is compatible for Chi, Gin and Echo router. Usage is similar to go-chi/jwtauth. Adds ValidationOption to mock time in test mode.
- 
+
 #### Example
+
 ```go
 package main
 
@@ -789,10 +937,11 @@ func ginRouter() http.Handler {
 ```
 
 ## Mocking/Stubbing for unit tests
+
 Mocks/Stubs can be generated for external dependency calls of go unit tests as `readable/editable` yaml files using Keploy.
 
-
 ### Example
+
 ```go
 import (
 	"bytes"; "context"; "io"; "net/http"; "testing"
