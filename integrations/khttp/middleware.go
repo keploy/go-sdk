@@ -2,7 +2,6 @@ package khttp
 
 import (
 	"context"
-	"fmt"
 	"github.com/gorilla/mux"
 	"github.com/keploy/go-sdk/keploy"
 	"net/http"
@@ -60,7 +59,6 @@ func getUrlParams(r *http.Request) map[string]string {
 
 	for key, value := range vars {
 		params[key] = value
-		fmt.Println(key, value)
 	}
 
 	return params
