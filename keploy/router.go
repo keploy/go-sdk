@@ -94,6 +94,6 @@ func Middleware(k *Keploy, router Router) error {
 		return err
 	}
 
-	CaptureHttpTC(k, r.Context(), req, UrlPath(r.URL.Path, params), resp, params)
+	CaptureHttpTC(k, router.GetRequest().Context(), req, UrlPath(r.URL.Path, params), resp, params)
 	return nil
 }

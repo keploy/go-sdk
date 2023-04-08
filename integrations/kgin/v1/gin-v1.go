@@ -119,7 +119,7 @@ func mw(k *keploy.Keploy) gin.HandlerFunc {
 		}
 
 		resp := captureRespGin(c)
-		keploy.CaptureHttpTC(k, r.Context(), req, keploy.UrlPath(r.URL.Path, params), resp, params)
+		keploy.CaptureHttpTC(k, c.Request.Context(), req, keploy.UrlPath(r.URL.Path, params), resp, params)
 	}
 }
 
