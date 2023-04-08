@@ -54,6 +54,7 @@ func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp
 				next(c)
 				return
 			}
+
 			if id != "" {
 				setContextValFast(c, &internal.Context{
 					Mode:   internal.MODE_TEST,
@@ -89,12 +90,23 @@ func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp
 			}
 			r := &http.Request{}
 			fasthttpadaptor.ConvertRequest(c, r, true) //converting fasthttp request to http
-			resp := captureResp(c, next)
-			params := pathParams(c)
 
+			// capture request before calling next
 			r = r.WithContext(c)
+			params := pathParams(c)
+			req := models.HttpReq{
+				Method:     models.Method(r.Method),
+				ProtoMajor: r.ProtoMajor,
+				ProtoMinor: r.ProtoMinor,
+				URL:        r.URL.String(),
+				URLParams:  keploy.UrlParams(r, params),
+				Header:     r.Header,
+				Body:       string(reqBody),
+			}
 
-			keploy.CaptureHttpTC(k, r, reqBody, resp, params)
+			resp := captureResp(c, next)
+
+			keploy.CaptureHttpTC(k, r.Context(), req, keploy.UrlPath(r.URL.Path, params), resp, params)
 		})
 	}
 }

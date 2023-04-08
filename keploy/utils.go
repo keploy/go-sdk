@@ -198,8 +198,8 @@ func CaptureGrpcTC(k *Keploy, grpcCtx context.Context, req models.GrpcReq, resp 
 
 }
 
-func CaptureHttpTC(k *Keploy, r *http.Request, reqBody []byte, resp models.HttpResp, params map[string]string) {
-	d := r.Context().Value(keploy.KCTX)
+func CaptureHttpTC(k *Keploy, ctx context.Context, req models.HttpReq, uri string, resp models.HttpResp, params map[string]string) {
+	d := ctx.Value(keploy.KCTX)
 	if d == nil {
 		k.Log.Error("failed to get keploy context")
 		return
@@ -207,18 +207,10 @@ func CaptureHttpTC(k *Keploy, r *http.Request, reqBody []byte, resp models.HttpR
 	deps := d.(*keploy.Context)
 
 	k.Capture(models.TestCaseReq{
-		Captured: time.Now().Unix(),
-		AppID:    k.cfg.App.Name,
-		URI:      urlPath(r.URL.Path, params),
-		HttpReq: models.HttpReq{
-			Method:     models.Method(r.Method),
-			ProtoMajor: r.ProtoMajor,
-			ProtoMinor: r.ProtoMinor,
-			URL:        r.URL.String(),
-			URLParams:  urlParams(r, params),
-			Header:     r.Header,
-			Body:       string(reqBody),
-		},
+		Captured:     time.Now().Unix(),
+		AppID:        k.cfg.App.Name,
+		URI:          uri,
+		HttpReq:      req,
 		HttpResp:     resp,
 		Deps:         deps.Deps,
 		TestCasePath: k.cfg.App.TestPath,
@@ -228,7 +220,7 @@ func CaptureHttpTC(k *Keploy, r *http.Request, reqBody []byte, resp models.HttpR
 	})
 }
 
-func urlParams(r *http.Request, params map[string]string) map[string]string {
+func UrlParams(r *http.Request, params map[string]string) map[string]string {
 	result := params
 	qp := r.URL.Query()
 	for i, j := range qp {
@@ -248,7 +240,7 @@ func urlParams(r *http.Request, params map[string]string) map[string]string {
 	return result
 }
 
-func urlPath(url string, params map[string]string) string {
+func UrlPath(url string, params map[string]string) string {
 	res := url
 	for i, j := range params {
 		res = strings.Replace(res, "/"+j+"/", "/:"+i+"/", -1)

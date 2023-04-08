@@ -33,10 +33,24 @@ func Middleware(k *Keploy, router Router) error {
 	if k == nil || keploy.GetMode() == keploy.MODE_OFF || (keploy.GetMode() == keploy.MODE_TEST && router.GetRequest().Header.Get("KEPLOY_TEST_ID") == "") {
 		return router.Next()
 	}
+
 	writer, r, resBody, reqBody, err := ProcessRequest(router.GetResponseWriter(), router.GetRequest(), k)
 	if err != nil {
 		return err
 	}
+
+	// capture request before next handler call
+	params := router.GetURLParams()
+	req := models.HttpReq{
+		Method:     models.Method(r.Method),
+		ProtoMajor: r.ProtoMajor,
+		ProtoMinor: r.ProtoMinor,
+		URL:        r.URL.String(),
+		URLParams:  UrlParams(r, params),
+		Header:     r.Header,
+		Body:       string(reqBody),
+	}
+
 	router.SetResponseWriter(writer)
 	router.SetRequest(r)
 
@@ -80,7 +94,6 @@ func Middleware(k *Keploy, router Router) error {
 		return err
 	}
 
-	params := router.GetURLParams()
-	CaptureHttpTC(k, r, reqBody, resp, params)
+	CaptureHttpTC(k, r.Context(), req, UrlPath(r.URL.Path, params), resp, params)
 	return nil
 }

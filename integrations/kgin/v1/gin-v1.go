@@ -64,7 +64,8 @@ func mw(k *keploy.Keploy) gin.HandlerFunc {
 		}
 	}
 	return func(c *gin.Context) {
-		id := c.Request.Header.Get("KEPLOY_TEST_ID")
+		r := c.Request
+		id := r.Header.Get("KEPLOY_TEST_ID")
 		if id == "" && internal.GetMode() == internal.MODE_TEST {
 			c.Next()
 			return
@@ -105,9 +106,20 @@ func mw(k *keploy.Keploy) gin.HandlerFunc {
 		}
 		c.Request.Body = ioutil.NopCloser(bytes.NewBuffer(reqBody)) // Reset
 
-		resp := captureRespGin(c)
+		// capture request before it is processed by the handler
 		params := urlParamsGin(c, k)
-		keploy.CaptureHttpTC(k, c.Request, reqBody, resp, params)
+		req := models.HttpReq{
+			Method:     models.Method(r.Method),
+			ProtoMajor: r.ProtoMajor,
+			ProtoMinor: r.ProtoMinor,
+			URL:        r.URL.String(),
+			URLParams:  keploy.UrlParams(r, params),
+			Header:     r.Header,
+			Body:       string(reqBody),
+		}
+
+		resp := captureRespGin(c)
+		keploy.CaptureHttpTC(k, r.Context(), req, keploy.UrlPath(r.URL.Path, params), resp, params)
 	}
 }
 
