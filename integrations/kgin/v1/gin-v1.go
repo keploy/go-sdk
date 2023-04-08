@@ -106,6 +106,11 @@ func mw(k *keploy.Keploy) gin.HandlerFunc {
 		}
 		c.Request.Body = ioutil.NopCloser(bytes.NewBuffer(reqBody)) // Reset
 
+		header := make(http.Header)
+		for key, v := range r.Header {
+			header[key] = v
+		}
+
 		// capture request before it is processed by the handler
 		params := urlParamsGin(c, k)
 		req := models.HttpReq{
@@ -114,7 +119,7 @@ func mw(k *keploy.Keploy) gin.HandlerFunc {
 			ProtoMinor: r.ProtoMinor,
 			URL:        r.URL.String(),
 			URLParams:  keploy.UrlParams(r, params),
-			Header:     r.Header,
+			Header:     header,
 			Body:       string(reqBody),
 		}
 

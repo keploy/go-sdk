@@ -92,6 +92,10 @@ func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp
 			fasthttpadaptor.ConvertRequest(c, r, true) //converting fasthttp request to http
 
 			// capture request before calling next
+			header := make(http.Header)
+			for key, v := range r.Header {
+				header[key] = v
+			}
 			r = r.WithContext(c)
 			params := pathParams(c)
 			req := models.HttpReq{
@@ -100,7 +104,7 @@ func FastHttpMiddleware(k *keploy.Keploy) func(fasthttp.RequestHandler) fasthttp
 				ProtoMinor: r.ProtoMinor,
 				URL:        r.URL.String(),
 				URLParams:  keploy.UrlParams(r, params),
-				Header:     r.Header,
+				Header:     header,
 				Body:       string(reqBody),
 			}
 

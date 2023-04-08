@@ -40,6 +40,12 @@ func Middleware(k *Keploy, router Router) error {
 	}
 
 	// capture request before next handler call
+
+	header := make(http.Header)
+	for key, v := range r.Header {
+		header[key] = v
+	}
+
 	params := router.GetURLParams()
 	req := models.HttpReq{
 		Method:     models.Method(r.Method),
@@ -47,7 +53,7 @@ func Middleware(k *Keploy, router Router) error {
 		ProtoMinor: r.ProtoMinor,
 		URL:        r.URL.String(),
 		URLParams:  UrlParams(r, params),
-		Header:     r.Header,
+		Header:     header,
 		Body:       string(reqBody),
 	}
 
