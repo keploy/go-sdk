@@ -30,9 +30,8 @@ import (
 )
 
 var (
-
 	// mode   = keploy.MODE_OFF
-	result       = make(chan bool, 1)
+	result       chan bool
 	RespChannels = map[string]chan bool{}
 )
 
@@ -56,6 +55,7 @@ type GrpcResp struct {
 // }
 
 func init() {
+	result = make(chan bool, 1)
 	m := keploy.Mode(os.Getenv("KEPLOY_MODE"))
 	if m == "" {
 		return
