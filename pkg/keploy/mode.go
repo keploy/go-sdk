@@ -71,7 +71,9 @@ func GetModeFromContext(ctx context.Context) Mode {
 func GetState(ctx context.Context) (*Context, error) {
 	kctx := ctx.Value(KCTX)
 	if kctx == nil {
-		// cast to string and check
+		// cast to string and check again
+		// this done to avoid the error "cannot use KCTX (type KctxType) as type string in argument to ctx.Value"
+		// gin context is of type map[string]interface{} and not map[KctxType]interface{} and hence the need to cast to string
 		kctx = ctx.Value(string(KCTX))
 		if kctx == nil {
 			return nil, errors.New("failed to get Keploy context")
