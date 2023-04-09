@@ -71,7 +71,12 @@ func GetModeFromContext(ctx context.Context) Mode {
 func GetState(ctx context.Context) (*Context, error) {
 	kctx := ctx.Value(KCTX)
 	if kctx == nil {
-		return nil, errors.New("failed to get Keploy context")
+		// cast to string and check
+		kctx = ctx.Value(string(KCTX))
+		if kctx == nil {
+			return nil, errors.New("failed to get Keploy context")
+		}
+
 	}
 	return kctx.(*Context), nil
 }
