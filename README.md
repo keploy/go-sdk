@@ -715,20 +715,6 @@ func main(){
 		Transport: interceptor,
 	}
 
-	r.HandleFunc("/mux/httpGet",func (w http.ResponseWriter, r *http.Request)  {
-		// SetContext should always be called once in a http handler before http.Client's Get or Post or Head or PostForm method.
-        // Passing requests context as parameter.
-		interceptor.SetContext(r.Context())
-		// make Get, Post, etc request to external http service
-		resp, err := client.Get("https://example.com/getDocs")
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer resp.Body.Close()
-		body, err := io.ReadAll(resp.Body)
-		fmt.Println("BODY : ", body)
-	})
-
 	r.HandleFunc("/mux/httpDo", func(w http.ResponseWriter, r *http.Request){
 		putBody, _ := json.Marshal(map[string]interface{}{
 		    "name":  "Ash",
@@ -753,6 +739,22 @@ func main(){
 		}
 		fmt.Println(" response Body: ", string(body))
 
+	})
+	
+	r.HandleFunc("/mux/httpGet",func (w http.ResponseWriter, r *http.Request)  {
+		// ONLY USE THIS IF YOU CANT ADD CONTEXT TO YOUR REQUEST OBJECT AS ABOVE. 
+		// THIS IS NOT CONCURRENT SAFE BECAUSE WE ARE SETTING GLOBAL CONTEXT.  
+		// SetContext should always be called once in a http handler before http.Client's Get or Post or Head or PostForm method.
+        	// Passing requests context as parameter.
+		interceptor.SetContext(r.Context())
+		// make Get, Post, etc request to external http service
+		resp, err := client.Get("https://example.com/getDocs")
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		fmt.Println("BODY : ", body)
 	})
 
 	// gcp compute API integeration
