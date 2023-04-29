@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/golang/protobuf/jsonpb"
+	"github.com/golang/protobuf/proto"
 	"strings"
 
 	"github.com/keploy/go-sdk/keploy"
@@ -69,11 +71,12 @@ func serverInterceptor(k *keploy.Keploy) func(
 		ctx = context.WithValue(ctx, internal.KCTX, &internal.Context{
 			Mode: keploy.MODE_RECORD,
 		})
-		reqByte, err1 := json.Marshal(req)
+
+		m := jsonpb.Marshaler{}
+		reqJSON, err1 := m.MarshalToString(req.(proto.Message))
 		if err1 != nil {
 			k.Log.Error("failed to marshal grpc request body and tcs is not captured", zap.Error(err1))
 		}
-		requestJson := string(reqByte)
 		infoByte, err1 := json.Marshal(info)
 		if err1 != nil {
 			k.Log.Error("", zap.Error(err1))
@@ -104,7 +107,7 @@ func serverInterceptor(k *keploy.Keploy) func(
 			return c, err1
 		}
 		resp := string(respByte)
-		keploy.CaptureGrpcTC(k, ctx, models.GrpcReq{Body: requestJson, Method: method}, models.GrpcResp{Body: resp, Err: errStr})
+		keploy.CaptureGrpcTC(k, ctx, models.GrpcReq{Body: reqJSON, Method: method}, models.GrpcResp{Body: resp, Err: errStr})
 		return c, err
 	}
 }
