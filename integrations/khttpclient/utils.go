@@ -47,6 +47,10 @@ func MockRespFromYaml(kctx *internal.Context, logger *zap.Logger, req *http.Requ
 		// determine the degree of match for all mocked http request in mock
 		// array with current http call
 		for i, j := range mocks {
+			// If the Mock isn't of HTTP type, don't match it
+			if j.Kind != string(models.HTTP) {
+				continue
+			}
 			reqUrl, er := url.Parse(j.Spec.Req.URL)
 			if er != nil {
 				continue
