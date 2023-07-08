@@ -776,8 +776,6 @@ func (k *Keploy) fetch() []models.TestCase {
 			k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(errors.New("failed to send get request: "+resp.Status)))
 			return nil
 		}
-
-		defer resp.Body.Close()
 		body, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			k.Log.Error("failed to fetch testcases from keploy cloud", zap.Error(err))
@@ -791,11 +789,16 @@ func (k *Keploy) fetch() []models.TestCase {
 			return nil
 		}
 		tcs = append(tcs, res...)
-		if len(res) < pageSize {
+		eof := resp.Header.Get("EOF")
+		err = resp.Body.Close()
+		if err != nil {
+			k.Log.Error("failed to close keploy resp while fetching testcases from keploy", zap.Error(err))
+		}
+		if eof == "true" {
 			break
 		}
-		eof := resp.Header.Get("EOF")
-		if eof == "true" {
+
+		if len(res) < pageSize {
 			break
 		}
 	}
