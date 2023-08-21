@@ -31,6 +31,7 @@ require (
 require (
 	github.com/creasty/defaults v1.6.0
 	github.com/fullstorydev/grpcurl v1.8.7
+	github.com/golang/protobuf v1.5.2
 	go.keploy.io/server v0.8.6
 	google.golang.org/protobuf v1.28.1
 )
