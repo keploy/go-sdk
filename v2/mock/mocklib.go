@@ -19,9 +19,10 @@ var (
 )
 
 type Config struct {
-	Mode      keploy.Mode // Keploy mode on which unit test will run. Possible values: MODE_TEST or MODE_RECORD. Default: MODE_TEST
-	TestSuite string      // TestSuite name to record the mock or test the mocks
-	Path      string      // Path in which Keploy "/mocks" will be generated. Default: current working directroy.
+	Mode             keploy.Mode // Keploy mode on which unit test will run. Possible values: MODE_TEST or MODE_RECORD. Default: MODE_TEST
+	TestSuite        string      // TestSuite name to record the mock or test the mocks
+	Path             string      // Path in which Keploy "/mocks" will be generated. Default: current working directroy.
+	EnableKeployLogs bool
 }
 
 func NewContext(conf Config) {
@@ -31,6 +32,13 @@ func NewContext(conf Config) {
 		path      string = conf.Path
 		keployCmd string
 	)
+
+	logger, _ = zap.NewDevelopment()
+	defer func() {
+		_ = logger.Sync()
+	}()
+
+	KillProcessOnPort()
 
 	// use current directory, if path is not provided or relative in config
 	if conf.Path == "" {
@@ -49,16 +57,26 @@ func NewContext(conf Config) {
 		logger.Error("Failed to get test suite name")
 	}
 
-	appPid := os.Getpid()
-
-	recordCmd := "sudo -E /usr/local/bin/keploy mockRecord --pid " + strconv.Itoa(appPid) + " --path " + path + " --delay 5" + " --testSuite " + conf.TestSuite
-	testCmd := "sudo -E /usr/local/bin/keploy mockTest --pid " + strconv.Itoa(appPid) + " --path " + path + " --delay 5" + " --testSuite " + conf.TestSuite
-
 	if keploy.Mode(conf.Mode).Valid() {
 		mode = keploy.Mode(conf.Mode)
 	} else {
 		logger.Error("Failed to get mode")
 	}
+
+	if mode == keploy.MODE_RECORD {
+		if _, err := os.Stat(path + "/keploy/" + conf.TestSuite); !os.IsNotExist(err) {
+			cmd := exec.Command("sudo", "rm", "-rf", path+"/keploy/"+conf.TestSuite)
+			cmdOutput, err := cmd.CombinedOutput()
+			if err != nil {
+				logger.Error("Failed to delete existing directory", zap.Error(err), zap.String("cmdOutput", string(cmdOutput)))
+			}
+		}
+	}
+
+	appPid := os.Getpid()
+
+	recordCmd := "sudo -E /usr/local/bin/keploy mockRecord --pid " + strconv.Itoa(appPid) + " --path " + path + " --delay 5" + " --testSuite " + conf.TestSuite
+	testCmd := "sudo -E /usr/local/bin/keploy mockTest --pid " + strconv.Itoa(appPid) + " --path " + path + " --delay 5" + " --testSuite " + conf.TestSuite
 
 	if mode == keploy.MODE_TEST {
 		keployCmd = testCmd
@@ -68,8 +86,10 @@ func NewContext(conf Config) {
 
 	parts := strings.Fields(keployCmd)
 	cmd := exec.Command(parts[0], parts[1:]...)
-	// cmd.Stdout = os.Stdout
-	// cmd.Stderr = os.Stderr
+	if conf.EnableKeployLogs {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	}
 	go func() {
 		err := cmd.Run()
 		if err != nil {
@@ -84,7 +104,10 @@ func KillProcessOnPort() {
 	port := 16789
 	cmd := exec.Command("sudo", "lsof", "-t", "-i:"+strconv.Itoa(port))
 	output, err := cmd.Output()
-	if err != nil {
+	if _, ok := err.(*exec.ExitError); ok && len(output) == 0 {
+		logger.Debug("No process found for port", zap.Int("port", port))
+		return
+	} else if err != nil {
 		logger.Error("Failed to execute lsof: %v\n", zap.Error(err))
 		return
 	}
