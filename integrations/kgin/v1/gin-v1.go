@@ -53,6 +53,8 @@ func captureRespGin(c *gin.Context) models.HttpResp {
 func setContextValGin(c *gin.Context, val interface{}) {
 	ctx := context.WithValue(c.Request.Context(), internal.KCTX, val)
 	c.Request = c.Request.WithContext(ctx)
+	// also set directly on gin context
+	c.Set(string(internal.KCTX), val)
 }
 
 func mw(k *keploy.Keploy) gin.HandlerFunc {
@@ -62,7 +64,8 @@ func mw(k *keploy.Keploy) gin.HandlerFunc {
 		}
 	}
 	return func(c *gin.Context) {
-		id := c.Request.Header.Get("KEPLOY_TEST_ID")
+		r := c.Request
+		id := r.Header.Get("KEPLOY_TEST_ID")
 		if id == "" && internal.GetMode() == internal.MODE_TEST {
 			c.Next()
 			return
@@ -103,9 +106,25 @@ func mw(k *keploy.Keploy) gin.HandlerFunc {
 		}
 		c.Request.Body = ioutil.NopCloser(bytes.NewBuffer(reqBody)) // Reset
 
-		resp := captureRespGin(c)
+		header := make(http.Header)
+		for key, v := range r.Header {
+			header[key] = v
+		}
+
+		// capture request before it is processed by the handler
 		params := urlParamsGin(c, k)
-		keploy.CaptureHttpTC(k, c.Request, reqBody, resp, params)
+		req := models.HttpReq{
+			Method:     models.Method(r.Method),
+			ProtoMajor: r.ProtoMajor,
+			ProtoMinor: r.ProtoMinor,
+			URL:        r.URL.String(),
+			URLParams:  keploy.UrlParams(r, params),
+			Header:     header,
+			Body:       string(reqBody),
+		}
+
+		resp := captureRespGin(c)
+		keploy.CaptureHttpTC(k, c.Request.Context(), req, keploy.UrlPath(r.URL.Path, params), resp, params)
 	}
 }
 
