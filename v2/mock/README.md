@@ -1,0 +1,141 @@
+### Create mocks/stubs for your unit-test
+
+These mocks/stubs are realistic and frees you up from writing them manually. Keploy creates `readable/editable` mocks/stubs yaml files which can be referenced in any of your unit-tests tests. An example is mentioned in [Mocking/Stubbing for unit tests](#mockingstubbing-for-unit-tests) section
+
+1. install keploy binary
+2. **Record**: To record you can import the keploy mocking library and set the mode to record mode. This should generate a file containing the mocks/stubs.
+
+```go
+import(
+    "github.com/keploy/go-sdk/keploy"
+    "github.com/keploy/go-sdk/mock"
+)
+
+// Inside your unit test
+...
+ctx := mock.NewContext(mock.Config{
+	Mode: keploy.MODE_RECORD, // It can be MODE_TEST or MODE_OFF. Default is MODE_TEST. Default MODE_TEST
+    TestSuite: "<test_suite_name>" // TestSuite name to record the mock or test the mocks
+	Path: "<local_path_for_saving_test_suite>", // optional. It can be relative(./internals) or absolute(/users/xyz/...)
+	EnableKeployLogs: false, // optional. It can be true or false. If it is true keploy logs will be shown in the unit test terminal. Default: false
+})
+...
+```
+
+At the end of the test case you can add the following function which will terminate keploy if not keploy will be running even after unit test is run
+
+```go
+mock.KillProcessOnPort()
+```
+
+3. **Mock**: To mock dependency as per the content of the generated file (during testing) - just set the `Mode` config to `keploy.MODE_TEST` eg:
+
+```go
+ctx := mock.NewContext(mock.Config{
+	Mode: keploy.MODE_TEST,
+	TestSuite: "<test_suite_name>"
+	Path: "<local_path_for_saving_test_suite>",
+	EnableKeployLogs: false,
+})
+```
+
+4. **Example**:
+
+```go
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+	"github.com/keploy/go-sdk/keploy"
+	"github.com/keploy/go-sdk/v2/mock"
+)
+
+func setup() {
+	mock.NewContext(mock.Config{
+		TestSuite:        "test-set-5",
+		Mode:             keploy.MODE_RECORD,
+		Path:             "/home/ubuntu/dont_touch/samples-go/gin-mongo",
+		EnableKeployLogs: true,
+	})
+	dbName, collection := "keploy", "url-shortener"
+	client, err := New("localhost:27017", dbName)
+	if err != nil {
+		panic("Failed to initialize MongoDB: " + err.Error())
+	}
+	db := client.Database(dbName)
+	col = db.Collection(collection)
+}
+
+func TestGetURL(t *testing.T) {
+	setup()
+	// Setting up Gin and routes
+	r := gin.Default()
+	r.GET("/:param", getURL)
+	r.POST("/url", putURL)
+
+	// Assuming we already have a shortened URL stored with the hash "test123"
+	req, err := http.NewRequest(http.MethodGet, "https://www.example.com/Lhr4BWAi", nil)
+	if err != nil {
+		t.Fatalf("Couldn't create request: %v\n", err)
+	}
+
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	// We're just checking if it can successfully redirect
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("Expected HTTP 303 See Other, but got %v", w.Code)
+	}
+
+	mock.KillProcessOnPort()
+
+}
+
+func TestPutURL(t *testing.T) {
+
+	r := gin.Default()
+	r.GET("/:param", getURL)
+	r.POST("/url", putURL)
+
+	data := map[string]string{
+		"url": "https://www.example.com",
+	}
+	payload, err := json.Marshal(data)
+	if err != nil {
+		t.Fatalf("rre: %v\n", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, "/url", bytes.NewBuffer(payload))
+	if err != nil {
+		t.Fatalf("Couldn't create request: %v\n", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	// Checking if the URL was successfully shortened and stored
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected HTTP 200 OK, but got %v", w.Code)
+	}
+
+	var response map[string]interface{}
+	err = json.Unmarshal(w.Body.Bytes(), &response)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal response: %v\n", err)
+	}
+	fmt.Println("response-url" + response["url"].(string))
+
+	if response["url"] == nil || response["ts"] == nil {
+		t.Fatalf("Response did not contain expected fields")
+	}
+}
+```

@@ -415,7 +415,6 @@ go.keploy.io/server v0.5.6/go.mod h1:/wHYlepZLITJ+MsYnRfRED9K/ENset2JhfzeAqSGnV0
 go.keploy.io/server v0.7.8/go.mod h1:Xm0Zzt2iBRrvoDY7fBMm8M+geV+ZlkknbqKRVjC3K0I=
 go.keploy.io/server v0.7.12/go.mod h1:ch4rD1NCgtxozDHD9yVk+sLHWz5HgefOqrgEdEIgfBQ=
 go.keploy.io/server v0.7.20/go.mod h1:cu/y7NQ8Io1OP2BfMtfFQugYd/UanRvDWpzcyulx/Qo=
-go.keploy.io/server v0.8.6-0.20230408144107-6942a76b2d25 h1:1pj/1M6OAISVqMITbQqXFBUc3T/mXT5HYAbbD1AkTJs=
 go.keploy.io/server v0.8.6-0.20230408144107-6942a76b2d25/go.mod h1:SGs8n07hQVoxf+TsbuwSoPQKKxgJ8GVQiCTcqiI//d4=
 go.keploy.io/server v0.8.6 h1:czE9jaliyAkMMJcYnMPNuu6tun7UgwFbokxEG95vLN4=
 go.keploy.io/server v0.8.6/go.mod h1:t7BPuZQSiC3PNHZ9dbn3e3VB61HNWwiqVmaRujfDFUg=
