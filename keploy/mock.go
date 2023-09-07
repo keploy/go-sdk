@@ -51,6 +51,10 @@ func New(conf Config) error {
 		return errors.New("provided keploy mode is invalid, either use MODE_RECORD/MODE_TEST/MODE_OFF")
 	}
 
+	if conf.Delay > 5 {
+		delay = conf.Delay
+	}
+
 	if mode == MODE_OFF {
 		return nil
 	}
@@ -90,8 +94,8 @@ func New(conf Config) error {
 
 	appPid := os.Getpid()
 
-	recordCmd := "sudo -E /usr/local/bin/keploy mockRecord --pid " + strconv.Itoa(appPid) + " --path " + path + " --delay 5" + " --mockName " + conf.Name
-	testCmd := "sudo -E /usr/local/bin/keploy mockTest --pid " + strconv.Itoa(appPid) + " --path " + path + " --delay 5" + " --mockName " + conf.Name
+	recordCmd := "sudo -E /usr/local/bin/keploy mockRecord --pid " + strconv.Itoa(appPid) + " --path " + path + " --mockName " + conf.Name
+	testCmd := "sudo -E /usr/local/bin/keploy mockTest --pid " + strconv.Itoa(appPid) + " --path " + path + " --mockName " + conf.Name
 
 	if mode == MODE_TEST {
 		keployCmd = testCmd
