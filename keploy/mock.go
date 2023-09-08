@@ -94,8 +94,8 @@ func New(conf Config) error {
 
 	appPid := os.Getpid()
 
-	recordCmd := "sudo -E /usr/local/bin/keploy mockRecord --pid " + strconv.Itoa(appPid) + " --path " + path + " --mockName " + conf.Name
-	testCmd := "sudo -E /usr/local/bin/keploy mockTest --pid " + strconv.Itoa(appPid) + " --path " + path + " --mockName " + conf.Name
+	recordCmd := "sudo -E /usr/local/bin/keploy mockRecord --pid " + strconv.Itoa(appPid) + " --path " + path + " --mockName " + conf.Name + " --debug"
+	testCmd := "sudo -E /usr/local/bin/keploy mockTest --pid " + strconv.Itoa(appPid) + " --path " + path + " --mockName " + conf.Name + " --debug"
 
 	if mode == MODE_TEST {
 		keployCmd = testCmd
