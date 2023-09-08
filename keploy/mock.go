@@ -83,8 +83,15 @@ func New(conf Config) error {
 	}
 
 	if mode == MODE_RECORD {
-		if _, err := os.Stat(path + "/keploy/" + conf.Name); !os.IsNotExist(err) {
-			cmd := exec.Command("sudo", "rm", "-rf", path+"/keploy/"+conf.Name)
+		if _, err := os.Stat(path + "/stubs/" + conf.Name + "-mocks.yaml"); !os.IsNotExist(err) {
+			cmd := exec.Command("sudo", "rm", "-rf", path+"/stubs/"+conf.Name+"-mocks.yaml")
+			_, err := cmd.CombinedOutput()
+			if err != nil {
+				return fmt.Errorf("failed to replace existing mock file %w", err)
+			}
+		}
+		if _, err := os.Stat(path + "/stubs/" + conf.Name + "-config.yaml"); !os.IsNotExist(err) {
+			cmd := exec.Command("sudo", "rm", "-rf", path+"/stubs/"+conf.Name+"-config.yaml")
 			_, err := cmd.CombinedOutput()
 			if err != nil {
 				return fmt.Errorf("failed to replace existing mock file %w", err)
