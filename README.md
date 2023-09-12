@@ -21,7 +21,7 @@ go get -u github.com/keploy/go-sdk/v2
 These mocks/stubs are realistic and frees you up from writing them manually. Keploy creates `readable/editable` mocks/stubs yaml files which can be referenced in any of your unit-tests tests. An example is mentioned in [Mocking/Stubbing for unit tests](#mockingstubbing-for-unit-tests) section
 
 1. Install [keploy](https://github.com/keploy/keploy#quick-installation) binary
-2. **Record**: To record you can import the keploy mocking library and set the mode to record mode. This should generate a file containing the mocks/stubs.
+2. **Record**: To record you can import the keploy mocking library and set the mode to record mode and run you databases. This should generate a file containing the mocks/stubs.
 
 ```go
 import(
@@ -34,7 +34,7 @@ err := keploy.New(keploy.Config{
 	Mode: keploy.MODE_RECORD, // It can be MODE_TEST or MODE_OFF. Default is MODE_TEST. Default MODE_TEST
     Name: "<stub_name/mock_name>" // TestSuite name to record the mock or test the mocks
 	Path: "<local_path_for_saving_mock>", // optional. It can be relative(./internals) or absolute(/users/xyz/...)
-	EnableKeployLogs: false, // optional. It can be true or false. If it is true keploy logs will be shown in the unit test terminal. Default: false
+	MuteKeployLogs: false, // optional. It can be true or false. If it is true keploy logs will be not shown in the unit test terminal. Default: false
 	delay: 10, // by default it is 5 . This delay is for running keploy
 })
 ...
@@ -53,7 +53,7 @@ err := keploy.New(keploy.Config{
 	Mode: keploy.MODE_TEST,
 	Name: "<stub_name/mock_name>"
 	Path: "<local_path_for_saving_mock>",
-	EnableKeployLogs: false,
+	MubeKeployLogs: false,
 	delay: 10,
 })
 ```
@@ -81,10 +81,11 @@ import (
 
 func setup(t *testing.T) {
 	err := keploy.New(keploy.Config{
-		Name:             "test-set-5",
-		Mode:             keploy.MODE_TEST,
-		Path:             "/home/ubuntu/dont_touch/samples-go/gin-mongo",
-		EnableKeployLogs: false,
+		Name:           "TestPutURL",
+		Mode:           keploy.MODE_RECORD, // change to MODE_TEST when you run in test mode
+		Path:           "/home/ubuntu/dont_touch/samples-go/gin-mongo",
+		MuteKeployLogs: false,
+		Delay:          15,
 	})
 	if err != nil {
 		t.Fatalf("error while running keploy: %v", err)
@@ -99,7 +100,7 @@ func setup(t *testing.T) {
 }
 
 func TestGetURL(t *testing.T) {
-	setup(t)
+
 	// Setting up Gin and routes
 	r := gin.Default()
 	r.GET("/:param", getURL)
@@ -117,14 +118,14 @@ func TestGetURL(t *testing.T) {
 
 	// We're just checking if it can successfully redirect
 	if w.Code != http.StatusSeeOther {
-		t.Fatalf("Expcd HTTP 303 See Other, but got %v", w.Code)
+		t.Fatalf("Expeced HTTP 303 See Other, but got %v", w.Code)
 	}
-
-	keploy.KillProcessOnPort()
-
 }
 
 func TestPutURL(t *testing.T) {
+
+	defer keploy.KillProcessOnPort()
+	setup(t)
 
 	r := gin.Default()
 	r.GET("/:param", getURL)
@@ -135,7 +136,7 @@ func TestPutURL(t *testing.T) {
 	}
 	payload, err := json.Marshal(data)
 	if err != nil {
-		t.Fatalf("rrdfe: %v\n", err)
+		t.Fatalf("rfe: %v\n", err)
 	}
 
 	req, err := http.NewRequest(http.MethodPost, "/url", bytes.NewBuffer(payload))

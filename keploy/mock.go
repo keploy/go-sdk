@@ -20,11 +20,11 @@ var (
 )
 
 type Config struct {
-	Mode             Mode   // Keploy mode on which unit test will run. Possible values: MODE_TEST or MODE_RECORD. Default: MODE_TEST
-	Name             string // Name to record the mock or test the mocks
-	Path             string // Path in which Keploy "/mocks" will be generated. Default: current working directroy.
-	EnableKeployLogs bool
-	Delay            int
+	Mode           Mode   // Keploy mode on which unit test will run. Possible values: MODE_TEST or MODE_RECORD. Default: MODE_TEST
+	Name           string // Name to record the mock or test the mocks
+	Path           string // Path in which Keploy "/mocks" will be generated. Default: current working directroy.
+	MuteKeployLogs bool
+	Delay          int
 }
 
 func New(conf Config) error {
@@ -83,15 +83,8 @@ func New(conf Config) error {
 	}
 
 	if mode == MODE_RECORD {
-		if _, err := os.Stat(path + "/stubs/" + conf.Name + "-mocks.yaml"); !os.IsNotExist(err) {
-			cmd := exec.Command("sudo", "rm", "-rf", path+"/stubs/"+conf.Name+"-mocks.yaml")
-			_, err := cmd.CombinedOutput()
-			if err != nil {
-				return fmt.Errorf("failed to replace existing mock file %w", err)
-			}
-		}
-		if _, err := os.Stat(path + "/stubs/" + conf.Name + "-config.yaml"); !os.IsNotExist(err) {
-			cmd := exec.Command("sudo", "rm", "-rf", path+"/stubs/"+conf.Name+"-config.yaml")
+		if _, err := os.Stat(path + "/stubs/" + conf.Name + ".yaml"); !os.IsNotExist(err) {
+			cmd := exec.Command("sudo", "rm", "-rf", path+"/stubs/"+conf.Name+".yaml")
 			_, err := cmd.CombinedOutput()
 			if err != nil {
 				return fmt.Errorf("failed to replace existing mock file %w", err)
@@ -112,7 +105,7 @@ func New(conf Config) error {
 
 	parts := strings.Fields(keployCmd)
 	cmd := exec.Command(parts[0], parts[1:]...)
-	if conf.EnableKeployLogs {
+	if !conf.MuteKeployLogs {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 	}
