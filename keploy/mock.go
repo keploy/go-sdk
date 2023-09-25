@@ -152,10 +152,12 @@ func KillProcessOnPort() {
 			forceKillProcessByPID(pid)
 		}
 	}
+	// waiting for exit logs to print
+	time.Sleep(time.Second)
 }
 
 func forceKillProcessByPID(pid string) {
-	cmd := exec.Command("sudo", "kill", "-9", pid)
+	cmd := exec.Command("sudo", "kill", "-s", "SIGTERM", pid)
 	if err := cmd.Run(); err != nil {
 		logger.Error(fmt.Sprintf("Failed to kill process with PID %s:", pid), zap.Error(err))
 	}
