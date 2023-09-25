@@ -73,9 +73,9 @@ const (
 	Failed  TestRunStatus = "FAILED"
 )
 
-// RequestApplicationShutdown sends a custom signal to request the application to 
+// LaunchShutdown sends a custom signal to request the application to 
 // shut down gracefully.
-func RequestApplicationShutdown() {
+func LaunchShutdown() {
 	pid := os.Getpid()
 	logger.Info(fmt.Sprintf("Sending custom signal %s to PID %d...", shutdownSignal, pid))
 	err := syscall.Kill(pid, shutdownSignal)
@@ -84,8 +84,9 @@ func RequestApplicationShutdown() {
 	}
 }
 
-// HandleApplicationShutdown listens for the custom signal and initiate shutdown.
-func HandleApplicationShutdown(stopper func()) {
+// AddShutdownListener listens for the custom signal and initiate shutdown by 
+// executing stopper function from the parameter.
+func AddShutdownListener(stopper func()) {
 	go func() {
 		sig := <-shutdownChan
 		fmt.Println("Received custom signal:", sig)
