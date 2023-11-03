@@ -108,8 +108,7 @@ func RunKeployServer(pid int64, delay int, testPath string, port int) error {
 
 	cmd := exec.Command(
 		"sudo",
-		"/home/ritikjain.linux/keploy-workspace/keploy/keploy",
-		// "/usr/local/bin/keploy",
+		"/usr/local/bin/keploy",
 		"serve",
 		fmt.Sprintf("--pid=%d", pid),
 		fmt.Sprintf("-p=%s", testPath),
