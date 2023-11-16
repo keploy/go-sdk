@@ -32,7 +32,7 @@ import(
 ...
 err := keploy.New(keploy.Config{
 	Mode: keploy.MODE_RECORD, // It can be MODE_TEST or MODE_OFF. Default is MODE_TEST. Default MODE_TEST
-    Name: "<stub_name/mock_name>" // TestSuite name to record the mock or test the mocks
+        Name: "<stub_name/mock_name>" // TestSuite name to record the mock or test the mocks
 	Path: "<local_path_for_saving_mock>", // optional. It can be relative(./internals) or absolute(/users/xyz/...)
 	MuteKeployLogs: false, // optional. It can be true or false. If it is true keploy logs will be not shown in the unit test terminal. Default: false
 	delay: 10, // by default it is 5 . This delay is for running keploy
@@ -97,29 +97,6 @@ func setup(t *testing.T) {
 	}
 	db := client.Database(dbName)
 	col = db.Collection(collection)
-}
-
-func TestGetURL(t *testing.T) {
-
-	// Setting up Gin and routes
-	r := gin.Default()
-	r.GET("/:param", getURL)
-	r.POST("/url", putURL)
-
-	// Assuming we already have a shortened URL stored with the hash "test123"
-	req, err := http.NewRequest(http.MethodGet, "https://www.example.com/Lhr4BWAi", nil)
-	if err != nil {
-		t.Fatalf("Couldn't create request: %v\n", err)
-	}
-
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	// We're just checking if it can successfully redirect
-	if w.Code != http.StatusSeeOther {
-		t.Fatalf("Expeced HTTP 303 See Other, but got %v", w.Code)
-	}
 }
 
 func TestPutURL(t *testing.T) {
