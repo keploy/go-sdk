@@ -7,6 +7,7 @@ This is the client SDK for the [Keploy](https://github.com/keploy/keploy) testin
 1. [Installation](#installation)
 2. [Usage](#usage)
 3. [Mocking/Stubbing for unit tests](#mockingstubbing-for-unit-tests)
+4. [Code coverage by the API tests](#code-coverage-by-the-api-tests)
 
 ## Installation
 
@@ -15,6 +16,10 @@ go get -u github.com/keploy/go-sdk/v2
 ```
 
 ## Usage
+
+### Get coverage for keploy automated tests
+The code coverage for the keploy API tests using the `go-test` integration. 
+Keploy can be integrated in your CI pipeline which can add the coverage of your keploy test. 
 
 ### Create mocks/stubs for your unit-test
 
@@ -32,7 +37,7 @@ import(
 ...
 err := keploy.New(keploy.Config{
 	Mode: keploy.MODE_RECORD, // It can be MODE_TEST or MODE_OFF. Default is MODE_TEST. Default MODE_TEST
-        Name: "<stub_name/mock_name>" // TestSuite name to record the mock or test the mocks
+    Name: "<stub_name/mock_name>" // TestSuite name to record the mock or test the mocks
 	Path: "<local_path_for_saving_mock>", // optional. It can be relative(./internals) or absolute(/users/xyz/...)
 	MuteKeployLogs: false, // optional. It can be true or false. If it is true keploy logs will be not shown in the unit test terminal. Default: false
 	delay: 10, // by default it is 5 . This delay is for running keploy
@@ -141,4 +146,58 @@ func TestPutURL(t *testing.T) {
 		t.Fatalf("Response did not contain expected fields")
 	}
 }
+```
+
+## Code coverage by the API tests
+
+The percentage of code covered by the recorded tests is logged if the test cmd is ran with the go binary and `withCoverage` flag. The conditions for the coverage is:
+1. The go binary should be built with `-cover` flag.
+2. The application should have a graceful shutdown to stop the API server on `SIGTERM` or `SIGINT` signals. Or if not call the **GracefulShutdown** from the main function of your go program. Ex:
+```go
+func main() {
+
+	port := "8080"
+
+	r := gin.Default()
+
+	r.GET("/:param", getURL)
+	r.POST("/url", putURL)
+	// should be called before starting the API server from main()
+	keploy.GracefulShutdown()
+
+	r.Run()
+}
+```
+The keploy test cmd will look like:
+```sh
+keploy test -c "PATH_TO_GO_COVER_BIANRY" --withCoverage
+```
+The coverage files will be stored in the directory.
+```
+keploy
+├── coverage-reports
+│   ├── covcounters.befc2fe88a620bbd45d85aa09517b5e7.305756.1701767439933176870
+│   ├── covmeta.befc2fe88a620bbd45d85aa09517b5e7
+│   └── total-coverage.txt
+├── test-set-0
+│   ├── mocks.yaml
+│   └── tests
+│       ├── test-1.yaml
+│       ├── test-2.yaml
+│       ├── test-3.yaml
+│       └── test-4.yaml
+```
+Coverage percentage log in the cmd will be:
+```sh
+🐰 Keploy: 2023-12-07T08:53:14Z         INFO    test/test.go:261
+        test-app-url-shortener          coverage: 78.4% of statements
+```
+
+Also the go-test coverage can be merged along the recorded tests coverage by following the steps:
+```sh
+go test -cover ./... -args -test.gocoverdir="PATH_TO_UNIT_COVERAGE_FILES"
+
+go tool covdata textfmt -i="PATH_TO_UNIT_COVERAGE_FILES","./keploy/coverage-reports" -o coverage-profile
+
+go tool cover -func coverage-profile
 ```
