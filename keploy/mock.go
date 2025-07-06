@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	cov "github.com/keploy/go-sdk/v2/coverage"
 	"go.uber.org/zap"
 
 	"fmt"
@@ -16,7 +17,9 @@ import (
 )
 
 var (
-	logger *zap.Logger
+	logger     *zap.Logger
+	seenHashes = make(map[string]string)
+	covClient  = cov.NewClient()
 )
 
 type Config struct {
@@ -83,12 +86,19 @@ func New(conf Config) error {
 	}
 
 	if mode == MODE_RECORD {
-		if _, err := os.Stat(path + "/stubs/" + conf.Name + ".yaml"); !os.IsNotExist(err) {
-			cmd := exec.Command("sudo", "rm", "-rf", path+"/stubs/"+conf.Name+".yaml")
-			_, err := cmd.CombinedOutput()
-			if err != nil {
-				return fmt.Errorf("failed to replace existing mock file %w", err)
+		hash, _, err := covClient.DumpAndHash()
+		if err == nil && hash != "" {
+			if prev, dup := seenHashes[hash]; dup {
+				logger.Info("duplicate interaction detected – skipping record", zap.String("previousMock", prev))
+				// Clear counters for the next interaction and exit early.
+				_ = covClient.ResetCoverage()
+				return nil
 			}
+			// unique so far – remember it and reset counters so upcoming record captures fresh execution
+			seenHashes[hash] = conf.Name
+			_ = covClient.ResetCoverage()
+		} else if err != nil {
+			logger.Warn("coverage hash unavailable – proceeding without dedup", zap.Error(err))
 		}
 	}
 
