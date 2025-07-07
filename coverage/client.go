@@ -51,7 +51,7 @@ func (c *Client) ResetCoverage() error {
 
 // send opens a connection, writes cmd, waits for single‑line reply.
 func (c *Client) send(cmd string) (string, error) {
-	// tiny delay in case server hasn't started yet
+	// delay in case server hasn't started yet
 	time.Sleep(50 * time.Millisecond)
 
 	conn, err := net.Dial("unix", c.socket)

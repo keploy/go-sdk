@@ -16,22 +16,16 @@ import (
 	"github.com/google/uuid"
 )
 
-// Socket used by the coverage server and client
 const socketPath = "/tmp/coverage_socket"
 
 var (
-	mu sync.Mutex // protects counter operations
+	mu sync.Mutex
 )
 
 func init() {
 	go startUnixServer()
 }
 
-// ----------------------
-//
-//	Server implementation
-//
-// ----------------------
 func startUnixServer() {
 	// Ensure stale socket file is removed first
 	_ = os.Remove(socketPath)
@@ -77,11 +71,6 @@ func handleRequest(conn net.Conn) {
 	}
 }
 
-// ----------------------
-//
-//	Coverage operations
-//
-// ----------------------
 func dumpCoverage(conn net.Conn) {
 	dir, hash, err := writeAndHashCounters()
 	if err != nil {

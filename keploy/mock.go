@@ -2,19 +2,27 @@ package keploy
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
 	cov "github.com/keploy/go-sdk/v2/coverage"
 	"go.uber.org/zap"
-
-	"fmt"
-	"os"
 )
+
+// Config holds all the options for initializing Keploy.
+type Config struct {
+	Mode           Mode   // MODE_RECORD, MODE_TEST or MODE_OFF
+	Command        string // the shell command to start your application (e.g. "./myapp")
+	Path           string // where to read/write keploy/* (defaults to cwd)
+	Name           string // test‐set name: used as metadata (record) or -t (test)
+	MuteKeployLogs bool   // suppress keploy CLI stdout/stderr
+	Delay          int    // how long to wait (in seconds) before returning from New()
+}
 
 var (
 	logger     *zap.Logger
@@ -22,129 +30,105 @@ var (
 	covClient  = cov.NewClient()
 )
 
-type Config struct {
-	Mode           Mode   // Keploy mode on which unit test will run. Possible values: MODE_TEST or MODE_RECORD. Default: MODE_TEST
-	Name           string // Name to record the mock or test the mocks
-	Path           string // Path in which Keploy "/mocks" will be generated. Default: current working directroy.
-	MuteKeployLogs bool
-	Delay          int
-}
-
+// New starts a keploy CLI in the background (record or test) and returns immediately.
 func New(conf Config) error {
-
-	var (
-		mode      = MODE_OFF
-		err       error
-		path      string = conf.Path
-		keployCmd string
-		delay     int = 5
-	)
-
+	var err error
 	logger, _ = zap.NewDevelopment()
-	defer func() {
-		_ = logger.Sync()
-	}()
+	defer logger.Sync()
 
-	// killing keploy instance if it is running already
 	KillProcessOnPort()
 
-	if Mode(conf.Mode).Valid() {
-		mode = Mode(conf.Mode)
-	} else {
-		return errors.New("provided keploy mode is invalid, either use MODE_RECORD/MODE_TEST/MODE_OFF")
+	if !Mode(conf.Mode).Valid() {
+		return errors.New("invalid mode: must be MODE_RECORD, MODE_TEST or MODE_OFF")
 	}
-
-	if conf.Delay > 5 {
-		delay = conf.Delay
-	}
+	mode := Mode(conf.Mode)
 
 	if mode == MODE_OFF {
 		return nil
 	}
 
-	// use current directory, if path is not provided or relative in config
+	if strings.TrimSpace(conf.Command) == "" {
+		return errors.New("Command is required (e.g. \"./myapp\")")
+	}
+
+	delay := 5
+	if conf.Delay > 0 {
+		delay = conf.Delay
+	}
+
+	path := conf.Path
 	if path == "" {
 		path, err = os.Getwd()
 		if err != nil {
-			return fmt.Errorf("no specific path provided and failed to get current working directory %w", err)
+			return fmt.Errorf("failed to get cwd: %w", err)
 		}
-		logger.Info("no specific path provided; defaulting to the current working directory", zap.String("currentDirectoryPath", path))
-	} else if path[0] != '/' {
+	} else if !filepath.IsAbs(path) {
 		path, err = filepath.Abs(path)
 		if err != nil {
-			return fmt.Errorf("failed to get the absolute path from provided path %w", err)
+			return fmt.Errorf("invalid Path: %w", err)
 		}
-	} else {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			return fmt.Errorf("provided path does not exist %w", err)
-		}
-		logger.Info("using provided path to store mocks", zap.String("providedPath", path))
 	}
 
-	if conf.Name == "" {
-		return errors.New("provided mock name is empty")
+	keployBin, err := exec.LookPath("keploy")
+	if err != nil {
+		return fmt.Errorf("keploy not found in $PATH: %w", err)
 	}
 
+	// in RECORD mode, do coverage‐hash dedup
 	if mode == MODE_RECORD {
-		hash, _, err := covClient.DumpAndHash()
-		if err == nil && hash != "" {
+		if hash, _, err := covClient.DumpAndHash(); err == nil && hash != "" {
 			if prev, dup := seenHashes[hash]; dup {
-				logger.Info("duplicate interaction detected – skipping record", zap.String("previousMock", prev))
-				// Clear counters for the next interaction and exit early.
-				_ = covClient.ResetCoverage()
+				logger.Info("duplicate interaction – skipping record", zap.String("previous", prev))
+				covClient.ResetCoverage()
 				return nil
 			}
-			// unique so far – remember it and reset counters so upcoming record captures fresh execution
 			seenHashes[hash] = conf.Name
-			_ = covClient.ResetCoverage()
+			covClient.ResetCoverage()
 		} else if err != nil {
-			logger.Warn("coverage hash unavailable – proceeding without dedup", zap.Error(err))
+			logger.Warn("coverage hash unavailable; proceeding without dedup", zap.Error(err))
 		}
 	}
 
-	appPid := os.Getpid()
-
-	recordCmd := "sudo -E /usr/local/bin/keploy mockRecord --pid " + strconv.Itoa(appPid) + " --path " + path + " --mockName " + conf.Name + " --debug"
-	testCmd := "sudo -E /usr/local/bin/keploy mockTest --pid " + strconv.Itoa(appPid) + " --path " + path + " --mockName " + conf.Name + " --debug"
-
-	if mode == MODE_TEST {
-		keployCmd = testCmd
-	} else {
-		keployCmd = recordCmd
+	var args []string
+	switch mode {
+	case MODE_RECORD:
+		args = []string{
+			"record",
+			"-c", conf.Command,
+			"-p", path,
+		}
+	case MODE_TEST:
+		args = []string{
+			"test",
+			"-c", conf.Command,
+			"-p", path,
+		}
 	}
 
-	parts := strings.Fields(keployCmd)
-	cmd := exec.Command(parts[0], parts[1:]...)
+	if !conf.MuteKeployLogs {
+		args = append(args, "--debug")
+	}
+
+	cmd := exec.Command(keployBin, args...)
 	if !conf.MuteKeployLogs {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 	}
 
-	if _, err := exec.LookPath("keploy"); err != nil {
-		return fmt.Errorf("keploy binary not found, please ensure it is installed. Host OS: %s, Architecture: %s. For installing please follow instructions https://github.com/keploy/keploy#quick-installation", runtime.GOOS, runtime.GOARCH)
-	}
-
-	errChan := make(chan error)
-
+	errCh := make(chan error, 1)
 	go func() {
-		err := cmd.Run()
-		if err != nil {
-			errChan <- err
-		}
-		close(errChan)
+		errCh <- cmd.Run()
 	}()
 
 	select {
-	case err := <-errChan:
-		if err != nil {
-			return err
-		}
-		return nil
+	case err := <-errCh:
+		return err
 	case <-time.After(time.Duration(delay) * time.Second):
 		return nil
 	}
 }
 
+// KillProcessOnPort will SIGTERM anything listening on your proxy‐port (default 16789).
 func KillProcessOnPort() {
 	port := 16789
 	cmd := exec.Command("sudo", "lsof", "-t", "-i:"+strconv.Itoa(port))
@@ -152,23 +136,14 @@ func KillProcessOnPort() {
 	if _, ok := err.(*exec.ExitError); ok && len(output) == 0 {
 		return
 	} else if err != nil {
-		logger.Error("Failed to execute lsof: %v\n", zap.Error(err))
+		logger.Error("lsof failed", zap.Error(err))
 		return
 	}
-	appPid := os.Getpid()
-	pids := strings.Split(strings.Trim(string(output), "\n"), "\n")
-	for _, pid := range pids {
-		if pid != strconv.Itoa(appPid) {
-			forceKillProcessByPID(pid)
+	self := strconv.Itoa(os.Getpid())
+	for _, pid := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if pid != self {
+			exec.Command("sudo", "kill", "-TERM", pid).Run()
 		}
 	}
-	// waiting for exit logs to print
 	time.Sleep(time.Second)
-}
-
-func forceKillProcessByPID(pid string) {
-	cmd := exec.Command("sudo", "kill", "-s", "SIGTERM", pid)
-	if err := cmd.Run(); err != nil {
-		logger.Error(fmt.Sprintf("Failed to kill process with PID %s:", pid), zap.Error(err))
-	}
 }
