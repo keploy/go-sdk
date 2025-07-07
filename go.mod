@@ -3,7 +3,7 @@
 go 1.20
 
 //replace go.keploy.io/server => ../keploy
-replace github.com/keploy/go-sdk/v2/coverage => ../coverage
+// replace github.com/keploy/go-sdk/v2/coverage => ../coverage
 
 require go.uber.org/zap v1.22.0
 
