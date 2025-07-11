@@ -20,6 +20,7 @@ import (
 	"runtime/coverage"
 	"strings"
 	"sync"
+	"sort"
 
 	"golang.org/x/tools/cover"
 )
@@ -252,6 +253,7 @@ func processCoverageProfilesUsingCovdata(dir string) (map[string][]int, error) {
 			for line := range lineSet {
 				lines = append(lines, line)
 			}
+			sort.Ints(lines)
 			executedLinesByFile[absolutePath] = lines
 		}
 	}
