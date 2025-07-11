@@ -1,13 +1,10 @@
-// Package keploy provides a universal, protocol-agnostic code coverage solution for Keploy integration tests.
-// It is designed to be concurrency-safe and robust by leveraging standard Go tooling.
-//
 // To activate, simply import this package for its side effects:
 //
-//	import _ "your/module/path/coverage"
+//	import _ "github.com/keploy/go-sdk/v2/keploy"
 //
 // Then, build your application with atomic coverage instrumentation:
 //
-//	go build -cover -covermode=atomic -o your-app-instrumented .
+//	go build -cover -covermode=atomic -o your-app .
 package keploy
 
 import (
