@@ -18,9 +18,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime/coverage"
+	"sort"
 	"strings"
 	"sync"
-	"sort"
 
 	"golang.org/x/tools/cover"
 )
@@ -41,7 +41,6 @@ var (
 
 // init starts the background control server that listens for commands from the Keploy test runner.
 func init() {
-	log.Println("✅ [Agent] Keploy universal coverage agent initialized. Ready to receive commands.")
 	go startControlServer()
 }
 
@@ -95,17 +94,18 @@ func handleControlRequest(conn net.Conn) {
 	switch action {
 	case "START":
 		currentTestID = id
-		// coverage.ClearCounters() // Uncomment if you want to clear counters between tests
-		log.Printf("[Agent] Started coverage capture for test: %s", currentTestID)
+		err := coverage.ClearCounters()
+		if err != nil {
+			log.Printf("[Agent] Error clearing coverage counters: %v", err)
+		}
 	case "END":
 		if currentTestID != id {
 			log.Printf("[Agent] Warning: Mismatched END command. Expected '%s', got '%s'. Reporting anyway.", currentTestID, id)
 		}
-		log.Printf("[Agent] Ended coverage capture for test: %s. Reporting...", id)
 		if err := reportCoverage(id); err != nil {
 			log.Printf("[Agent] 🚨 Error reporting coverage for test %s: %v", id, err)
 		}
-		currentTestID = "" // Reset for the next test.
+		currentTestID = ""
 	default:
 		log.Printf("[Agent] Unrecognized command: %s", action)
 	}
@@ -117,24 +117,20 @@ func reportCoverage(testID string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create temp dir: %w", err)
 	}
-	// defer os.RemoveAll(tempDir) // Clean up temp directory
-	log.Printf("[Agent-Debug] Created temp directory for coverage data: %s", tempDir)
+	defer os.RemoveAll(tempDir)
 
 	if err := coverage.WriteCountersDir(tempDir); err != nil {
 		return fmt.Errorf("failed to write coverage counters. Ensure the application was built with '-cover -covermode=atomic'. Original error: %w", err)
 	}
-	log.Printf("[Agent-Debug] Successfully wrote coverage counters to temp dir.")
 
 	if err := coverage.WriteMetaDir(tempDir); err != nil {
 		return fmt.Errorf("failed to write meta dir: %w", err)
 	}
-	log.Printf("[Agent-Debug] Successfully wrote coverage metadata to temp dir.")
 
 	processedData, err := processCoverageProfilesUsingCovdata(tempDir)
 	if err != nil {
 		return fmt.Errorf("failed to process coverage profiles: %w", err)
 	}
-	log.Printf("[Agent-Debug] Processed coverage data. Found %d files with covered lines.", len(processedData))
 
 	if len(processedData) == 0 {
 		log.Printf("[Agent-Warning] No covered lines were found for test %s. The report will be empty.", testID)
@@ -162,9 +158,6 @@ func sendToSocket(data []byte) error {
 	defer conn.Close()
 
 	_, err = conn.Write(data)
-	if err == nil {
-		log.Printf("[Agent-Debug] Successfully sent %d bytes of coverage data to Keploy.", len(data))
-	}
 	return err
 }
 
@@ -188,8 +181,6 @@ func processCoverageProfilesUsingCovdata(dir string) (map[string][]int, error) {
 		return nil, fmt.Errorf("failed to convert coverage data to text format: %w\nStderr: %s", err, stderr.String())
 	}
 
-	log.Printf("[Agent-Debug] Successfully converted binary coverage data to text format: %s", textFile.Name())
-
 	// Get the module path (e.g., "your/module/path") to resolve file paths correctly.
 	modulePathCmd := exec.Command("go", "list", "-m")
 	var stderrModPath bytes.Buffer
@@ -209,7 +200,6 @@ func processCoverageProfilesUsingCovdata(dir string) (map[string][]int, error) {
 		return nil, fmt.Errorf("failed to get module directory with 'go list -m -f {{.Dir}}': %w\nStderr: %s", err, stderrModDir.String())
 	}
 	moduleDir := strings.TrimSpace(string(moduleDirBytes))
-	log.Printf("[Agent-Debug] Detected module path: %s at %s", modulePath, moduleDir)
 
 	// Now parse the text format using the standard cover package
 	profiles, err := cover.ParseProfiles(textFile.Name())
@@ -217,10 +207,7 @@ func processCoverageProfilesUsingCovdata(dir string) (map[string][]int, error) {
 		return nil, fmt.Errorf("failed to parse text coverage profile: %w", err)
 	}
 
-	log.Printf("[Agent-Debug] Parsed %d profiles from text coverage file.", len(profiles))
-
 	executedLinesByFile := make(map[string][]int)
-	totalCoveredBlocks := 0
 
 	for _, profile := range profiles {
 		var absolutePath string
@@ -231,7 +218,6 @@ func processCoverageProfilesUsingCovdata(dir string) (map[string][]int, error) {
 		} else if !filepath.IsAbs(profile.FileName) {
 			// This is a file from outside the main module (e.g., stdlib, dependency)
 			// and its path is not absolute. We cannot reliably resolve it.
-			log.Printf("[Agent-Debug] Skipping file '%s' as it is outside the main module and its path is not absolute.", profile.FileName)
 			continue
 		} else {
 			// The path is already absolute.
@@ -241,7 +227,6 @@ func processCoverageProfilesUsingCovdata(dir string) (map[string][]int, error) {
 		lineSet := make(map[int]bool)
 		for _, block := range profile.Blocks {
 			if block.Count > 0 {
-				totalCoveredBlocks++
 				for line := block.StartLine; line <= block.EndLine; line++ {
 					lineSet[line] = true
 				}
@@ -258,6 +243,5 @@ func processCoverageProfilesUsingCovdata(dir string) (map[string][]int, error) {
 		}
 	}
 
-	log.Printf("[Agent-Debug] Found a total of %d covered code blocks across all profiles.", totalCoveredBlocks)
 	return executedLinesByFile, nil
 }
