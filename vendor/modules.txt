@@ -1,0 +1,5 @@
+# github.com/google/uuid v1.6.0
+## explicit
+# golang.org/x/tools v0.1.5
+## explicit
+golang.org/x/tools/cover
