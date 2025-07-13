@@ -34,7 +34,7 @@ const (
 
 var (
 	// controlMu protects access to the currentTestID, ensuring command handling is atomic.
-	controlMu sync.Mutex
+	controlMu sync.Mutex	
 	// currentTestID stores the ID of the test case currently being recorded.
 	currentTestID string
 )
@@ -46,7 +46,8 @@ func init() {
 
 // startControlServer sets up and runs the Unix socket server that listens for commands from Keploy.
 func startControlServer() {
-	if err := os.RemoveAll(controlSocketPath); err != nil {
+	err := os.RemoveAll(controlSocketPath);
+	if err != nil {
 		log.Printf("[Agent] Failed to remove old control socket: %v", err)
 		return
 	}
@@ -62,7 +63,7 @@ func startControlServer() {
 		conn, err := ln.Accept()
 		if err != nil {
 			if strings.Contains(err.Error(), "use of closed network connection") {
-				break // Graceful shutdown
+				break
 			}
 			log.Printf("[Agent] Error accepting connection: %v", err)
 			continue
@@ -81,6 +82,7 @@ func handleControlRequest(conn net.Conn) {
 		return
 	}
 
+	// Split the command into action and testID
 	parts := strings.SplitN(strings.TrimSpace(command), " ", 2)
 	if len(parts) != 2 {
 		log.Printf("[Agent] Invalid command format: '%s'", command)
@@ -100,11 +102,13 @@ func handleControlRequest(conn net.Conn) {
 		}
 	case "END":
 		if currentTestID != id {
-			log.Printf("[Agent] Warning: Mismatched END command. Expected '%s', got '%s'. Reporting anyway.", currentTestID, id)
+			log.Printf("[Agent] Warning: Mismatched END command. Expected '%s', got '%s'.", currentTestID, id)
 		}
-		if err := reportCoverage(id); err != nil {
+		err := reportCoverage(id);
+		if err != nil {
 			log.Printf("[Agent] 🚨 Error reporting coverage for test %s: %v", id, err)
 		}
+		// Reset the currentTestID to an empty string to indicate that no test is currently being recorded.
 		currentTestID = ""
 	default:
 		log.Printf("[Agent] Unrecognized command: %s", action)
@@ -113,17 +117,20 @@ func handleControlRequest(conn net.Conn) {
 
 // reportCoverage dumps, processes, and sends the coverage data.
 func reportCoverage(testID string) error {
+	// Create a temporary directory to store the coverage data.
 	tempDir, err := os.MkdirTemp("", "keploy-coverage-")
 	if err != nil {
 		return fmt.Errorf("failed to create temp dir: %w", err)
 	}
 	defer os.RemoveAll(tempDir)
 
-	if err := coverage.WriteCountersDir(tempDir); err != nil {
+	err = coverage.WriteCountersDir(tempDir); 
+	if err != nil {
 		return fmt.Errorf("failed to write coverage counters. Ensure the application was built with '-cover -covermode=atomic'. Original error: %w", err)
 	}
 
-	if err := coverage.WriteMetaDir(tempDir); err != nil {
+	err = coverage.WriteMetaDir(tempDir); 
+	if err != nil {
 		return fmt.Errorf("failed to write meta dir: %w", err)
 	}
 
@@ -177,7 +184,8 @@ func processCoverageProfilesUsingCovdata(dir string) (map[string][]int, error) {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
+	err = cmd.Run();
+	if err != nil {
 		return nil, fmt.Errorf("failed to convert coverage data to text format: %w\nStderr: %s", err, stderr.String())
 	}
 
@@ -201,7 +209,7 @@ func processCoverageProfilesUsingCovdata(dir string) (map[string][]int, error) {
 	}
 	moduleDir := strings.TrimSpace(string(moduleDirBytes))
 
-	// Now parse the text format using the standard cover package
+	// Parse the text format using the standard cover package.
 	profiles, err := cover.ParseProfiles(textFile.Name())
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse text coverage profile: %w", err)
@@ -212,19 +220,17 @@ func processCoverageProfilesUsingCovdata(dir string) (map[string][]int, error) {
 	for _, profile := range profiles {
 		var absolutePath string
 		if strings.HasPrefix(profile.FileName, modulePath) {
-			// This path is relative to the module root. Construct the absolute path.
 			relativePath := strings.TrimPrefix(profile.FileName, modulePath)
 			absolutePath = filepath.Join(moduleDir, relativePath)
 		} else if !filepath.IsAbs(profile.FileName) {
-			// This is a file from outside the main module (e.g., stdlib, dependency)
-			// and its path is not absolute. We cannot reliably resolve it.
 			continue
 		} else {
-			// The path is already absolute.
 			absolutePath = profile.FileName
 		}
 
 		lineSet := make(map[int]bool)
+
+		// For each block in the profile, if the count is greater than 0, add the lines to the map.
 		for _, block := range profile.Blocks {
 			if block.Count > 0 {
 				for line := block.StartLine; line <= block.EndLine; line++ {
@@ -233,6 +239,7 @@ func processCoverageProfilesUsingCovdata(dir string) (map[string][]int, error) {
 			}
 		}
 
+		// If there are any lines executed, add them to the map.
 		if len(lineSet) > 0 {
 			lines := make([]int, 0, len(lineSet))
 			for line := range lineSet {
