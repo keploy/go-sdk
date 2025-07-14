@@ -34,7 +34,7 @@ const (
 
 var (
 	// controlMu protects access to the currentTestID, ensuring command handling is atomic.
-	controlMu sync.Mutex	
+	controlMu sync.Mutex
 	// currentTestID stores the ID of the test case currently being recorded.
 	currentTestID string
 )
@@ -46,7 +46,7 @@ func init() {
 
 // startControlServer sets up and runs the Unix socket server that listens for commands from Keploy.
 func startControlServer() {
-	err := os.RemoveAll(controlSocketPath);
+	err := os.RemoveAll(controlSocketPath)
 	if err != nil {
 		log.Printf("[Agent] Failed to remove old control socket: %v", err)
 		return
@@ -102,11 +102,12 @@ func handleControlRequest(conn net.Conn) {
 		}
 	case "END":
 		if currentTestID != id {
-			log.Printf("[Agent] Warning: Mismatched END command. Expected '%s', got '%s'.", currentTestID, id)
-		}
-		err := reportCoverage(id);
-		if err != nil {
-			log.Printf("[Agent] 🚨 Error reporting coverage for test %s: %v", id, err)
+			log.Printf("[Agent] Warning: Mismatched END command. Expected '%s', got '%s'. Skipping coverage report to avoid inconsistent state.", currentTestID, id)
+		} else {
+			err := reportCoverage(id)
+			if err != nil {
+				log.Printf("[Agent] 🚨 Error reporting coverage for test %s: %v", id, err)
+			}
 		}
 		// Reset the currentTestID to an empty string to indicate that no test is currently being recorded.
 		currentTestID = ""
@@ -124,12 +125,12 @@ func reportCoverage(testID string) error {
 	}
 	defer os.RemoveAll(tempDir)
 
-	err = coverage.WriteCountersDir(tempDir); 
+	err = coverage.WriteCountersDir(tempDir)
 	if err != nil {
 		return fmt.Errorf("failed to write coverage counters. Ensure the application was built with '-cover -covermode=atomic'. Original error: %w", err)
 	}
 
-	err = coverage.WriteMetaDir(tempDir); 
+	err = coverage.WriteMetaDir(tempDir)
 	if err != nil {
 		return fmt.Errorf("failed to write meta dir: %w", err)
 	}
@@ -184,7 +185,7 @@ func processCoverageProfilesUsingCovdata(dir string) (map[string][]int, error) {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
-	err = cmd.Run();
+	err = cmd.Run()
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert coverage data to text format: %w\nStderr: %s", err, stderr.String())
 	}
