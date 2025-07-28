@@ -238,10 +238,11 @@ func processCoverageProfilesUsingCovdata(dir string) (map[string][]int, error) {
 
 		// For each block in the profile, if the count is greater than 0, add the lines to the map.
 		for _, block := range profile.Blocks {
-			if block.Count > 0 {
-				for line := block.StartLine; line <= block.EndLine; line++ {
-					lineSet[line] = true
-				}
+			if block.Count <= 0 {
+				continue
+			}
+			for line := block.StartLine; line <= block.EndLine; line++ {
+				lineSet[line] = true
 			}
 		}
 
