@@ -1,6 +1,6 @@
 // To activate, simply import this package for its side effects:
 //
-//	import _ "github.com/keploy/go-sdk/v2/keploy"
+//	import _ "github.com/keploy/go-sdk/v3/keploy"
 //
 // Then, build your application with atomic coverage instrumentation:
 //

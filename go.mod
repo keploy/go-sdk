@@ -1,4 +1,4 @@
-module github.com/keploy/go-sdk/v2
+module github.com/keploy/go-sdk/v3
 
 go 1.24
 
