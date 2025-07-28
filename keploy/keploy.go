@@ -27,9 +27,9 @@ import (
 
 const (
 	// controlSocketPath is used by Keploy to send commands (START/END) to the app.
-	controlSocketPath = "/tmp/coverage_control.sock"
+	controlSocketPath = "/tmp/keploy_control.sock"
 	// dataSocketPath is used by the app to send coverage data back to Keploy.
-	dataSocketPath = "/tmp/keploy-coverage.sock"
+	dataSocketPath = "/tmp/keploy_coverage_data.sock"
 )
 
 var (
