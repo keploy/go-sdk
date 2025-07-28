@@ -111,6 +111,11 @@ func handleControlRequest(conn net.Conn) {
 		}
 		// Reset the currentTestID to an empty string to indicate that no test is currently being recorded.
 		currentTestID = ""
+
+		_, err = conn.Write([]byte("ACK\n"))
+		if err != nil {
+			log.Printf("[Agent] Error sending ACK to controller: %v", err)
+		}
 	default:
 		log.Printf("[Agent] Unrecognized command: %s", action)
 	}
