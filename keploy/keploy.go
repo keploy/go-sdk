@@ -103,11 +103,11 @@ func handleControlRequest(conn net.Conn) {
 	case "END":
 		if currentTestID != id {
 			log.Printf("[Agent] Warning: Mismatched END command. Expected '%s', got '%s'. Skipping coverage report to avoid inconsistent state.", currentTestID, id)
-		} else {
-			err := reportCoverage(id)
-			if err != nil {
-				log.Printf("[Agent] 🚨 Error reporting coverage for test %s: %v", id, err)
-			}
+			return
+		}
+		err := reportCoverage(id)
+		if err != nil {
+			log.Printf("[Agent] 🚨 Error reporting coverage for test %s: %v", id, err)
 		}
 		// Reset the currentTestID to an empty string to indicate that no test is currently being recorded.
 		currentTestID = ""
@@ -124,7 +124,7 @@ func handleControlRequest(conn net.Conn) {
 // reportCoverage dumps, processes, and sends the coverage data.
 func reportCoverage(testID string) error {
 	// Create a temporary directory to store the coverage data.
-	tempDir, err := os.MkdirTemp("", "keploy-coverage-")
+	tempDir, err := os.MkdirTemp("", "keploy-coverage-"+testID+"-")
 	if err != nil {
 		return fmt.Errorf("failed to create temp dir: %w", err)
 	}
