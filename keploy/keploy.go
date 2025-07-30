@@ -123,8 +123,13 @@ func handleControlRequest(conn net.Conn) {
 
 // reportCoverage dumps, processes, and sends the coverage data.
 func reportCoverage(testID string) error {
+	// Only take the part before the first slash,
+	// e.g. "test-2" from "test-set-0/test-2"
+	parts := strings.SplitN(testID, "/", 2)
+	baseID := parts[1]
+
 	// Create a temporary directory to store the coverage data.
-	tempDir, err := os.MkdirTemp("", "keploy-coverage-"+testID+"-")
+	tempDir, err := os.MkdirTemp("", fmt.Sprintf("keploy-coverage-%s-", baseID))
 	if err != nil {
 		return fmt.Errorf("failed to create temp dir: %w", err)
 	}
