@@ -19,7 +19,6 @@ concurrency:
 jobs:
   golangci:
     name: lint
-    runs-on: [selfhosted-linux-amd64]
     env:
       CGO_ENABLED: "1"
     permissions:
