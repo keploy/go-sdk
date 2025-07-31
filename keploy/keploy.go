@@ -4,7 +4,7 @@
 //
 // Then, build your application with atomic coverage instrumentation:
 //
-//	go build -cover -covermode=atomic -o your-app . (cover flag is required https://pkg.go.dev/runtime/coverage@go1.25rc2#WriteCounters)
+//  go build -cover -covermode=atomic -o your-app . (-cover and -covermode=atomic is required as per https://pkg.go.dev/runtime/coverage@go1.25rc2#ClearCounters)
 package keploy
 
 import (
