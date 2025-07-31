@@ -4,7 +4,7 @@
 //
 // Then, build your application with atomic coverage instrumentation:
 //
-//  go build -cover -covermode=atomic -o your-app . (-cover and -covermode=atomic is required as per https://pkg.go.dev/runtime/coverage@go1.25rc2#ClearCounters)
+//	go build -cover -covermode=atomic -o your-app . (-cover and -covermode=atomic is required as per https://pkg.go.dev/runtime/coverage@go1.25rc2#ClearCounters)
 package keploy
 
 import (
@@ -57,7 +57,11 @@ func startControlServer() {
 		log.Printf("[Agent] 🚨 FATAL: Could not start control server: %v", err)
 		return
 	}
-	defer ln.Close()
+	defer func() {
+		if err := ln.Close(); err != nil {
+			log.Printf("[Agent] Error closing control server: %v", err)
+		}
+	}()
 
 	for {
 		conn, err := ln.Accept()
@@ -74,7 +78,11 @@ func startControlServer() {
 
 // handleControlRequest parses commands from Keploy ("START testID", "END testID")
 func handleControlRequest(conn net.Conn) {
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			log.Printf("[Agent] Error closing connection: %v", err)
+		}
+	}()
 
 	command, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
@@ -133,7 +141,11 @@ func reportCoverage(testID string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create temp dir: %w", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() {
+		if err := os.RemoveAll(tempDir); err != nil {
+			log.Printf("[Agent] Error removing temp dir: %v", err)
+		}
+	}()
 
 	err = coverage.WriteCountersDir(tempDir)
 	if err != nil {
@@ -173,7 +185,11 @@ func sendToSocket(data []byte) error {
 	if err != nil {
 		return fmt.Errorf("could not connect to keploy data socket at %s: %w", dataSocketPath, err)
 	}
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			log.Printf("[Agent] Error closing connection: %v", err)
+		}
+	}()
 
 	_, err = conn.Write(data)
 	return err
@@ -187,8 +203,17 @@ func processCoverageProfilesUsingCovdata(dir string) (map[string][]int, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp file for text coverage: %w", err)
 	}
-	defer os.Remove(textFile.Name())
-	defer textFile.Close()
+	defer func() {
+		if err := os.Remove(textFile.Name()); err != nil {
+			log.Printf("[Agent] Error removing temp file: %v", err)
+		}
+	}()
+
+	defer func() {
+		if err := textFile.Close(); err != nil {
+			log.Printf("[Agent] Error closing temp file: %v", err)
+		}
+	}()
 
 	// Use covdata to convert binary format to text format
 	cmd := exec.Command("go", "tool", "covdata", "textfmt", "-i="+dir, "-o="+textFile.Name())
