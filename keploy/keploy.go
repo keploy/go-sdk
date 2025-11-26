@@ -30,7 +30,7 @@ const (
 	// controlSocketPath is used by Keploy to send commands (START/END) to the app.
 	controlSocketPath = "/tmp/coverage_control.sock"
 	// dataSocketPath is used by the app to send coverage data back to Keploy.
-	dataSocketPath = "/tmp/coverage_data.sock"
+	dataSocketPath = "@keploy_data_sock"
 )
 
 var (
@@ -54,7 +54,6 @@ func startControlServer() {
 		return
 	}
 	log.Printf("[Agent-Init] Control socket cleared. Path=%s", controlSocketPath)
-
 	ln, err := net.Listen("unix", controlSocketPath)
 	if err != nil {
 		log.Printf("[Agent] 🚨 FATAL: Could not start control server: %v", err)
