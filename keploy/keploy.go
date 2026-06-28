@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -21,6 +22,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 
 	"golang.org/x/tools/cover"
 )
@@ -179,9 +182,14 @@ func reportCoverage(testID string) error {
 	return sendToSocket(jsonData)
 }
 
+// dataSocketDialBudget bounds how long sendToSocket retries the connect, kept
+// under Keploy's 10s ACK read deadline (the END handler writes its ACK only after
+// sendToSocket returns) with headroom for the preceding covdata processing.
+const dataSocketDialBudget = 5 * time.Second
+
 // sendToSocket connects to the Keploy data socket and writes the JSON payload.
 func sendToSocket(data []byte) error {
-	conn, err := net.Dial("unix", dataSocketPath)
+	conn, err := dialDataSocketWithRetry(dataSocketPath, dataSocketDialBudget)
 	if err != nil {
 		return fmt.Errorf("could not connect to keploy data socket at %s: %w", dataSocketPath, err)
 	}
@@ -193,6 +201,49 @@ func sendToSocket(data []byte) error {
 
 	_, err = conn.Write(data)
 	return err
+}
+
+// dialDataSocketWithRetry dials the unix data socket, retrying TRANSIENT transport
+// errors with capped exponential backoff. Keploy's receiver runs a single accept
+// loop and re-creates the socket file each run, so under CPU starvation the connect
+// can briefly see ECONNREFUSED / ENOENT (or a dial timeout) before the accept drains
+// its backlog — a one-shot net.Dial dropped that test's coverage report permanently
+// ("could not connect to keploy data socket"). This retries only the idempotent
+// CONNECT; it never re-derives or fabricates coverage data, so it cannot mask a
+// genuine miss — a socket that stays down still errors after the bounded budget.
+func dialDataSocketWithRetry(path string, budget time.Duration) (net.Conn, error) {
+	deadline := time.Now().Add(budget)
+	delay := 25 * time.Millisecond
+	var lastErr error
+	for {
+		// A local AF_UNIX connect succeeds in microseconds or fails instantly
+		// (ECONNREFUSED/ENOENT); the short timeout only caps a pathological hang.
+		conn, err := net.DialTimeout("unix", path, 250*time.Millisecond)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+		// A non-transient error won't fix itself — fail fast (don't burn the budget).
+		if !isTransientDialErr(err) {
+			return nil, lastErr
+		}
+		if time.Now().Add(delay).After(deadline) {
+			return nil, lastErr
+		}
+		time.Sleep(delay)
+		if delay < 400*time.Millisecond {
+			delay *= 2
+		}
+	}
+}
+
+// isTransientDialErr reports whether a unix-socket dial error is a transient
+// condition worth retrying (the receiver's accept is briefly starved, or the
+// socket file is momentarily absent/being recreated), vs a permanent failure.
+func isTransientDialErr(err error) bool {
+	return errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ENOENT) ||
+		errors.Is(err, os.ErrDeadlineExceeded)
 }
 
 // processCoverageProfilesUsingCovdata uses the covdata tool to convert binary coverage data to text format
