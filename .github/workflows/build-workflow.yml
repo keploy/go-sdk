@@ -26,3 +26,25 @@ jobs:
 
     - name: Test
       run: go test -v ./...
+  # keploytest leans on how package testing runs a test (the order of its
+  # cleanups, how FailNow and t.Run end a goroutine, stack frame names), so it
+  # is tested on the module's oldest Go and on the latest, with the race
+  # detector.
+  keploytest:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go: [ "1.21", "stable" ]
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ matrix.go }}
+
+    - name: Vet keploytest
+      run: go vet ./keploytest/
+
+    - name: Test keploytest
+      run: go test -race -count=1 ./keploytest/
