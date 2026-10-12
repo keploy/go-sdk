@@ -167,7 +167,7 @@ func (c *client) post(path string, body any) (answer, error) {
 	if err != nil {
 		return answer{}, fmt.Errorf("keploy: cannot reach the keploy agent at %s: %v", c.url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswer+1))
 	if err != nil {
 		return answer{}, fmt.Errorf("keploy: cannot read the keploy agent's answer to %s: %v", path, err)

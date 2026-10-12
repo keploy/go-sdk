@@ -1339,14 +1339,14 @@ func hangingUp(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { l.Close() })
+	t.Cleanup(func() { _ = l.Close() })
 	go func() {
 		for {
 			c, err := l.Accept()
 			if err != nil {
 				return
 			}
-			c.Close()
+			_ = c.Close()
 		}
 	}()
 	return "http://" + l.Addr().String()
