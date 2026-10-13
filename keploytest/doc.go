@@ -50,23 +50,31 @@
 //
 // The command is the one keploy.yml's mock.command names. keploy hands it
 // KEPLOY_MOCK_AGENT (its agent), KEPLOY_MOCK_AGENT_TOKEN and
-// KEPLOY_MOCK_PROJECT (the project's directory). As a test binary starts,
-// before the test package's own init and TestMain run, the package claims the
-// run for that binary (its tests' IDs carry its package directory, relative
-// to the project), and refuses what keploy's first release cannot judge: go
-// test running more than one test binary at once (-p above 1, read from go
-// test's command line, GOFLAGS or go env), and, at the first test, a run
-// without -v or -json (a skip and its reason would be invisible), -shuffle
-// and -fuzz. keploy's first release runs the test command natively on
-// Linux, where the agent reads which process claims the run; elsewhere its
-// agent refuses the claim. It sets the binary's
-// -test.parallel, so Parallel can serialize. A refusal fails every test that
-// has the line, and names the fix; the -p refusal is also told to keploy's
-// agent, so keploy's verdict names it. Processes the binary starts (a helper, a
-// binary built and run by a test) inherit KEPLOY_TEST_PID, which names it,
-// and stay inert while they run inside it; one started in the background
-// that outlives its link to the binary (sh -c 'helper &') claims like a test
-// binary, and the agent refuses it while the binary runs.
+// KEPLOY_MOCK_PROJECT (the project's directory). On Linux, keploy has go test
+// run each test binary through its Go launcher (keploy-go-exec, -exec in
+// GOFLAGS), which claims the run for the binary before any init runs (so a
+// call an init or TestMain makes is the binary's), freezes its clock, refuses
+// a go test that keploy's first release cannot judge, sets its -test.parallel
+// and names the binary's pid in KEPLOY_TEST_CLAIMED; the package then claims
+// nothing, and makes its checks at the first test. A run whose clock is frozen
+// refuses a test binary started without the launcher, which only the launcher
+// can freeze, and tells keploy's agent. Without the launcher, as a test binary
+// starts, before the test package's own init and TestMain run, the package
+// claims the run for that binary (its tests' IDs carry its package directory,
+// relative to the project), and refuses what keploy's first release cannot
+// judge: go test running more than one test binary at once (-p above 1, read
+// from go test's command line, GOFLAGS or go env), and, at the first test, a
+// run without -v or -json (a skip and its reason would be invisible), -shuffle
+// and -fuzz. keploy's first release runs the test command natively on Linux,
+// where the agent reads which process claims the run; elsewhere its agent
+// refuses the claim. It sets the binary's -test.parallel, so Parallel can
+// serialize. A refusal fails every test that has the line, and names the fix;
+// the -p refusal is also told to keploy's agent, so keploy's verdict names it.
+// Processes the binary starts (a helper, a binary built and run by a test)
+// inherit KEPLOY_TEST_PID, which names it, and stay inert while they run
+// inside it; one started in the background that outlives its link to the
+// binary (sh -c 'helper &') claims like a test binary, and the agent refuses
+// it while the binary runs.
 //
 // Examples, benchmarks and fuzz targets have no keploytest line, so they do
 // not report to keploy: a call they make that the recording cannot answer

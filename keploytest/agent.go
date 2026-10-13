@@ -211,9 +211,10 @@ func quoted(data []byte) string {
 
 const pathRefusal = "/agent/refusal"
 
-// refusal tells the agent what this test process refused before it claimed
-// keploy's run (runRefusal). The agent records it for the run's verdict; it
-// records the refusals it answers a claim or a begin with itself.
+// refusal tells the agent what this test process refused (runRefusal),
+// before it claimed keploy's run or for the claim's answer. The agent records
+// it for the run's verdict; it records the refusals it answers a claim or a
+// begin with itself.
 func (c *client) refusal(r runRefusal) error {
 	a, err := c.post(pathRefusal, r)
 	if err != nil {
@@ -246,9 +247,27 @@ func (c *client) claim(key, dir string) error {
 		return fmt.Errorf("keploy: the keploy agent answered the claim of this test process without an instance")
 	}
 	if a.TimeFile != "" {
-		// A frozen clock this package cannot apply would let the tests run
-		// on the real one, against recordings made on another.
-		return fmt.Errorf("keploy: this keploy run gives its tests a frozen clock, which this version of keploytest cannot apply; upgrade github.com/keploy/go-sdk")
+		// The run's clock is frozen, and only keploy's Go launcher freezes a
+		// test binary's (it patches the binary before it starts): this one
+		// was started without it, and would run on the real clock against
+		// recordings made on another.
+		return &refusalError{runRefusal{
+			Code:    codeClockNotFrozen,
+			Message: "this keploy run freezes its tests' clock, which only keploy's Go launcher can do for a test binary, and this one was not started through it",
+			Remedy:  "let go test start it (keploy adds -exec=keploy-go-exec to GOFLAGS, which a go test -exec or a GOFLAGS of the test command's own replaces), or start it in its package's directory as keploy-go-exec <test binary> -test.v",
+		}}
 	}
 	return nil
 }
+
+// codeClockNotFrozen is the scope protocol's code for a test binary that
+// would run on the real clock in a run keploy freezes; keploy's Go launcher
+// refuses with it too.
+const codeClockNotFrozen = "clock_not_frozen"
+
+// refusalError is a claim's answer this package refuses the run for, after
+// the agent took the claim: the refusal is told to the agent too, so keploy's
+// verdict names it.
+type refusalError struct{ r runRefusal }
+
+func (e *refusalError) Error() string { return e.r.text() }

@@ -194,6 +194,7 @@ func TestAListingRunsInert(t *testing.T) {
 // refusal as it was, saying keploy was not told.
 func TestARefusedTestProcessTellsTheAgent(t *testing.T) {
 	t.Setenv(envTestPID, "") // claimRun exports it
+	t.Setenv(envTestClaimed, "")
 	fakeProc(t, "77", "go", "test", "-p", "2", "./...")
 	want := "keploy: keploy runs one test process at a time in this release, and go test runs up to 2 at once (-p 2): " +
 		"add -p 1 (go test -p 1 -json ./...); parallel test workers arrive in a later keploy release"
@@ -273,5 +274,116 @@ func TestTestFlagsRefusal(t *testing.T) {
 	set("test.v", "false")
 	if why := testFlagsRefusal(); !strings.Contains(why, "-v or -json") {
 		t.Fatalf("no -v: %q", why)
+	}
+}
+
+// keepParallel restores this process's -test.parallel after a test whose
+// claimRun joins in-process, which sets keploy's.
+func keepParallel(t *testing.T) {
+	t.Helper()
+	testing.Init()
+	f := flag.Lookup("test.parallel")
+	prev := f.Value.String()
+	t.Cleanup(func() { _ = f.Value.Set(prev) })
+}
+
+// A test binary keploy's Go launcher (keploy-go-exec) started has its claim
+// already: the launcher made it for this process (KEPLOY_TEST_CLAIMED names
+// it) before exec'ing it. The package claims nothing and refuses no go test
+// the launcher checked, though go test runs with -p 2 here and the run is
+// frozen, which only the launcher applies.
+func TestAnInheritedClaimIsNotMadeAgain(t *testing.T) {
+	// A claimRun that set the markers would leave them in this process.
+	t.Setenv(envTestPID, "")
+	t.Setenv(envTestClaimed, "")
+	keepParallel(t)
+	fakeProc(t, "77", "go", "test", "-p", "2", "./...")
+	var mu sync.Mutex
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls = append(calls, r.URL.Path)
+		mu.Unlock()
+		_, _ = io.WriteString(w, `{"v":1,"instance":"run","timeFile":"/tmp/kclk1/t"}`)
+	}))
+	t.Cleanup(srv.Close)
+	// Only KEPLOY_TEST_CLAIMED says the claim was inherited; the processes the
+	// binary starts are its members whatever KEPLOY_TEST_PID it was given.
+	env := map[string]string{envAgent: srv.URL, envToken: "tok", envProject: t.TempDir(), envTestClaimed: "4242"}
+	j := claimRun(func(k string) string { return env[k] }, []string{"x.test"}, 4242, 77)
+	if got := os.Getenv(envTestPID); got != "4242" {
+		t.Fatalf("KEPLOY_TEST_PID=%q, want this pid: the processes it starts are members", got)
+	}
+	if j.mode != active || j.url != srv.URL || j.token != "tok" {
+		t.Fatalf("got %+v, want the run joined through the launcher's claim", j)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(calls) != 0 {
+		t.Fatalf("called the agent %v: the launcher's claim is this process's", calls)
+	}
+}
+
+// A binary that claims the run itself marks the processes it starts as
+// members (KEPLOY_TEST_PID) before it claims, so a helper of a refused binary
+// stays inert too; it marks the run as claimed by its pid
+// (KEPLOY_TEST_CLAIMED) only once the agent took the claim, so an image a
+// refused binary execs claims again, and is refused again. A claim whose
+// answer freezes the clock, which only keploy's Go launcher applies, is
+// refused, and the refusal is told to the agent, so keploy's verdict names it.
+func TestTheMarkersOfAClaimedAndOfARefusedBinary(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		claim    string
+		claimed  string
+		calls    string
+		refusal  string
+		joinedAs mode
+	}{
+		{"taken", `{"v":1,"instance":"run","timeFile":""}`, "4242", pathInstance, "", active},
+		{"a frozen clock", `{"v":1,"instance":"run","timeFile":"/tmp/kclk1/t"}`, "", pathInstance + " " + pathRefusal, "keploy: this keploy run freezes its tests' clock", refused},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(envTestPID, "")
+			t.Setenv(envTestClaimed, "")
+			keepParallel(t)
+			fakeProc(t, "77", "go", "test", "-p", "1", "./...")
+			var mu sync.Mutex
+			var calls []string
+			var sent map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				calls = append(calls, r.URL.Path)
+				if r.URL.Path == pathRefusal {
+					raw, _ := io.ReadAll(r.Body)
+					_ = json.Unmarshal(raw, &sent)
+					_, _ = io.WriteString(w, `{"v":1,"status":"ok"}`)
+					return
+				}
+				_, _ = io.WriteString(w, tc.claim)
+			}))
+			t.Cleanup(srv.Close)
+			// The project is the root, so this process's directory is in it.
+			env := map[string]string{envAgent: srv.URL, envToken: "tok", envProject: "/"}
+			j := claimRun(func(k string) string { return env[k] }, []string{"x.test"}, 4242, 77)
+			if j.mode != tc.joinedAs || !strings.HasPrefix(j.refusal, tc.refusal) || strings.Contains(j.refusal, "was not told") {
+				t.Fatalf("got %+v", j)
+			}
+			if got := os.Getenv(envTestPID); got != "4242" {
+				t.Fatalf("KEPLOY_TEST_PID=%q, want this pid: the processes it starts are members, refused or not", got)
+			}
+			if got := os.Getenv(envTestClaimed); got != tc.claimed {
+				t.Fatalf("KEPLOY_TEST_CLAIMED=%q, want %q", got, tc.claimed)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if strings.Join(calls, " ") != tc.calls {
+				t.Fatalf("calls %v, want %s", calls, tc.calls)
+			}
+			if tc.joinedAs == refused && (sent["code"] != "clock_not_frozen" || !strings.Contains(fmt.Sprint(sent["remedy"]), "keploy-go-exec <test binary> -test.v")) {
+				t.Fatalf("told the agent %v", sent)
+			}
+		})
 	}
 }
