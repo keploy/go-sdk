@@ -40,3 +40,44 @@ In order to remove the duplicate tests, run the following command:
 ```bash
 sudo -E keploy-enterprise dedup --rm
 ```
+
+# keploytest: Go tests under keploy's Universal Mocker
+
+Package `github.com/keploy/go-sdk/v3/keploytest` joins a `go test` suite to
+`keploy mock`: keploy records the dependency calls each test makes, replays
+them in CI, skips the tests listed in `keploy/<set>/verdicts.yaml` with their
+reason, and fails a test whose dependency calls changed.
+
+Every top-level test starts with one line (`keploy mock codemod go` writes it):
+
+```go
+import "github.com/keploy/go-sdk/v3/keploytest"
+
+func TestPlaceOrder(t *testing.T) {
+	defer keploytest.T(t)()
+	// ...
+}
+
+// A test that goes parallel starts with TP and calls keploytest.Parallel;
+// subtests are started with keploytest.Run.
+func TestExport(t *testing.T) {
+	defer keploytest.TP(t)()
+	keploytest.Parallel(t)
+	keploytest.Run(t, "csv", func(t *testing.T) { /* ... */ })
+}
+```
+
+Run the suite inside a keploy run, with `-p 1` and `-v` or `-json` (so a skip
+and its reason are visible). Set the command once in keploy.yml as
+`mock.command`, record with `keploy mock record`, and replay in CI with:
+
+```bash
+keploy mock replay -c "go test -p 1 -json ./..."
+```
+
+Without keploy (`KEPLOY_MOCK_AGENT` unset or `off`) the line does nothing and
+`Run`/`Parallel` are `t.Run`/`t.Parallel`. With keploy, each test binary claims
+keploy's run before its tests start, and one test runs at a time: parallel
+tests run in source order, each with its subtests and cleanups. Parallel test
+workers (several test binaries at once) arrive in a later keploy release; until
+then `go test` runs with `-p 1`, and the package refuses anything else.
