@@ -39,8 +39,8 @@ func claimRun(getenv func(string) string, args []string, pid, ppid int) joining 
 	}
 	// Processes this one starts are members of its run.
 	_ = os.Setenv(envTestPID, strconv.Itoa(pid))
-	if err := oneTestProcess(getenv, ppid); err != nil {
-		return refuse("%s", err.Error())
+	if r := oneTestProcess(getenv, ppid); r != nil {
+		return refuseRun(newClient(j.url, j.token), r)
 	}
 	key, dir, err := packageKey(getenv(envProject))
 	if err != nil {
@@ -108,15 +108,53 @@ var procRoot = "/proc"
 // -exec, the nearest go test among its ancestors. A binary no go test runs
 // (one a test binary starts, say) runs alone. It reads /proc: keploy's
 // first release runs the test command natively on Linux only.
-func oneTestProcess(getenv func(string) string, ppid int) error {
+func oneTestProcess(getenv func(string) string, ppid int) *runRefusal {
 	args, direct, ok := ancestorGoTest(ppid)
 	if !ok || (!direct && !execs(args, getenv)) {
 		return nil
 	}
 	if p, from := effectiveP(args, getenv); p > 1 {
-		return fmt.Errorf("keploy: keploy runs one test process at a time in this release, and go test runs up to %d at once (%s): add -p 1 (go test -p 1 -json ./...); parallel test workers arrive in a later keploy release", p, from)
+		return &runRefusal{
+			Code:    codeOneTestProcess,
+			Message: fmt.Sprintf("keploy runs one test process at a time in this release, and go test runs up to %d at once (%s)", p, from),
+			Remedy:  "add -p 1 (go test -p 1 -json ./...); parallel test workers arrive in a later keploy release",
+		}
 	}
 	return nil
+}
+
+// codeOneTestProcess is the scope protocol's code for a second test process
+// in one keploy run: the agent refuses a second claim with it, and this
+// package a go test that would run one.
+const codeOneTestProcess = "one_test_process_at_a_time"
+
+// runRefusal is a refusal of the whole test process that this package makes
+// before it claims keploy's run: its code, what it refused, and the fix.
+type runRefusal struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Remedy  string `json:"remedy,omitempty"`
+}
+
+// text is the refusal as the tests fail with it: what was refused, and the
+// fix. (Not an Error method: a nil *runRefusal must never become a non-nil
+// error.)
+func (r *runRefusal) text() string {
+	if r.Remedy == "" {
+		return "keploy: " + r.Message
+	}
+	return "keploy: " + r.Message + ": " + r.Remedy
+}
+
+// refuseRun refuses this test process for r, and tells keploy's agent (POST
+// /agent/refusal), so the run's verdict names the refusal rather than
+// saying only that no test ran. The tests fail with r whether or not the
+// agent heard; when it did not, they say so.
+func refuseRun(c *client, r *runRefusal) joining {
+	if err := c.refusal(*r); err != nil {
+		return refuse("%s (keploy's agent was not told, so keploy's verdict cannot name it: %s)", r.text(), strings.TrimPrefix(err.Error(), "keploy: "))
+	}
+	return refuse("%s", r.text())
 }
 
 // ancestorGoTest is parentGoTest of the nearest of pid and its ancestors

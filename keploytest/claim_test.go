@@ -1,12 +1,17 @@
 package keploytest
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -47,20 +52,20 @@ func TestOneTestProcess(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fakeProc(t, "77", tc.argv...)
-			err := oneTestProcess(func(k string) string {
+			r := oneTestProcess(func(k string) string {
 				if k == "GOFLAGS" {
 					return tc.flags
 				}
 				return ""
 			}, 77)
 			switch {
-			case tc.refuse == "" && err != nil:
-				t.Fatalf("refused: %v", err)
-			case tc.refuse != "" && (err == nil || !strings.Contains(err.Error(), tc.refuse)):
-				t.Fatalf("got %v, want a refusal saying %q", err, tc.refuse)
+			case tc.refuse == "" && r != nil:
+				t.Fatalf("refused: %s", r.text())
+			case tc.refuse != "" && (r == nil || !strings.Contains(r.text(), tc.refuse)):
+				t.Fatalf("got %+v, want a refusal saying %q", r, tc.refuse)
 			}
-			if err != nil && !strings.Contains(err.Error(), "go test -p 1") {
-				t.Errorf("the refusal does not name the fix: %v", err)
+			if r != nil && !strings.Contains(r.text(), "go test -p 1") {
+				t.Errorf("the refusal does not name the fix: %s", r.text())
 			}
 		})
 	}
@@ -106,12 +111,12 @@ func TestOneTestProcessFindsGoTestAboveAnExecWrapper(t *testing.T) {
 	old := procRoot
 	procRoot = root
 	t.Cleanup(func() { procRoot = old })
-	err := oneTestProcess(func(string) string { return "" }, 77)
-	if err == nil || !strings.Contains(err.Error(), "-p 4") {
-		t.Fatalf("got %v, want the -p 4 of the go test above the wrapper refused", err)
+	r := oneTestProcess(func(string) string { return "" }, 77)
+	if r == nil || !strings.Contains(r.text(), "-p 4") {
+		t.Fatalf("got %+v, want the -p 4 of the go test above the wrapper refused", r)
 	}
-	if err := oneTestProcess(func(string) string { return "" }, 88); err != nil {
-		t.Fatalf("a binary another test binary started was judged by the go test above it: %v", err)
+	if r := oneTestProcess(func(string) string { return "" }, 88); r != nil {
+		t.Fatalf("a binary another test binary started was judged by the go test above it: %s", r.text())
 	}
 }
 
@@ -127,17 +132,17 @@ func TestOneTestProcessReadsGoEnvW(t *testing.T) {
 		if err := os.WriteFile(envFile, []byte(tc.file), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		err := oneTestProcess(func(k string) string {
+		r := oneTestProcess(func(k string) string {
 			if k == "GOENV" {
 				return envFile
 			}
 			return ""
 		}, 77)
 		switch {
-		case tc.refuse == "" && err != nil:
-			t.Fatalf("%q refused: %v", tc.file, err)
-		case tc.refuse != "" && (err == nil || !strings.Contains(err.Error(), tc.refuse)):
-			t.Fatalf("%q: got %v, want a refusal saying %q", tc.file, err, tc.refuse)
+		case tc.refuse == "" && r != nil:
+			t.Fatalf("%q refused: %s", tc.file, r.text())
+		case tc.refuse != "" && (r == nil || !strings.Contains(r.text(), tc.refuse)):
+			t.Fatalf("%q: got %+v, want a refusal saying %q", tc.file, r, tc.refuse)
 		}
 	}
 }
@@ -180,6 +185,62 @@ func TestAListingRunsInert(t *testing.T) {
 	}, []string{"x.test", "-test.list=."}, 7, 1)
 	if got.mode != inert {
 		t.Fatalf("got %+v", got)
+	}
+}
+
+// A go test that would run two test binaries at once is refused before the
+// claim, and the refusal is told to keploy's agent, so the run's verdict
+// names it. An agent that does not take it (an older keploy) leaves the
+// refusal as it was, saying keploy was not told.
+func TestARefusedTestProcessTellsTheAgent(t *testing.T) {
+	t.Setenv(envTestPID, "") // claimRun exports it
+	fakeProc(t, "77", "go", "test", "-p", "2", "./...")
+	want := "keploy: keploy runs one test process at a time in this release, and go test runs up to 2 at once (-p 2): " +
+		"add -p 1 (go test -p 1 -json ./...); parallel test workers arrive in a later keploy release"
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		told   bool
+	}{
+		{"the agent takes it", 200, `{"v":1,"status":"ok"}`, true},
+		{"an agent without /agent/refusal", 404, "404 page not found", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var calls []string
+			var sent map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				calls = append(calls, r.URL.Path+" "+r.Header.Get("Authorization"))
+				raw, _ := io.ReadAll(r.Body)
+				_ = json.Unmarshal(raw, &sent)
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			t.Cleanup(srv.Close)
+			env := map[string]string{envAgent: srv.URL, envToken: "tok", envProject: t.TempDir()}
+			j := claimRun(func(k string) string { return env[k] }, []string{"x.test"}, 4242, 77)
+			if j.mode != refused || !strings.HasPrefix(j.refusal, want) {
+				t.Fatalf("got %+v, want refused with %q", j, want)
+			}
+			if told := j.refusal == want; told != tc.told {
+				t.Fatalf("refusal %q: told the agent %v, want %v", j.refusal, told, tc.told)
+			}
+			if !tc.told && !strings.Contains(j.refusal, "keploy's agent was not told") {
+				t.Fatalf("refusal %q does not say keploy was not told", j.refusal)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if len(calls) != 1 || calls[0] != pathRefusal+" Bearer tok" {
+				t.Fatalf("calls %q, want one %s with the token, and no claim", calls, pathRefusal)
+			}
+			if sent["code"] != codeOneTestProcess || sent["remedy"] != "add -p 1 (go test -p 1 -json ./...); parallel test workers arrive in a later keploy release" ||
+				!strings.Contains(fmt.Sprint(sent["message"]), "up to 2 at once (-p 2)") {
+				t.Fatalf("sent %v", sent)
+			}
+		})
 	}
 }
 

@@ -59,6 +59,23 @@ func TestEndSendsTheNameAndOutcome(t *testing.T) {
 	}
 }
 
+// A refusal this package made is sent whole; an answer other than ok is an
+// error.
+func TestARefusalSendsItsCodeMessageAndRemedy(t *testing.T) {
+	a := &answering{status: 200, body: `{"v":1,"status":"ok"}`}
+	r := runRefusal{Code: codeOneTestProcess, Message: "go test runs up to 2 at once (-p 2)", Remedy: "add -p 1"}
+	if err := a.serve(t).refusal(r); err != nil {
+		t.Fatal(err)
+	}
+	if a.path != pathRefusal || a.sent["code"] != r.Code || a.sent["message"] != r.Message || a.sent["remedy"] != r.Remedy || len(a.sent) != 3 {
+		t.Fatalf("sent %s %v, want %s {code, message, remedy}", a.path, a.sent, pathRefusal)
+	}
+	b := &answering{status: 200, body: `{"v":1,"status":"busy"}`}
+	if err := b.serve(t).refusal(r); err == nil || !strings.Contains(err.Error(), `status "busy"`) {
+		t.Fatalf("got %v, want an answer other than ok to be an error", err)
+	}
+}
+
 func TestTheTokenIsSentOnlyWhenSet(t *testing.T) {
 	a := &answering{status: 200, body: `{"v":1,"status":"ok"}`}
 	c := a.serve(t)

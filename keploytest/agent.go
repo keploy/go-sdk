@@ -209,6 +209,22 @@ func quoted(data []byte) string {
 	return fmt.Sprintf("%q", s)
 }
 
+const pathRefusal = "/agent/refusal"
+
+// refusal tells the agent what this test process refused before it claimed
+// keploy's run (runRefusal). The agent records it for the run's verdict; it
+// records the refusals it answers a claim or a begin with itself.
+func (c *client) refusal(r runRefusal) error {
+	a, err := c.post(pathRefusal, r)
+	if err != nil {
+		return err
+	}
+	if a.Status != "ok" {
+		return fmt.Errorf("keploy: the keploy agent answered the refusal %s with status %q", r.Code, a.Status)
+	}
+	return nil
+}
+
 const pathInstance = "/agent/instance"
 
 // instanceReq is the body of POST /agent/instance: the test process claims

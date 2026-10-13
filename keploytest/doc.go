@@ -61,7 +61,8 @@
 // Linux, where the agent reads which process claims the run; elsewhere its
 // agent refuses the claim. It sets the binary's
 // -test.parallel, so Parallel can serialize. A refusal fails every test that
-// has the line, and names the fix. Processes the binary starts (a helper, a
+// has the line, and names the fix; the -p refusal is also told to keploy's
+// agent, so keploy's verdict names it. Processes the binary starts (a helper, a
 // binary built and run by a test) inherit KEPLOY_TEST_PID, which names it,
 // and stay inert while they run inside it; one started in the background
 // that outlives its link to the binary (sh -c 'helper &') claims like a test
