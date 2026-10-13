@@ -32,11 +32,22 @@ const (
 	envBody = "KEPLOYTEST_BODY"
 	// bodyRan is printed by a child test whose body ran.
 	bodyRan = "KEPLOYTEST-BODY-RAN"
+	// envReexec makes the child exec itself again in TestMain.
+	envReexec = "KEPLOYTEST_REEXEC"
 )
 
 func TestMain(m *testing.M) {
 	flag.Parse()
 	child := os.Getenv(envChild) == "1"
+	if child && os.Getenv(envReexec) == "1" {
+		// A binary that execs itself again, after its init claimed keploy's
+		// run (or was refused it): the new image has the same pid.
+		_ = os.Unsetenv(envReexec)
+		if err := reexec(); err != nil {
+			fmt.Printf("re-exec: %v\n", err)
+			os.Exit(3)
+		}
+	}
 	if !child {
 		// Keeps the parent's output free of the child tests; childOnly skips
 		// them when -skip is set too.
@@ -1245,6 +1256,74 @@ func TestAJoinedBinaryRunsWithKeploysParallel(t *testing.T) {
 	if strings.Contains(out, "PARALLEL=1048576") {
 		t.Fatalf("an inert binary's -test.parallel was changed:\n%s", out)
 	}
+}
+
+// A test binary keploy's Go launcher started (KEPLOY_TEST_CLAIMED and
+// KEPLOY_TEST_PID name its own pid, which exec kept; the launcher passes
+// -test.parallel) runs its tests
+// under the launcher's claim: it claims nothing, so the frozen clock the
+// claim answer would carry, which only the launcher applies, refuses
+// nothing, and its T and TP tests begin and end as in any run.
+func TestALauncherStartedBinaryJoinsOnItsClaim(t *testing.T) {
+	if !reexecs {
+		t.Skip("the launcher's exec, kept pid and all, is Unix's")
+	}
+	a := newFakeAgent(t)
+	a.mu.Lock()
+	a.claim = &reply{200, `{"v":1,"instance":"run","timeFile":"/tmp/kclk1/t"}`}
+	a.mu.Unlock()
+	argv := []string{"-test.parallel=1048576", "-test.run=^TestChild(Body|GoodTP|ParallelFlag)$", "-test.v", "-test.count=1"}
+	child := childCmd(a.active(), t.TempDir(), nil)
+	// What the launcher does: both markers name the process it then execs.
+	cmd := exec.Command("/bin/sh", append([]string{"-c",
+		`KEPLOY_TEST_PID=$$ KEPLOY_TEST_CLAIMED=$$; export KEPLOY_TEST_PID KEPLOY_TEST_CLAIMED; exec "$@"`, "sh", os.Args[0]}, argv...)...)
+	cmd.Env, cmd.Dir = child.Env, child.Dir
+	out, err := cmd.CombinedOutput()
+	c := childRun{out: string(out)}
+	if err != nil {
+		t.Fatalf("the launched binary failed: %v\n%s", err, out)
+	}
+	c.want(t, "TestChildBody", "PASS", bodyRan, "PARALLEL=1048576")
+	c.want(t, "TestChildGoodTP", "PASS")
+	if claims := a.claimed(); len(claims) != 0 {
+		t.Fatalf("claims %v: the launcher's claim is this process's", claims)
+	}
+	wantCalls(t, a, "begin TestChildBody", "end TestChildBody passed",
+		"begin TestChildGoodTP", "end TestChildGoodTP passed")
+}
+
+// A binary that execs itself again keeps its claim and its -test.parallel
+// (the new image has the same pid, which KEPLOY_TEST_CLAIMED names); one
+// refused the run claims it again, and is refused again: the run is marked
+// claimed only on a claim the agent took.
+func TestABinaryThatExecsItselfAgainKeepsItsClaim(t *testing.T) {
+	if !reexecs {
+		t.Skip("exec in place is Unix's")
+	}
+	a := newFakeAgent(t)
+	env := a.active()
+	env[envReexec] = "1"
+	argv := []string{"-test.run=^TestChildParallelFlag$", "-test.v", "-test.count=1"}
+	out := runChildArgs(t, env, argv)
+	if !strings.Contains(out, "PARALLEL=1048576") {
+		t.Fatalf("the image the binary exec'd runs without keploy's -test.parallel:\n%s", out)
+	}
+	if claims := a.claimed(); len(claims) != 1 {
+		t.Fatalf("claims %v, want one: the exec'd image's run is the claim it made", claims)
+	}
+
+	b := newFakeAgent(t)
+	b.mu.Lock()
+	b.claim = &reply{422, `{"error":"one_test_process_at_a_time","message":"two test processes ran at once","remedy":"go test -p 1"}`}
+	b.mu.Unlock()
+	env = b.active()
+	env[envReexec] = "1"
+	c := runChild(t, env, "", "^TestChildBody$")
+	c.want(t, "TestChildBody", "FAIL", "two test processes ran at once")
+	if claims := b.claimed(); len(claims) != 2 {
+		t.Fatalf("claims %v, want two: the exec'd image of a refused binary claims again", claims)
+	}
+	wantCalls(t, b)
 }
 
 func TestAMemberIsInert(t *testing.T) {

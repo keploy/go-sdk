@@ -2,6 +2,7 @@ package keploytest
 
 import (
 	"bytes"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -16,6 +17,7 @@ import (
 // package's own init and TestMain run (they come after the init of every
 // package it imports; other imported packages that do not import keploytest
 // may initialize first, in import-path order), it claims the run for itself,
+// unless keploy's Go launcher claimed it for the binary before it started,
 // and refuses what keploy's first release cannot judge. A refusal fails
 // every test that has a keploytest line, with the fix.
 
@@ -37,18 +39,38 @@ func claimRun(getenv func(string) string, args []string, pid, ppid int) joining 
 	if j.mode != active {
 		return j
 	}
-	// Processes this one starts are members of its run.
-	_ = os.Setenv(envTestPID, strconv.Itoa(pid))
-	if r := oneTestProcess(getenv, ppid); r != nil {
-		return refuseRun(newClient(j.url, j.token), r)
+	self := strconv.Itoa(pid)
+	// Processes this one starts are members of its run, refused or not.
+	_ = os.Setenv(envTestPID, self)
+	if strings.TrimSpace(getenv(envTestClaimed)) != self {
+		c := newClient(j.url, j.token)
+		if r := oneTestProcess(getenv, ppid); r != nil {
+			return refuseRun(c, r)
+		}
+		key, dir, err := packageKey(getenv(envProject))
+		if err != nil {
+			return refuse("%s", err.Error())
+		}
+		if err := c.claim(key, dir); err != nil {
+			var re *refusalError
+			if errors.As(err, &re) {
+				return refuseRun(c, &re.r)
+			}
+			return refuse("%s", err.Error())
+		}
+		// The run is this pid's: an image it execs keeps it.
+		_ = os.Setenv(envTestClaimed, self)
 	}
-	key, dir, err := packageKey(getenv(envProject))
-	if err != nil {
-		return refuse("%s", err.Error())
-	}
-	if err := newClient(j.url, j.token).claim(key, dir); err != nil {
-		return refuse("%s", err.Error())
-	}
+	// Otherwise the run is this process's already: keploy's Go launcher
+	// (keploy-go-exec, which keploy has go test run each test binary
+	// through) claimed it for this pid before it exec'd the binary, so before
+	// any init ran, and froze the binary's clock and refused the go test
+	// keploy cannot judge; or this binary claimed it and exec'd itself again.
+	// The package claims nothing more, and checks the rest at the first test.
+	//
+	// The -test.parallel is set either way: the launcher passes its own on
+	// the command line, which the flag parse applies after this, and a binary
+	// that exec'd itself again has only this.
 	testing.Init()
 	if f := flag.Lookup("test.parallel"); f != nil {
 		_ = f.Value.Set(strconv.Itoa(keployParallel))
@@ -129,7 +151,8 @@ func oneTestProcess(getenv func(string) string, ppid int) *runRefusal {
 const codeOneTestProcess = "one_test_process_at_a_time"
 
 // runRefusal is a refusal of the whole test process that this package makes
-// before it claims keploy's run: its code, what it refused, and the fix.
+// (before it claims keploy's run, or for the claim's answer): its code, what
+// it refused, and the fix.
 type runRefusal struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`

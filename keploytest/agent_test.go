@@ -238,8 +238,10 @@ func TestARedirectIsAnErrorAndIsNotFollowed(t *testing.T) {
 	}
 }
 
-// A claim answered with a frozen clock this package cannot apply is refused:
-// the tests would run on the real clock against recordings made on another.
+// A claim answered with a frozen clock is refused: only keploy's Go launcher
+// freezes a test binary's clock, and a binary that claims the run itself was
+// not started through it, so its tests would run on the real clock against
+// recordings made on another.
 func TestAClaimWithAFrozenClockIsRefused(t *testing.T) {
 	a := &answering{status: 200, body: `{"v":1,"instance":"run"}`}
 	if err := a.serve(t).claim("orders", "/p/orders"); err != nil {
@@ -247,7 +249,7 @@ func TestAClaimWithAFrozenClockIsRefused(t *testing.T) {
 	}
 	b := &answering{status: 200, body: `{"v":1,"instance":"run","timeFile":"/tmp/keploy-time"}`}
 	err := b.serve(t).claim("orders", "/p/orders")
-	if err == nil || !strings.Contains(err.Error(), "frozen clock") || !strings.Contains(err.Error(), "upgrade github.com/keploy/go-sdk") {
-		t.Fatalf("got %v, want the frozen clock refused with the fix", err)
+	if err == nil || !strings.Contains(err.Error(), "freezes its tests' clock") || !strings.Contains(err.Error(), "keploy-go-exec <test binary> -test.v") {
+		t.Fatalf("got %v, want the frozen clock refused with the fix: start the binary through keploy's Go launcher", err)
 	}
 }

@@ -21,10 +21,16 @@ const (
 	// mock.command): a test's ID carries its package's path relative to it.
 	envProject = "KEPLOY_MOCK_PROJECT"
 	// envTestPID is the pid of the test binary that joined keploy's run. The
-	// package sets it as it joins, so a process that inherits it and runs
-	// inside that binary (a helper process the test starts, a binary built
-	// and run from a test) is a member: it stays inert.
+	// package sets it as it joins (keploy's Go launcher before it starts the
+	// binary), so a process that inherits it and runs inside that binary (a
+	// helper process the test starts, a binary built and run from a test) is
+	// a member: it stays inert.
 	envTestPID = "KEPLOY_TEST_PID"
+	// envTestClaimed is the pid keploy's agent took the run's claim from:
+	// keploy's Go launcher sets it to its own pid, which the test binary it
+	// execs keeps, and so does the package once its own claim is taken. A
+	// binary whose pid it names claims nothing more.
+	envTestClaimed = "KEPLOY_TEST_CLAIMED"
 )
 
 type mode int
