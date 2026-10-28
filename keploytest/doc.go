@@ -93,6 +93,20 @@
 // reach, an error answer, an unreadable answer, or an answer that does not
 // speak scope protocol v1. Nothing is retried and no clock decides anything.
 //
+// # Values the test chooses
+//
+// A value the test makes itself and hands the application, which sends it on
+// to a dependency (a nonce from the test's own clock, a name it made up),
+// differs on every run, and no clock read of the application's matches it.
+// Given tells keploy that the test chose it:
+//
+//	name := keploytest.Given(t, "app", fmt.Sprintf("[E2E] app-%d", time.Now().UnixNano()))
+//
+// keploy then follows the value into the dependency calls that carry it, and
+// each replay checks that the application sends on the value the test gives
+// then. Give a distinctive value, such as a UnixNano nonce or a prefixed
+// name; Given says what keploy follows and what it does not.
+//
 // # One test at a time
 //
 // keploy attributes every dependency call to the one test that is open, so a

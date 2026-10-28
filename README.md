@@ -67,6 +67,23 @@ func TestExport(t *testing.T) {
 }
 ```
 
+A value the test makes itself and hands the application, which sends it on to
+a dependency (a nonce from the test's own clock, a name it made up), differs on
+every run. Wrap it in `keploytest.Given`, inside the test, so keploy follows it
+into the calls that carry it and each replay checks that the application sends
+on the new value:
+
+```go
+name := keploytest.Given(t, "app", fmt.Sprintf("[E2E] app-%d", time.Now().UnixNano()))
+```
+
+Give a distinctive value (a UnixNano nonce, a prefixed name): keploy finds a
+given by its exact text, whole or inside a longer value, and cannot tell a bare
+Unix time in seconds or milliseconds, or an RFC 3339 time at the second, from
+the application's own clock read of that moment. A value the application makes
+from a given without keeping its text (a hash, a cut, a reformat) is not
+followed.
+
 Run the suite inside a keploy run, with `-p 1` and `-v` or `-json` (so a skip
 and its reason are visible). Set the command once in keploy.yml as
 `mock.command`, record with `keploy mock record`, and replay in CI with:
