@@ -224,7 +224,7 @@ func reportCoverage(testID string) error {
 		return &reportError{reasonDumpFailed, fmt.Errorf("failed to write meta dir: %w", err)}
 	}
 
-	processedData, err := processCoverageProfilesUsingCovdata(tempDir)
+	processed, err := processCoverageProfilesUsingCovdata(tempDir)
 	if err != nil {
 		code := reasonCovdataFailed
 		if errors.Is(err, errCovdataMissing) {
@@ -233,11 +233,11 @@ func reportCoverage(testID string) error {
 		return &reportError{code, fmt.Errorf("failed to process coverage profiles: %w", err)}
 	}
 
-	if len(processedData) == 0 {
+	if len(processed.executedLines) == 0 {
 		log.Printf("[Agent-Warning] No covered lines were found for test %s. The report will be empty.", testID)
 	}
 
-	jsonData, err := json.Marshal(coverageRecord{ID: testID, ExecutedLinesByFile: processedData})
+	jsonData, err := json.Marshal(coverageRecord{ID: testID, ExecutedLinesByFile: processed.executedLines})
 	if err != nil {
 		return fmt.Errorf("failed to marshal coverage data to JSON: %w", err)
 	}
@@ -317,13 +317,22 @@ func covdataCommand(ctx context.Context, dir, out string) (*exec.Cmd, error) {
 	return exec.CommandContext(ctx, "go", append([]string{"tool", "covdata"}, args...)...), nil
 }
 
+// processedCoverage is one test's coverage, read from a covdata text profile.
+// Only files of the main module are kept (see fileKey).
+type processedCoverage struct {
+	// executedLines is file -> sorted lines of the blocks that ran.
+	executedLines map[string][]int
+	// blocks is file -> every block of the file, run or not, with its count.
+	blocks map[string][]cover.ProfileBlock
+}
+
 // processCoverageProfilesUsingCovdata uses the covdata tool to convert binary coverage data to text format
 // and then processes it using the standard cover package.
-func processCoverageProfilesUsingCovdata(dir string) (map[string][]int, error) {
+func processCoverageProfilesUsingCovdata(dir string) (processedCoverage, error) {
 	// Create a temporary file for the text format output
 	textFile, err := os.CreateTemp(coverageDir, "coverage-*.txt")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create temp file for text coverage: %w", err)
+		return processedCoverage{}, fmt.Errorf("failed to create temp file for text coverage: %w", err)
 	}
 	defer func() {
 		if err := os.Remove(textFile.Name()); err != nil {
@@ -342,33 +351,38 @@ func processCoverageProfilesUsingCovdata(dir string) (map[string][]int, error) {
 	defer cancel()
 	cmd, err := covdataCommand(ctx, dir, textFile.Name())
 	if err != nil {
-		return nil, err
+		return processedCoverage{}, err
 	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
 	err = cmd.Run()
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert coverage data to text format: %w\nStderr: %s", err, stderr.String())
+		return processedCoverage{}, fmt.Errorf("failed to convert coverage data to text format: %w\nStderr: %s", err, stderr.String())
 	}
 
 	// The main module path (e.g., "your/module/path") from the binary itself, so
 	// no Go toolchain or source tree is needed in the app's image.
-	modulePath := mainModulePath()
+	return parseProfiles(textFile.Name(), mainModulePath())
+}
 
+// parseProfiles reads a covdata text profile into a processedCoverage.
+func parseProfiles(path, modulePath string) (processedCoverage, error) {
 	// Parse the text format using the standard cover package.
-	profiles, err := cover.ParseProfiles(textFile.Name())
+	profiles, err := cover.ParseProfiles(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse text coverage profile: %w", err)
+		return processedCoverage{}, fmt.Errorf("failed to parse text coverage profile: %w", err)
 	}
 
 	executedLinesByFile := make(map[string][]int)
+	blocksByFile := make(map[string][]cover.ProfileBlock)
 
 	for _, profile := range profiles {
 		key, ok := fileKey(profile.FileName, modulePath)
 		if !ok {
 			continue
 		}
+		blocksByFile[key] = profile.Blocks
 
 		lineSet := make(map[int]bool)
 
@@ -393,7 +407,7 @@ func processCoverageProfilesUsingCovdata(dir string) (map[string][]int, error) {
 		}
 	}
 
-	return executedLinesByFile, nil
+	return processedCoverage{executedLines: executedLinesByFile, blocks: blocksByFile}, nil
 }
 
 // mainModulePath returns the app's main module path from its build info, e.g.

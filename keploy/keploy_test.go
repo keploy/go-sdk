@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"runtime/coverage"
 	"strings"
@@ -183,6 +184,38 @@ func TestFileKey(t *testing.T) {
 				t.Errorf("fileKey(%q, %q) = %q, %v; want %q, %v", tt.fileName, tt.modulePath, got, ok, tt.want, tt.ok)
 			}
 		})
+	}
+}
+
+// sampleProfile is a covdata text profile as `go tool covdata textfmt` writes
+// it: every block of the build, count 0 included.
+const sampleProfile = `mode: atomic
+example.com/app/handlers/hello.go:6.2,6.40 1 1
+example.com/app/handlers/hello.go:6.40,9.3 2 0
+example.com/app/handlers/hello.go:10.2,10.48 1 1
+example.com/app/main.go:10.13,13.2 2 1
+github.com/lib/x/x.go:1.1,2.2 1 1
+`
+
+func TestParseProfiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "profile.txt")
+	if err := os.WriteFile(path, []byte(sampleProfile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := parseProfiles(path, "example.com/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantLines := map[string][]int{"handlers/hello.go": {6, 10}, "main.go": {10, 11, 12, 13}}
+	if !reflect.DeepEqual(got.executedLines, wantLines) {
+		t.Errorf("executedLines = %v, want %v", got.executedLines, wantLines)
+	}
+	if n := len(got.blocks["handlers/hello.go"]); n != 3 {
+		t.Errorf("hello.go has %d blocks, want 3 (the block that did not run is kept)", n)
+	}
+	if _, ok := got.blocks["github.com/lib/x/x.go"]; ok {
+		t.Error("a file of another module was kept")
 	}
 }
 
