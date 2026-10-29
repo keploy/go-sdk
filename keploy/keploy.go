@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -52,6 +53,38 @@ func socketDir(dir string) string {
 	}
 	return dir
 }
+
+// coverageRecord is what the app sends on the data socket for one test.
+type coverageRecord struct {
+	ID                  string           `json:"id"`
+	ExecutedLinesByFile map[string][]int `json:"executedLinesByFile"`
+	// Reason says why the test has no coverage; nil when coverage was taken.
+	Reason *noCoverageReason `json:"reason,omitempty"`
+}
+
+// noCoverageReason explains a test with no coverage, so Keploy can show
+// "not measured" with the cause instead of a silent gap.
+type noCoverageReason struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// Reason codes for noCoverageReason.Code.
+const (
+	reasonNoStart       = "no_start"       // END came with no START before it
+	reasonEndMismatch   = "end_mismatch"   // END named another test than the last START
+	reasonDumpFailed    = "dump_failed"    // writing the counters or meta-data failed
+	reasonCovdataFailed = "covdata_failed" // converting or reading the coverage data failed
+)
+
+// reportError carries the reason code of an error from reportCoverage.
+type reportError struct {
+	code string
+	err  error
+}
+
+func (e *reportError) Error() string { return e.err.Error() }
+func (e *reportError) Unwrap() error { return e.err }
 
 var (
 	// controlMu protects access to the currentTestID, ensuring command handling is atomic.
@@ -132,19 +165,26 @@ func handleControlRequest(conn net.Conn) {
 	case "END":
 		if currentTestID != id {
 			log.Printf("[Agent] Warning: Mismatched END command. Expected '%s', got '%s'. Skipping coverage report to avoid inconsistent state.", currentTestID, id)
+			code := reasonEndMismatch
+			if currentTestID == "" {
+				code = reasonNoStart
+			}
+			sendReason(id, code, fmt.Sprintf("END for %q, but the last START was for %q", id, currentTestID))
+			ack(conn)
 			return
 		}
 		err := reportCoverage(id)
 		if err != nil {
 			log.Printf("[Agent] 🚨 Error reporting coverage for test %s: %v", id, err)
+			var re *reportError
+			if errors.As(err, &re) {
+				sendReason(id, re.code, re.Error())
+			}
 		}
 		// Reset the currentTestID to an empty string to indicate that no test is currently being recorded.
 		currentTestID = ""
 
-		_, err = conn.Write([]byte("ACK\n"))
-		if err != nil {
-			log.Printf("[Agent] Error sending ACK to controller: %v", err)
-		}
+		ack(conn)
 	default:
 		log.Printf("[Agent] Unrecognized command: %s", action)
 	}
@@ -155,7 +195,7 @@ func reportCoverage(testID string) error {
 	// Create a temporary directory to store the coverage data.
 	tempDir, err := os.MkdirTemp(coverageDir, tempDirPattern(testID))
 	if err != nil {
-		return fmt.Errorf("failed to create temp dir: %w", err)
+		return &reportError{reasonDumpFailed, fmt.Errorf("failed to create temp dir: %w", err)}
 	}
 	defer func() {
 		if err := os.RemoveAll(tempDir); err != nil {
@@ -165,29 +205,24 @@ func reportCoverage(testID string) error {
 
 	err = coverage.WriteCountersDir(tempDir)
 	if err != nil {
-		return fmt.Errorf("failed to write coverage counters. Ensure the application was built with '-cover -covermode=atomic'. Original error: %w", err)
+		return &reportError{reasonDumpFailed, fmt.Errorf("failed to write coverage counters. Ensure the application was built with '-cover -covermode=atomic'. Original error: %w", err)}
 	}
 
 	err = coverage.WriteMetaDir(tempDir)
 	if err != nil {
-		return fmt.Errorf("failed to write meta dir: %w", err)
+		return &reportError{reasonDumpFailed, fmt.Errorf("failed to write meta dir: %w", err)}
 	}
 
 	processedData, err := processCoverageProfilesUsingCovdata(tempDir)
 	if err != nil {
-		return fmt.Errorf("failed to process coverage profiles: %w", err)
+		return &reportError{reasonCovdataFailed, fmt.Errorf("failed to process coverage profiles: %w", err)}
 	}
 
 	if len(processedData) == 0 {
 		log.Printf("[Agent-Warning] No covered lines were found for test %s. The report will be empty.", testID)
 	}
 
-	payload := map[string]interface{}{
-		"id":                  testID,
-		"executedLinesByFile": processedData,
-	}
-
-	jsonData, err := json.Marshal(payload)
+	jsonData, err := json.Marshal(coverageRecord{ID: testID, ExecutedLinesByFile: processedData})
 	if err != nil {
 		return fmt.Errorf("failed to marshal coverage data to JSON: %w", err)
 	}
@@ -206,6 +241,30 @@ func tempDirPattern(testID string) string {
 	}
 	name = strings.NewReplacer("/", "_", `\`, "_").Replace(name)
 	return fmt.Sprintf("keploy-coverage-%s-", name)
+}
+
+// sendReason tells Keploy why a test has no coverage. A failure is only
+// logged; the test is then missing, as it was before reasons existed.
+func sendReason(testID, code, message string) {
+	data, err := json.Marshal(coverageRecord{
+		ID:                  testID,
+		ExecutedLinesByFile: map[string][]int{},
+		Reason:              &noCoverageReason{Code: code, Message: message},
+	})
+	if err != nil {
+		log.Printf("[Agent] Error encoding the no-coverage reason for test %s: %v", testID, err)
+		return
+	}
+	if err := sendToSocket(data); err != nil {
+		log.Printf("[Agent] Error sending the no-coverage reason for test %s: %v", testID, err)
+	}
+}
+
+// ack tells Keploy that the END command is done.
+func ack(conn net.Conn) {
+	if _, err := conn.Write([]byte("ACK\n")); err != nil {
+		log.Printf("[Agent] Error sending ACK to controller: %v", err)
+	}
 }
 
 // sendToSocket connects to the Keploy data socket and writes the JSON payload.
