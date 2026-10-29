@@ -217,6 +217,30 @@ func TestParseProfiles(t *testing.T) {
 	if _, ok := got.blocks["github.com/lib/x/x.go"]; ok {
 		t.Error("a file of another module was kept")
 	}
+
+	wantBlocks := map[string][]codeBlock{
+		"handlers/hello.go": {{6, 2, 6, 40, 1}, {10, 2, 10, 48, 1}},
+		"main.go":           {{10, 13, 13, 2, 2}},
+	}
+	if blocks := got.executedBlocks(); !reflect.DeepEqual(blocks, wantBlocks) {
+		t.Errorf("executedBlocks() = %v, want %v", blocks, wantBlocks)
+	}
+}
+
+// Blocks go out as plain arrays, next to the old lines field.
+func TestCoverageRecordWithBlocks(t *testing.T) {
+	data, err := json.Marshal(coverageRecord{
+		ID:                   "set-0/test-1",
+		ExecutedLinesByFile:  map[string][]int{"a.go": {3}},
+		ExecutedBlocksByFile: map[string][]codeBlock{"a.go": {{3, 2, 3, 20, 1}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"id":"set-0/test-1","executedLinesByFile":{"a.go":[3]},"executedBlocksByFile":{"a.go":[[3,2,3,20,1]]}}`
+	if string(data) != want {
+		t.Fatalf("record JSON = %s, want %s", data, want)
+	}
 }
 
 func TestMainModulePath(t *testing.T) {

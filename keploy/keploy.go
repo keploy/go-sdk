@@ -68,9 +68,16 @@ func socketDir(dir string) string {
 type coverageRecord struct {
 	ID                  string           `json:"id"`
 	ExecutedLinesByFile map[string][]int `json:"executedLinesByFile"`
+	// ExecutedBlocksByFile is file -> the blocks that ran, with columns. It is
+	// sent next to ExecutedLinesByFile, which older agents still need.
+	ExecutedBlocksByFile map[string][]codeBlock `json:"executedBlocksByFile,omitempty"`
 	// Reason says why the test has no coverage; nil when coverage was taken.
 	Reason *noCoverageReason `json:"reason,omitempty"`
 }
+
+// codeBlock is one Go coverage block as
+// [startLine, startCol, endLine, endCol, numStmt].
+type codeBlock [5]int
 
 // noCoverageReason explains a test with no coverage, so Keploy can show
 // "not measured" with the cause instead of a silent gap.
@@ -237,7 +244,11 @@ func reportCoverage(testID string) error {
 		log.Printf("[Agent-Warning] No covered lines were found for test %s. The report will be empty.", testID)
 	}
 
-	jsonData, err := json.Marshal(coverageRecord{ID: testID, ExecutedLinesByFile: processed.executedLines})
+	jsonData, err := json.Marshal(coverageRecord{
+		ID:                   testID,
+		ExecutedLinesByFile:  processed.executedLines,
+		ExecutedBlocksByFile: processed.executedBlocks(),
+	})
 	if err != nil {
 		return fmt.Errorf("failed to marshal coverage data to JSON: %w", err)
 	}
@@ -324,6 +335,19 @@ type processedCoverage struct {
 	executedLines map[string][]int
 	// blocks is file -> every block of the file, run or not, with its count.
 	blocks map[string][]cover.ProfileBlock
+}
+
+// executedBlocks returns file -> the blocks that ran.
+func (p processedCoverage) executedBlocks() map[string][]codeBlock {
+	out := make(map[string][]codeBlock)
+	for file, blocks := range p.blocks {
+		for _, b := range blocks {
+			if b.Count > 0 {
+				out[file] = append(out[file], codeBlock{b.StartLine, b.StartCol, b.EndLine, b.EndCol, b.NumStmt})
+			}
+		}
+	}
+	return out
 }
 
 // processCoverageProfilesUsingCovdata uses the covdata tool to convert binary coverage data to text format
