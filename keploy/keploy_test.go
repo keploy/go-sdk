@@ -163,6 +163,35 @@ func TestCovdataCommandMissing(t *testing.T) {
 	}
 }
 
+func TestFileKey(t *testing.T) {
+	const mod = "example.com/app"
+	tests := []struct {
+		name, fileName, modulePath, want string
+		ok                               bool
+	}{
+		{"main module file", "example.com/app/handlers/user.go", mod, "handlers/user.go", true},
+		{"main module root file", "example.com/app/main.go", mod, "main.go", true},
+		{"module with the same prefix", "example.com/apptools/x.go", mod, "", false},
+		{"other module", "github.com/lib/pq/conn.go", mod, "", false},
+		{"absolute name, no module", "/src/app/main.go", "command-line-arguments", "/src/app/main.go", true},
+		{"no build info", "example.com/app/main.go", "", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := fileKey(tt.fileName, tt.modulePath)
+			if got != tt.want || ok != tt.ok {
+				t.Errorf("fileKey(%q, %q) = %q, %v; want %q, %v", tt.fileName, tt.modulePath, got, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}
+
+func TestMainModulePath(t *testing.T) {
+	if got := mainModulePath(); got != "github.com/keploy/go-sdk/v3" {
+		t.Errorf("mainModulePath() = %q, want the test binary's module", got)
+	}
+}
+
 func setCoverageDir(t *testing.T, dir string) {
 	t.Helper()
 	old := coverageDir

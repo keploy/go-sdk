@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/coverage"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -351,25 +352,9 @@ func processCoverageProfilesUsingCovdata(dir string) (map[string][]int, error) {
 		return nil, fmt.Errorf("failed to convert coverage data to text format: %w\nStderr: %s", err, stderr.String())
 	}
 
-	// Get the module path (e.g., "your/module/path") to resolve file paths correctly.
-	modulePathCmd := exec.Command("go", "list", "-m")
-	var stderrModPath bytes.Buffer
-	modulePathCmd.Stderr = &stderrModPath
-	modulePathBytes, err := modulePathCmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get module path with 'go list -m': %w\nStderr: %s", err, stderrModPath.String())
-	}
-	modulePath := strings.TrimSpace(string(modulePathBytes))
-
-	// Get the module's root directory on the filesystem.
-	moduleDirCmd := exec.Command("go", "list", "-m", "-f", "{{.Dir}}")
-	var stderrModDir bytes.Buffer
-	moduleDirCmd.Stderr = &stderrModDir
-	moduleDirBytes, err := moduleDirCmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get module directory with 'go list -m -f {{.Dir}}': %w\nStderr: %s", err, stderrModDir.String())
-	}
-	moduleDir := strings.TrimSpace(string(moduleDirBytes))
+	// The main module path (e.g., "your/module/path") from the binary itself, so
+	// no Go toolchain or source tree is needed in the app's image.
+	modulePath := mainModulePath()
 
 	// Parse the text format using the standard cover package.
 	profiles, err := cover.ParseProfiles(textFile.Name())
@@ -380,14 +365,9 @@ func processCoverageProfilesUsingCovdata(dir string) (map[string][]int, error) {
 	executedLinesByFile := make(map[string][]int)
 
 	for _, profile := range profiles {
-		var absolutePath string
-		if strings.HasPrefix(profile.FileName, modulePath) {
-			relativePath := strings.TrimPrefix(profile.FileName, modulePath)
-			absolutePath = filepath.Join(moduleDir, relativePath)
-		} else if !filepath.IsAbs(profile.FileName) {
+		key, ok := fileKey(profile.FileName, modulePath)
+		if !ok {
 			continue
-		} else {
-			absolutePath = profile.FileName
 		}
 
 		lineSet := make(map[int]bool)
@@ -409,9 +389,34 @@ func processCoverageProfilesUsingCovdata(dir string) (map[string][]int, error) {
 				lines = append(lines, line)
 			}
 			sort.Ints(lines)
-			executedLinesByFile[absolutePath] = lines
+			executedLinesByFile[key] = lines
 		}
 	}
 
 	return executedLinesByFile, nil
+}
+
+// mainModulePath returns the app's main module path from its build info, e.g.
+// "example.com/app", or "" when the binary carries no build info.
+func mainModulePath() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	return info.Main.Path
+}
+
+// fileKey turns a file name from the coverage profile into the key Keploy
+// stores. A main-module file becomes module-relative ("handlers/user.go"), the
+// same on every machine. An absolute name, which Go uses for files built
+// outside a module (go build -cover main.go), is kept as it is. A file of any
+// other module is skipped (ok is false).
+func fileKey(fileName, modulePath string) (key string, ok bool) {
+	if modulePath != "" && strings.HasPrefix(fileName, modulePath+"/") {
+		return strings.TrimPrefix(fileName, modulePath+"/"), true
+	}
+	if filepath.IsAbs(fileName) {
+		return fileName, true
+	}
+	return "", false
 }
