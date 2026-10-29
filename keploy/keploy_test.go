@@ -1,11 +1,14 @@
 package keploy
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/coverage"
 	"strings"
 	"testing"
@@ -114,6 +117,57 @@ func TestFailedDumpSendsReason(t *testing.T) {
 	if got := getCurrentTestID(); got != "" {
 		t.Fatalf("currentTestID = %q, want it reset", got)
 	}
+}
+
+func TestCovdataCommandPrefersKeployCovdata(t *testing.T) {
+	dir := t.TempDir()
+	setCoverageDir(t, dir)
+	tool := filepath.Join(dir, "keploy-covdata-"+runtime.GOARCH)
+	if err := os.WriteFile(tool, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd, err := covdataCommand(context.Background(), "in", "out")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd.Path != tool || strings.Join(cmd.Args[1:], " ") != "textfmt -i=in -o=out" {
+		t.Fatalf("command = %s %v, want %s textfmt -i=in -o=out", cmd.Path, cmd.Args, tool)
+	}
+}
+
+func TestCovdataCommandFallsBackToGo(t *testing.T) {
+	setCoverageDir(t, t.TempDir())
+	bin := t.TempDir()
+	goTool := filepath.Join(bin, "go")
+	if err := os.WriteFile(goTool, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+
+	cmd, err := covdataCommand(context.Background(), "in", "out")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd.Path != goTool || strings.Join(cmd.Args[1:], " ") != "tool covdata textfmt -i=in -o=out" {
+		t.Fatalf("command = %s %v, want go tool covdata textfmt", cmd.Path, cmd.Args)
+	}
+}
+
+func TestCovdataCommandMissing(t *testing.T) {
+	setCoverageDir(t, t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+
+	if _, err := covdataCommand(context.Background(), "in", "out"); !errors.Is(err, errCovdataMissing) {
+		t.Fatalf("err = %v, want errCovdataMissing", err)
+	}
+}
+
+func setCoverageDir(t *testing.T, dir string) {
+	t.Helper()
+	old := coverageDir
+	coverageDir = dir
+	t.Cleanup(func() { coverageDir = old })
 }
 
 // listenData points dataSocketPath at a fresh socket and returns the records

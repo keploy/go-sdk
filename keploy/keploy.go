@@ -10,6 +10,7 @@ package keploy
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,10 +19,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"runtime/coverage"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/tools/cover"
 )
@@ -34,7 +37,13 @@ const (
 	coverageDirEnv = "KEPLOY_COVERAGE_DIR"
 	// defaultSocketDir holds the sockets when coverageDirEnv is unset.
 	defaultSocketDir = "/tmp"
+	// covdataTimeout bounds one covdata run. Keploy waits on END with no
+	// deadline, so a hung covdata would stall the whole replay.
+	covdataTimeout = 30 * time.Second
 )
+
+// errCovdataMissing means neither Keploy's covdata nor the go tool is there.
+var errCovdataMissing = errors.New("no covdata tool: Keploy's keploy-covdata was not found and 'go' is not on PATH")
 
 var (
 	// coverageDir is the value of coverageDirEnv, or "" when it is unset.
@@ -71,10 +80,11 @@ type noCoverageReason struct {
 
 // Reason codes for noCoverageReason.Code.
 const (
-	reasonNoStart       = "no_start"       // END came with no START before it
-	reasonEndMismatch   = "end_mismatch"   // END named another test than the last START
-	reasonDumpFailed    = "dump_failed"    // writing the counters or meta-data failed
-	reasonCovdataFailed = "covdata_failed" // converting or reading the coverage data failed
+	reasonNoStart        = "no_start"        // END came with no START before it
+	reasonEndMismatch    = "end_mismatch"    // END named another test than the last START
+	reasonDumpFailed     = "dump_failed"     // writing the counters or meta-data failed
+	reasonCovdataFailed  = "covdata_failed"  // converting or reading the coverage data failed
+	reasonCovdataMissing = "covdata_missing" // no covdata tool to convert the data with
 )
 
 // reportError carries the reason code of an error from reportCoverage.
@@ -215,7 +225,11 @@ func reportCoverage(testID string) error {
 
 	processedData, err := processCoverageProfilesUsingCovdata(tempDir)
 	if err != nil {
-		return &reportError{reasonCovdataFailed, fmt.Errorf("failed to process coverage profiles: %w", err)}
+		code := reasonCovdataFailed
+		if errors.Is(err, errCovdataMissing) {
+			code = reasonCovdataMissing
+		}
+		return &reportError{code, fmt.Errorf("failed to process coverage profiles: %w", err)}
 	}
 
 	if len(processedData) == 0 {
@@ -283,6 +297,25 @@ func sendToSocket(data []byte) error {
 	return err
 }
 
+// covdataPath is where Keploy's agent drops a covdata binary for this arch.
+func covdataPath() string {
+	return filepath.Join(socketDir(coverageDir), "keploy-covdata-"+runtime.GOARCH)
+}
+
+// covdataCommand returns the command that converts the binary coverage data in
+// dir to text in out. It prefers the covdata Keploy delivers, so the app image
+// needs no Go toolchain, and falls back to 'go tool covdata'.
+func covdataCommand(ctx context.Context, dir, out string) (*exec.Cmd, error) {
+	args := []string{"textfmt", "-i=" + dir, "-o=" + out}
+	if info, err := os.Stat(covdataPath()); err == nil && info.Mode().IsRegular() {
+		return exec.CommandContext(ctx, covdataPath(), args...), nil
+	}
+	if _, err := exec.LookPath("go"); err != nil {
+		return nil, errCovdataMissing
+	}
+	return exec.CommandContext(ctx, "go", append([]string{"tool", "covdata"}, args...)...), nil
+}
+
 // processCoverageProfilesUsingCovdata uses the covdata tool to convert binary coverage data to text format
 // and then processes it using the standard cover package.
 func processCoverageProfilesUsingCovdata(dir string) (map[string][]int, error) {
@@ -304,7 +337,12 @@ func processCoverageProfilesUsingCovdata(dir string) (map[string][]int, error) {
 	}()
 
 	// Use covdata to convert binary format to text format
-	cmd := exec.Command("go", "tool", "covdata", "textfmt", "-i="+dir, "-o="+textFile.Name())
+	ctx, cancel := context.WithTimeout(context.Background(), covdataTimeout)
+	defer cancel()
+	cmd, err := covdataCommand(ctx, dir, textFile.Name())
+	if err != nil {
+		return nil, err
+	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
