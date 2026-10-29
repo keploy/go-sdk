@@ -222,8 +222,43 @@ func TestParseProfiles(t *testing.T) {
 		"handlers/hello.go": {{6, 2, 6, 40, 1}, {10, 2, 10, 48, 1}},
 		"main.go":           {{10, 13, 13, 2, 2}},
 	}
-	if blocks := got.executedBlocks(); !reflect.DeepEqual(blocks, wantBlocks) {
-		t.Errorf("executedBlocks() = %v, want %v", blocks, wantBlocks)
+	if blocks := got.codeBlocks(true); !reflect.DeepEqual(blocks, wantBlocks) {
+		t.Errorf("codeBlocks(true) = %v, want %v", blocks, wantBlocks)
+	}
+
+	wantAll := map[string][]codeBlock{
+		"handlers/hello.go": {{6, 2, 6, 40, 1}, {6, 40, 9, 3, 2}, {10, 2, 10, 48, 1}},
+		"main.go":           {{10, 13, 13, 2, 2}},
+	}
+	if blocks := got.codeBlocks(false); !reflect.DeepEqual(blocks, wantAll) {
+		t.Errorf("codeBlocks(false) = %v, want %v", blocks, wantAll)
+	}
+
+	if totals := got.totals(); totals != (statementTotals{Statements: 6, CoveredStatements: 4}) {
+		t.Errorf("totals() = %+v, want 6 statements, 4 covered", totals)
+	}
+}
+
+func TestTestSetOf(t *testing.T) {
+	for id, want := range map[string]string{"test-set-0/test-2": "test-set-0", "a/b/c": "a", "test-2": ""} {
+		if got := testSetOf(id); got != want {
+			t.Errorf("testSetOf(%q) = %q, want %q", id, got, want)
+		}
+	}
+}
+
+func TestMetaHash(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"covcounters.abc.1.2", "covmeta.5f3e9a"} {
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := metaHash(dir); got != "5f3e9a" {
+		t.Errorf("metaHash = %q, want 5f3e9a", got)
+	}
+	if got := metaHash(t.TempDir()); got != "" {
+		t.Errorf("metaHash of an empty dir = %q, want empty", got)
 	}
 }
 

@@ -71,6 +71,14 @@ type coverageRecord struct {
 	// ExecutedBlocksByFile is file -> the blocks that ran, with columns. It is
 	// sent next to ExecutedLinesByFile, which older agents still need.
 	ExecutedBlocksByFile map[string][]codeBlock `json:"executedBlocksByFile,omitempty"`
+	// Totals are Go's own statement counts for the main module.
+	Totals *statementTotals `json:"totals,omitempty"`
+	// MetaHash names the build's coverage meta-data (the covmeta.<hash> file).
+	MetaHash string `json:"metaHash,omitempty"`
+	// BuildBlocks is file -> every block of the build, run or not. It goes with
+	// the first record of each test set only, since it is the same for every
+	// test of one build.
+	BuildBlocks map[string][]codeBlock `json:"buildBlocks,omitempty"`
 	// Reason says why the test has no coverage; nil when coverage was taken.
 	Reason *noCoverageReason `json:"reason,omitempty"`
 }
@@ -78,6 +86,12 @@ type coverageRecord struct {
 // codeBlock is one Go coverage block as
 // [startLine, startCol, endLine, endCol, numStmt].
 type codeBlock [5]int
+
+// statementTotals are statement counts over the main module's blocks.
+type statementTotals struct {
+	Statements        int `json:"statements"`
+	CoveredStatements int `json:"coveredStatements"`
+}
 
 // noCoverageReason explains a test with no coverage, so Keploy can show
 // "not measured" with the cause instead of a silent gap.
@@ -109,6 +123,10 @@ var (
 	controlMu sync.Mutex
 	// currentTestID stores the ID of the test case currently being recorded.
 	currentTestID string
+	// buildTableSent and buildTableSentForSet record which test set's first
+	// record already carried the build's block table.
+	buildTableSent       bool
+	buildTableSentForSet string
 )
 
 // init starts the background control server that listens for commands from the Keploy test runner.
@@ -244,16 +262,56 @@ func reportCoverage(testID string) error {
 		log.Printf("[Agent-Warning] No covered lines were found for test %s. The report will be empty.", testID)
 	}
 
-	jsonData, err := json.Marshal(coverageRecord{
+	totals := processed.totals()
+	record := coverageRecord{
 		ID:                   testID,
 		ExecutedLinesByFile:  processed.executedLines,
-		ExecutedBlocksByFile: processed.executedBlocks(),
-	})
+		ExecutedBlocksByFile: processed.codeBlocks(true),
+		Totals:               &totals,
+		MetaHash:             metaHash(tempDir),
+	}
+	set := testSetOf(testID)
+	withTable := !buildTableSent || set != buildTableSentForSet
+	if withTable {
+		record.BuildBlocks = processed.codeBlocks(false)
+	}
+
+	jsonData, err := json.Marshal(record)
 	if err != nil {
 		return fmt.Errorf("failed to marshal coverage data to JSON: %w", err)
 	}
 
-	return sendToSocket(jsonData)
+	if err := sendToSocket(jsonData); err != nil {
+		return err
+	}
+	if withTable {
+		buildTableSent, buildTableSentForSet = true, set
+	}
+	return nil
+}
+
+// testSetOf returns the test set part of a test ID ("test-set-0" from
+// "test-set-0/test-2"), or "" when there is no slash.
+func testSetOf(testID string) string {
+	if set, _, ok := strings.Cut(testID, "/"); ok {
+		return set
+	}
+	return ""
+}
+
+// metaHash returns the hash from the covmeta.<hash> file WriteMetaDir wrote to
+// dir, or "" when there is none.
+func metaHash(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if hash, ok := strings.CutPrefix(e.Name(), "covmeta."); ok {
+			return hash
+		}
+	}
+	return ""
 }
 
 // tempDirPattern builds the os.MkdirTemp pattern for a test ID. It takes the
@@ -337,17 +395,32 @@ type processedCoverage struct {
 	blocks map[string][]cover.ProfileBlock
 }
 
-// executedBlocks returns file -> the blocks that ran.
-func (p processedCoverage) executedBlocks() map[string][]codeBlock {
+// codeBlocks returns file -> the blocks that ran (onlyRun) or every block.
+func (p processedCoverage) codeBlocks(onlyRun bool) map[string][]codeBlock {
 	out := make(map[string][]codeBlock)
 	for file, blocks := range p.blocks {
 		for _, b := range blocks {
-			if b.Count > 0 {
-				out[file] = append(out[file], codeBlock{b.StartLine, b.StartCol, b.EndLine, b.EndCol, b.NumStmt})
+			if onlyRun && b.Count <= 0 {
+				continue
 			}
+			out[file] = append(out[file], codeBlock{b.StartLine, b.StartCol, b.EndLine, b.EndCol, b.NumStmt})
 		}
 	}
 	return out
+}
+
+// totals sums the statements of every block, and of the blocks that ran.
+func (p processedCoverage) totals() statementTotals {
+	var t statementTotals
+	for _, blocks := range p.blocks {
+		for _, b := range blocks {
+			t.Statements += b.NumStmt
+			if b.Count > 0 {
+				t.CoveredStatements += b.NumStmt
+			}
+		}
+	}
+	return t
 }
 
 // processCoverageProfilesUsingCovdata uses the covdata tool to convert binary coverage data to text format
