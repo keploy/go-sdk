@@ -26,11 +26,32 @@ import (
 )
 
 const (
-	// controlSocketPath is used by Keploy to send commands (START/END) to the app.
-	controlSocketPath = "/tmp/coverage_control.sock"
-	// dataSocketPath is used by the app to send coverage data back to Keploy.
-	dataSocketPath = "/tmp/coverage_data.sock"
+	// coverageDirEnv names the folder Keploy shares with the app for the two
+	// sockets and the coverage temp files. In k8s the app sees the shared folder
+	// at /keploy-sockets, so Keploy sets it there. Unset keeps the old behaviour:
+	// sockets in /tmp, temp files in the OS default temp folder.
+	coverageDirEnv = "KEPLOY_COVERAGE_DIR"
+	// defaultSocketDir holds the sockets when coverageDirEnv is unset.
+	defaultSocketDir = "/tmp"
 )
+
+var (
+	// coverageDir is the value of coverageDirEnv, or "" when it is unset.
+	coverageDir = strings.TrimSpace(os.Getenv(coverageDirEnv))
+	// controlSocketPath is used by Keploy to send commands (START/END) to the app.
+	controlSocketPath = filepath.Join(socketDir(coverageDir), "coverage_control.sock")
+	// dataSocketPath is used by the app to send coverage data back to Keploy.
+	dataSocketPath = filepath.Join(socketDir(coverageDir), "coverage_data.sock")
+)
+
+// socketDir returns the folder that holds the sockets: dir, or /tmp when dir is
+// empty.
+func socketDir(dir string) string {
+	if dir == "" {
+		return defaultSocketDir
+	}
+	return dir
+}
 
 var (
 	// controlMu protects access to the currentTestID, ensuring command handling is atomic.
@@ -132,7 +153,7 @@ func handleControlRequest(conn net.Conn) {
 // reportCoverage dumps, processes, and sends the coverage data.
 func reportCoverage(testID string) error {
 	// Create a temporary directory to store the coverage data.
-	tempDir, err := os.MkdirTemp("", tempDirPattern(testID))
+	tempDir, err := os.MkdirTemp(coverageDir, tempDirPattern(testID))
 	if err != nil {
 		return fmt.Errorf("failed to create temp dir: %w", err)
 	}
@@ -207,7 +228,7 @@ func sendToSocket(data []byte) error {
 // and then processes it using the standard cover package.
 func processCoverageProfilesUsingCovdata(dir string) (map[string][]int, error) {
 	// Create a temporary file for the text format output
-	textFile, err := os.CreateTemp("", "coverage-*.txt")
+	textFile, err := os.CreateTemp(coverageDir, "coverage-*.txt")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp file for text coverage: %w", err)
 	}

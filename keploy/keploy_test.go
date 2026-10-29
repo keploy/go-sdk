@@ -26,6 +26,15 @@ func TestTempDirPattern(t *testing.T) {
 	}
 }
 
+func TestSocketDir(t *testing.T) {
+	if got := socketDir(""); got != "/tmp" {
+		t.Errorf(`socketDir("") = %q, want "/tmp"`, got)
+	}
+	if got := socketDir("/keploy-sockets"); got != "/keploy-sockets" {
+		t.Errorf(`socketDir("/keploy-sockets") = %q, want "/keploy-sockets"`, got)
+	}
+}
+
 // Every pattern must be accepted by os.MkdirTemp; a raw "a/b" case name made
 // it fail with "pattern contains path separator".
 func TestTempDirPatternWorksWithMkdirTemp(t *testing.T) {
