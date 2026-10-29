@@ -131,13 +131,8 @@ func handleControlRequest(conn net.Conn) {
 
 // reportCoverage dumps, processes, and sends the coverage data.
 func reportCoverage(testID string) error {
-	// Only take the part before the first slash,
-	// e.g. "test-2" from "test-set-0/test-2"
-	parts := strings.SplitN(testID, "/", 2)
-	baseID := parts[1]
-
 	// Create a temporary directory to store the coverage data.
-	tempDir, err := os.MkdirTemp("", fmt.Sprintf("keploy-coverage-%s-", baseID))
+	tempDir, err := os.MkdirTemp("", tempDirPattern(testID))
 	if err != nil {
 		return fmt.Errorf("failed to create temp dir: %w", err)
 	}
@@ -177,6 +172,19 @@ func reportCoverage(testID string) error {
 	}
 
 	return sendToSocket(jsonData)
+}
+
+// tempDirPattern builds the os.MkdirTemp pattern for a test ID. It takes the
+// part after the first slash, e.g. "test-2" from "test-set-0/test-2", or the
+// whole ID when there is no slash. Path separators left in the name are
+// replaced, because MkdirTemp rejects a pattern that contains one.
+func tempDirPattern(testID string) string {
+	_, name, found := strings.Cut(testID, "/")
+	if !found {
+		name = testID
+	}
+	name = strings.NewReplacer("/", "_", `\`, "_").Replace(name)
+	return fmt.Sprintf("keploy-coverage-%s-", name)
 }
 
 // sendToSocket connects to the Keploy data socket and writes the JSON payload.
