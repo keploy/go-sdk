@@ -265,19 +265,9 @@ func reportCoverage(testID string) error {
 		log.Printf("[Agent-Warning] No covered lines were found for test %s. The report will be empty.", testID)
 	}
 
-	totals := processed.totals()
-	record := coverageRecord{
-		ID:                   testID,
-		ExecutedLinesByFile:  processed.executedLines,
-		ExecutedBlocksByFile: processed.codeBlocks(true),
-		Totals:               &totals,
-		MetaHash:             metaHash(tempDir),
-	}
 	set := testSetOf(testID)
-	withTable := !buildTableSent || set != buildTableSentForSet
-	if withTable {
-		record.BuildBlocks = processed.codeBlocks(false)
-	}
+	withTable := needsBuildTable(set)
+	record := buildRecord(testID, processed, metaHash(tempDir), withTable)
 
 	jsonData, err := json.Marshal(record)
 	if err != nil {
@@ -291,6 +281,30 @@ func reportCoverage(testID string) error {
 		buildTableSent, buildTableSentForSet = true, set
 	}
 	return nil
+}
+
+// buildRecord assembles the record for one test: the blocks that ran, and
+// every block of the build when withTable is set.
+func buildRecord(testID string, processed processedCoverage, hash string, withTable bool) coverageRecord {
+	totals := processed.totals()
+	record := coverageRecord{
+		ID:                   testID,
+		ExecutedLinesByFile:  processed.executedLines,
+		ExecutedBlocksByFile: processed.codeBlocks(true),
+		Totals:               &totals,
+		MetaHash:             hash,
+	}
+	if withTable {
+		record.BuildBlocks = processed.codeBlocks(false)
+	}
+	return record
+}
+
+// needsBuildTable reports whether the record for a test of set must carry the
+// build's block table: no record carried it yet, or the last one that did was
+// for another set. The caller holds controlMu.
+func needsBuildTable(set string) bool {
+	return !buildTableSent || set != buildTableSentForSet
 }
 
 // testSetOf returns the test set part of a test ID ("test-set-0" from

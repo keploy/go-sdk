@@ -307,6 +307,49 @@ func TestTestSetOf(t *testing.T) {
 	}
 }
 
+// A record carries only the blocks that ran, and the build's block table only
+// with the first test of each test set.
+func TestBuildRecord(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "profile.txt")
+	if err := os.WriteFile(path, []byte(sampleProfile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	processed, err := parseProfiles(path, "example.com/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	setBuildTableSent(t, false, "")
+
+	for _, step := range []struct {
+		testID    string
+		wantTable bool
+	}{
+		{"test-set-0/test-1", true},
+		{"test-set-0/test-2", false},
+		{"test-set-1/test-1", true},
+	} {
+		set := testSetOf(step.testID)
+		withTable := needsBuildTable(set)
+		rec := buildRecord(step.testID, processed, "5f3e9a", withTable)
+		if rec.ID != step.testID || rec.MetaHash != "5f3e9a" || rec.Totals == nil || *rec.Totals != processed.totals() {
+			t.Errorf("%s: record = %+v, want its id, meta hash and totals", step.testID, rec)
+		}
+		if !reflect.DeepEqual(rec.ExecutedBlocksByFile, processed.codeBlocks(true)) {
+			t.Errorf("%s: ExecutedBlocksByFile = %v, want only the blocks that ran", step.testID, rec.ExecutedBlocksByFile)
+		}
+		if step.wantTable && !reflect.DeepEqual(rec.BuildBlocks, processed.codeBlocks(false)) {
+			t.Errorf("%s: BuildBlocks = %v, want every block of the build", step.testID, rec.BuildBlocks)
+		}
+		if !step.wantTable && rec.BuildBlocks != nil {
+			t.Errorf("%s: BuildBlocks = %v, want none after the set's first test", step.testID, rec.BuildBlocks)
+		}
+		if withTable {
+			// What reportCoverage does once the record is sent.
+			buildTableSent, buildTableSentForSet = true, set
+		}
+	}
+}
+
 func TestMetaHash(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"covcounters.abc.1.2", "covmeta.5f3e9a"} {
@@ -356,6 +399,13 @@ func setUseGoCovdata(t *testing.T, v bool) {
 	old := useGoCovdata
 	useGoCovdata = v
 	t.Cleanup(func() { useGoCovdata = old })
+}
+
+func setBuildTableSent(t *testing.T, sent bool, set string) {
+	t.Helper()
+	oldSent, oldSet := buildTableSent, buildTableSentForSet
+	buildTableSent, buildTableSentForSet = sent, set
+	t.Cleanup(func() { buildTableSent, buildTableSentForSet = oldSent, oldSet })
 }
 
 // writeCovdata builds a small program with -cover, runs it, and returns the

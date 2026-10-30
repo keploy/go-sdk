@@ -44,7 +44,7 @@ sudo -E keploy-enterprise dedup --rm
 ### Notes
 
 - **No Go toolchain needed in the app image.** Keploy's agent places a
-  `keploy-covdata-<arch>` binary next to the sockets, and the agent uses it to
+  `keploy-covdata-<arch>` binary next to the sockets, and the SDK uses it to
   read the coverage data. If it is not there or it cannot start,
   `go tool covdata` is used when `go` is on `PATH`.
 - **`KEPLOY_COVERAGE_DIR`** is the folder that holds the two sockets
@@ -52,7 +52,7 @@ sudo -E keploy-enterprise dedup --rm
   It defaults to `/tmp`. In Kubernetes, Keploy sets it for you (the app sees
   the shared folder at `/keploy-sockets`); you don't need to set it yourself.
 - **Not measured.** When a test's coverage can't be taken (for example, the app
-  was not built with `-covermode=atomic`), the agent tells Keploy why instead
+  was not built with `-covermode=atomic`), the SDK tells Keploy why instead
   of sending nothing.
 
 # keploytest: Go tests under keploy's Universal Mocker
