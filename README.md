@@ -45,8 +45,8 @@ sudo -E keploy-enterprise dedup --rm
 
 - **No Go toolchain needed in the app image.** Keploy's agent places a
   `keploy-covdata-<arch>` binary next to the sockets, and the agent uses it to
-  read the coverage data. If it is not there, `go tool covdata` is used when
-  `go` is on `PATH`.
+  read the coverage data. If it is not there or it cannot start,
+  `go tool covdata` is used when `go` is on `PATH`.
 - **`KEPLOY_COVERAGE_DIR`** is the folder that holds the two sockets
   (`coverage_control.sock`, `coverage_data.sock`) and the coverage temp files.
   It defaults to `/tmp`. In Kubernetes, Keploy sets it for you (the app sees

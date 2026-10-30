@@ -127,6 +127,9 @@ var (
 	// record already carried the build's block table.
 	buildTableSent       bool
 	buildTableSentForSet string
+	// useGoCovdata is set once Keploy's covdata could not start, so later
+	// tests go straight to 'go tool covdata'.
+	useGoCovdata bool
 )
 
 // init starts the background control server that listens for commands from the Keploy test runner.
@@ -374,10 +377,11 @@ func covdataPath() string {
 
 // covdataCommand returns the command that converts the binary coverage data in
 // dir to text in out. It prefers the covdata Keploy delivers, so the app image
-// needs no Go toolchain, and falls back to 'go tool covdata'.
+// needs no Go toolchain, and falls back to 'go tool covdata' when it is missing
+// or could not start before.
 func covdataCommand(ctx context.Context, dir, out string) (*exec.Cmd, error) {
 	args := []string{"textfmt", "-i=" + dir, "-o=" + out}
-	if info, err := os.Stat(covdataPath()); err == nil && info.Mode().IsRegular() {
+	if info, err := os.Stat(covdataPath()); err == nil && info.Mode().IsRegular() && !useGoCovdata {
 		return exec.CommandContext(ctx, covdataPath(), args...), nil
 	}
 	if _, err := exec.LookPath("go"); err != nil {
@@ -454,6 +458,22 @@ func processCoverageProfilesUsingCovdata(dir string) (processedCoverage, error) 
 	cmd.Stderr = &stderr
 
 	err = cmd.Run()
+	var exitErr *exec.ExitError
+	if err != nil && cmd.Path == covdataPath() && !errors.As(err, &exitErr) {
+		// Keploy's covdata is there but could not start, e.g. its folder is
+		// mounted noexec. Use 'go tool covdata' instead, now and from then on.
+		// A covdata that ran and exited non-zero is not retried.
+		if _, lookErr := exec.LookPath("go"); lookErr == nil {
+			log.Printf("[Agent-Warning] Keploy's covdata could not start (%v). Using 'go tool covdata' from now on.", err)
+			useGoCovdata = true
+			cmd, err = covdataCommand(ctx, dir, textFile.Name())
+			if err != nil {
+				return processedCoverage{}, err
+			}
+			cmd.Stderr = &stderr
+			err = cmd.Run()
+		}
+	}
 	if err != nil {
 		return processedCoverage{}, fmt.Errorf("failed to convert coverage data to text format: %w\nStderr: %s", err, stderr.String())
 	}

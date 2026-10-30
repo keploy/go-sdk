@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -164,6 +165,65 @@ func TestCovdataCommandMissing(t *testing.T) {
 	}
 }
 
+// Keploy's covdata is there but cannot start (e.g. /tmp is mounted noexec):
+// 'go tool covdata' converts the data instead, and is used from then on.
+func TestCovdataFallsBackToGoWhenKeployCovdataCannotStart(t *testing.T) {
+	covDir := writeCovdata(t)
+	dir := t.TempDir()
+	setCoverageDir(t, dir)
+	setUseGoCovdata(t, false)
+	tool := filepath.Join(dir, "keploy-covdata-"+runtime.GOARCH)
+	if err := os.WriteFile(tool, []byte("#!/bin/sh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := processCoverageProfilesUsingCovdata(covDir)
+	if err != nil {
+		t.Fatalf("err = %v, want 'go tool covdata' to convert the data", err)
+	}
+	if len(got.executedLines) == 0 {
+		t.Fatal("no executed lines: the data was not converted")
+	}
+
+	// The next test must not try Keploy's covdata again. Make it one that
+	// starts, leaves a mark and fails.
+	mark := filepath.Join(t.TempDir(), "ran")
+	if err := os.WriteFile(tool, []byte("#!/bin/sh\ntouch "+mark+"\nexit 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(tool, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := processCoverageProfilesUsingCovdata(covDir); err != nil {
+		t.Fatalf("second test: err = %v, want 'go tool covdata' to convert the data", err)
+	}
+	if _, err := os.Stat(mark); err == nil {
+		t.Fatal("Keploy's covdata was tried again after it could not start")
+	}
+}
+
+// Keploy's covdata started and exited non-zero: its error is returned, and
+// 'go tool covdata' is not tried.
+func TestCovdataNoFallbackWhenKeployCovdataFails(t *testing.T) {
+	covDir := writeCovdata(t)
+	dir := t.TempDir()
+	setCoverageDir(t, dir)
+	setUseGoCovdata(t, false)
+	tool := filepath.Join(dir, "keploy-covdata-"+runtime.GOARCH)
+	if err := os.WriteFile(tool, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := processCoverageProfilesUsingCovdata(covDir)
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("err = %v, want the exit error of Keploy's covdata", err)
+	}
+	if useGoCovdata {
+		t.Fatal("useGoCovdata was set, want Keploy's covdata kept")
+	}
+}
+
 func TestFileKey(t *testing.T) {
 	const mod = "example.com/app"
 	tests := []struct {
@@ -289,6 +349,39 @@ func setCoverageDir(t *testing.T, dir string) {
 	old := coverageDir
 	coverageDir = dir
 	t.Cleanup(func() { coverageDir = old })
+}
+
+func setUseGoCovdata(t *testing.T, v bool) {
+	t.Helper()
+	old := useGoCovdata
+	useGoCovdata = v
+	t.Cleanup(func() { useGoCovdata = old })
+}
+
+// writeCovdata builds a small program with -cover, runs it, and returns the
+// folder with its binary coverage data.
+func writeCovdata(t *testing.T) string {
+	t.Helper()
+	goTool, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("'go' is not on PATH")
+	}
+	src, covDir := t.TempDir(), t.TempDir()
+	app := filepath.Join(t.TempDir(), "app")
+	if err := os.WriteFile(filepath.Join(src, "main.go"), []byte("package main\n\nfunc main() {\n\tprintln()\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	build := exec.Command(goTool, "build", "-cover", "-o", app, "main.go")
+	build.Dir = src
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build -cover: %v\n%s", err, out)
+	}
+	run := exec.Command(app)
+	run.Env = append(os.Environ(), "GOCOVERDIR="+covDir)
+	if out, err := run.CombinedOutput(); err != nil {
+		t.Fatalf("running the covered program: %v\n%s", err, out)
+	}
+	return covDir
 }
 
 // listenData points dataSocketPath at a fresh socket and returns the records
