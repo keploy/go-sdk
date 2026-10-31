@@ -29,11 +29,11 @@ const maxSource = 1 << 10
 // where the test gave it (this call's file and line, relative to the project)
 // and how to undo it. Each replay checks that the application sends on the
 // value the test gives then: a call that carries another value is one the
-// recording cannot answer, and fails the test. keploy's run summary names
-// the given (given:<name>), never a value, and says why: the call carried
-// another value, or a value of another JSON type, at the part of the call it
-// names (body, a header, a path segment), or the test did not give the
-// value before the call.
+// recording cannot answer, and fails the test. For an HTTP call, keploy's
+// run summary names the given (given:<name>), never a value, and says why:
+// the call carried another value, or a value of another JSON type, at the
+// part of the call it names (body, a header, a path segment), or the test
+// did not give the value before the call.
 //
 // Give a distinctive value, such as a UnixNano nonce or a prefixed name, and
 // give the value the application sends on whole. keploy finds a given by its
@@ -52,7 +52,9 @@ const maxSource = 1 << 10
 //
 // keploy follows a given fully into HTTP calls only, and not yet into MongoDB
 // or PostgreSQL calls: a MongoDB field that holds a given whole is followed,
-// and a PostgreSQL statement value that is a given is refused, naming it.
+// and a PostgreSQL statement value that is a given is refused, naming it. A
+// given inside a longer value in a MongoDB or PostgreSQL call is not followed
+// yet, and a MongoDB call's miss of a given does not name it yet.
 //
 // name is 1 to 64 letters, digits, '_' or '-'; give a number as its decimal
 // text (strconv.Itoa). Call Given inside the test, from the test's own

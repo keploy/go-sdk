@@ -78,10 +78,10 @@ name := keploytest.Given(t, "app", fmt.Sprintf("[E2E] app-%d", time.Now().UnixNa
 ```
 
 A replay call that carries another value than the test gave fails the test.
-keploy's run summary names the given (`given:app`), never a value, and says
-why: the call carried another value, or a value of another JSON type, at the
-part of the call it names (body, a header, a path segment), or the test did not
-give the value before the call.
+For an HTTP call, keploy's run summary names the given (`given:app`), never a
+value, and says why: the call carried another value, or a value of another JSON
+type, at the part of the call it names (body, a header, a path segment), or the
+test did not give the value before the call.
 
 Give a distinctive value (a UnixNano nonce, a prefixed name), and give the
 value the application sends on whole: keploy finds a given by its exact text,
@@ -95,7 +95,9 @@ followed.
 
 keploy follows a given fully into HTTP calls only, and not yet into MongoDB or
 PostgreSQL calls: a MongoDB field that holds a given whole is followed, and a
-PostgreSQL statement value that is a given is refused, naming it.
+PostgreSQL statement value that is a given is refused, naming it. A given
+inside a longer value in a MongoDB or PostgreSQL call is not followed yet, and
+a MongoDB call's miss of a given does not name it yet.
 
 Run the suite inside a keploy run, with `-p 1` and `-v` or `-json` (so a skip
 and its reason are visible). Set the command once in keploy.yml as
