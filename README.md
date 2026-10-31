@@ -79,13 +79,17 @@ name := keploytest.Given(t, "app", fmt.Sprintf("[E2E] app-%d", time.Now().UnixNa
 
 Give a distinctive value (a UnixNano nonce, a prefixed name), and give the
 value the application sends on whole: keploy finds a given by its exact text,
-and refuses a call value that holds it inside a longer one, naming the given. A
-given under 32 bits (fewer than ten decimal digits, say) glued inside a longer
-word counts as no given there, and that value learns as it would without one,
-which can be noise. keploy cannot tell a bare Unix time in seconds or
-milliseconds, or an RFC 3339 time at the second, from the application's own
-clock read of that moment. A value the application makes from a given without
-keeping its text (a hash, a cut, a reformat) is not followed.
+at any length, and refuses a call value that holds it inside a longer one and
+changed with it, naming the given (so a short given that stands in another
+value by chance can be refused too). keploy cannot tell a bare Unix time in
+seconds or milliseconds, or an RFC 3339 time at the second, from the
+application's own clock read of that moment. A value the application makes
+from a given without keeping its text (a hash, a cut, a reformat) is not
+followed.
+
+keploy follows a given fully into HTTP calls only, and not yet into MongoDB or
+PostgreSQL calls: a MongoDB field that holds a given whole is followed, and a
+PostgreSQL statement value that is a given is refused, naming it.
 
 Run the suite inside a keploy run, with `-p 1` and `-v` or `-json` (so a skip
 and its reason are visible). Set the command once in keploy.yml as
