@@ -29,7 +29,11 @@ const maxSource = 1 << 10
 // where the test gave it (this call's file and line, relative to the project)
 // and how to undo it. Each replay checks that the application sends on the
 // value the test gives then: a call that carries another value is one the
-// recording cannot answer, and fails the test.
+// recording cannot answer, and fails the test. keploy's run summary names
+// the given (given:<name>), never a value, and says why: the call carried
+// another value, or a value of another JSON type, at the part of the call it
+// names (body, a header, a path segment), or the test did not give the
+// value before the call.
 //
 // Give a distinctive value, such as a UnixNano nonce or a prefixed name, and
 // give the value the application sends on whole. keploy finds a given by its

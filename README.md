@@ -77,6 +77,12 @@ sends on the new value:
 name := keploytest.Given(t, "app", fmt.Sprintf("[E2E] app-%d", time.Now().UnixNano()))
 ```
 
+A replay call that carries another value than the test gave fails the test.
+keploy's run summary names the given (`given:app`), never a value, and says
+why: the call carried another value, or a value of another JSON type, at the
+part of the call it names (body, a header, a path segment), or the test did not
+give the value before the call.
+
 Give a distinctive value (a UnixNano nonce, a prefixed name), and give the
 value the application sends on whole: keploy finds a given by its exact text,
 at any length, and refuses a call value that holds it inside a longer one and
