@@ -37,8 +37,6 @@ func TestChildGiven(t *testing.T) {
 	})
 }
 
-// TestChildGivenOne gives the value named by KEPLOYTEST_GIVEN, whose answer
-// the parent scripts.
 // TestChildGivenTP gives once Parallel has begun it.
 func TestChildGivenTP(t *testing.T) {
 	childOnly(t)
@@ -47,6 +45,8 @@ func TestChildGivenTP(t *testing.T) {
 	Given(t, "nonce", "1761609600123456799") //at:tp
 }
 
+// TestChildGivenOne gives the value named by KEPLOYTEST_GIVEN, whose answer
+// the parent scripts.
 func TestChildGivenOne(t *testing.T) {
 	childOnly(t)
 	defer T(t)()

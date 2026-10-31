@@ -25,21 +25,29 @@ const maxSource = 1 << 10
 // fail the call that carries it. With Given, keploy holds it as the variable
 // given:<name> of the open test (given:<name>#2, #3 and on for a name the
 // test gives again). In a record, keploy follows the value into the
-// dependency calls that carry it, and each such mock's variables say where
-// the test gave it (this call's file and line, relative to the project) and
-// how to undo it. Each replay checks that the application sends on the value
-// the test gives then: a call that carries another value is one the
+// dependency calls that carry it whole, and each such mock's variables say
+// where the test gave it (this call's file and line, relative to the project)
+// and how to undo it. Each replay checks that the application sends on the
+// value the test gives then: a call that carries another value is one the
 // recording cannot answer, and fails the test, naming the given.
 //
-// Give a distinctive value, such as a UnixNano nonce or a prefixed name.
-// keploy finds a given by its exact text, whole or inside a longer value, and
-// a short given that stands in another value by chance is refused, naming the
-// given (a red, never a false green). A bare Unix time in seconds or
-// milliseconds, or an RFC 3339 time at the second, cannot be told from the
-// application's own clock read of that moment in the same call, and is taken
-// as the given's. A value the application makes from a given without keeping
-// its text (a hash, a cut, a reformat) is not followed: keploy learns it as it
-// would with no given, which can be noise, unchecked.
+// Give a distinctive value, such as a UnixNano nonce or a prefixed name, and
+// give the value the application sends on whole. keploy finds a given by its
+// exact text. A call value that holds it inside a longer value ("app-<nonce>"
+// for the given <nonce>) is refused, naming the given (a red, never a false
+// green). keploy reads a given's text glued to other letters or digits only
+// when the given carries 32 bits by its characters, as recorded and as given:
+// ten decimal digits, seven lower-case letters or digits, six letters or
+// digits of both cases, or four bytes when it holds any other character. A
+// shorter given ("14") stands inside a word ("slot14") by chance: it counts
+// inside a longer value only as a word of its own that changed with the value
+// ("slot 14 of 30", refused), and a value that holds it glued learns as it
+// would with no given, which can be noise, unchecked. A bare Unix time in
+// seconds or milliseconds, or an RFC 3339 time at the second, cannot be told
+// from the application's own clock read of that moment in the same call, and
+// is taken as the given's. A value the application makes from a given without
+// keeping its text (a hash, a cut, a reformat) is not followed: keploy learns
+// it as it would with no given, which can be noise, unchecked.
 //
 // name is 1 to 64 letters, digits, '_' or '-'; give a number as its decimal
 // text (strconv.Itoa). Call Given inside the test, from the test's own
