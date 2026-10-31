@@ -1451,6 +1451,38 @@ func TestAnEndTheTestCannotReadFailsIt(t *testing.T) {
 	c.want(t, "TestChildBody", "FAIL", "500 Internal Server Error", `"agent broke"`)
 }
 
+// A record never fails a test for what keploy could not capture: an end
+// keploy answers ok without an action (its record keeps the test not judged,
+// and why, for judging to read) leaves the test's outcome its own against
+// real infra, even when the answer carries a reason. Only an error answer or
+// action fail fails it.
+func TestAnEndAnsweredOkWithoutAnActionLeavesTheOutcomeItsOwn(t *testing.T) {
+	notJudged := reply{200, `{"v":1,"status":"ok","reason":"keploy: keploy could not tell that every call of o::TestChildBody reached it"}`}
+	for _, tc := range []struct {
+		name, body, status, outcome string
+		code                        int
+	}{
+		{"a passed test stays passed", "", "PASS", "passed", 0},
+		{"a failed test stays failed", "fail", "FAIL", "failed", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newFakeAgent(t)
+			a.onEnd("TestChildBody", notJudged)
+			env := a.active()
+			env[envBody] = tc.body
+			c := runChild(t, env, "", "^TestChildBody$")
+			c.want(t, "TestChildBody", tc.status, bodyRan)
+			wantCalls(t, a, "begin TestChildBody", "end TestChildBody "+tc.outcome)
+			if strings.Contains(c.out, "could not tell that every call") {
+				t.Errorf("the not-judged reason was reported as the test's failure:\n%s", c.out)
+			}
+			if c.code != tc.code {
+				t.Errorf("exit %d, want %d\n%s", c.code, tc.code, c.out)
+			}
+		})
+	}
+}
+
 // hangingUp is an address whose listener accepts and closes every connection:
 // a transport error that no other process can turn into an answer.
 func hangingUp(t *testing.T) string {
