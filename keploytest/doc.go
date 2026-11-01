@@ -48,6 +48,11 @@
 //	keploy mock record -c "go test -p 1 -json ./..."
 //	keploy mock replay -c "go test -p 1 -json ./..."
 //
+// The run must be made with the proven switch on: KEPLOY_PROVEN=1 in
+// keploy's environment (export KEPLOY_PROVEN=1). Without it keploy's agent
+// answers the routes this package needs, the claim of the run and Given's
+// among them, with a plain 404, which fails the test with ErrNotProven.
+//
 // The command is the one keploy.yml's mock.command names. keploy hands it
 // KEPLOY_MOCK_AGENT (its agent), KEPLOY_MOCK_AGENT_TOKEN and
 // KEPLOY_MOCK_PROJECT (the project's directory). On Linux, keploy has go test

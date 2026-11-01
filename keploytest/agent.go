@@ -204,8 +204,20 @@ func (c *client) post(path string, body any) (answer, error) {
 	return a, nil
 }
 
+// ErrNotProven is what a call to keploy's agent fails with, wrapped, when
+// the agent answers its route with a plain 404 (no error of its own): the
+// agent has no such route. The claim a test binary makes before its first
+// test (POST /agent/instance), the refusal and Given's route exist only in
+// a keploy run with the proven switch on (KEPLOY_PROVEN=1 in the
+// environment of keploy mock record and keploy mock replay); without it the
+// agent answers each with a plain 404. A keploy older than this
+// keploy-go-sdk answers its newer routes so too.
+var ErrNotProven = errors.New("keploytest needs keploy run with KEPLOY_PROVEN=1 " +
+	"(export KEPLOY_PROVEN=1 before keploy mock record or keploy mock replay), " +
+	"and a keploy of the same release as this keploy-go-sdk")
+
 // statusError is a non-2xx answer that is not the agent's own error: no
-// message and remedy to show, only its HTTP status.
+// message and remedy to show, only its HTTP status. A 404 is ErrNotProven.
 type statusError struct {
 	code         int
 	status, path string
@@ -213,7 +225,17 @@ type statusError struct {
 }
 
 func (e *statusError) Error() string {
+	if e.code == http.StatusNotFound {
+		return fmt.Sprintf("keploy: the keploy agent has no %s (it answered %s): %v", e.path, e.status, ErrNotProven)
+	}
 	return fmt.Sprintf("keploy: the keploy agent answered %s to %s: %s", e.status, e.path, e.body)
+}
+
+func (e *statusError) Unwrap() error {
+	if e.code == http.StatusNotFound {
+		return ErrNotProven
+	}
+	return nil
 }
 
 // quoted is a bounded, quoted copy of an answer for an error message.
@@ -304,12 +326,6 @@ type givenReq struct {
 // answers with the variable it holds the value as.
 func (c *client) given(name, value, source string) (answer, error) {
 	a, err := c.post(pathGiven, givenReq{Name: name, Value: value, Source: source})
-	var se *statusError
-	if errors.As(err, &se) && se.code == http.StatusNotFound {
-		// The route came with givens: an agent without it is an older keploy.
-		return a, fmt.Errorf("keploy: this keploy agent does not take a value a test gave (it answered %s to %s); "+
-			"use a keploy and a keploy-go-sdk of the same release", se.status, se.path)
-	}
 	if err != nil {
 		return a, err
 	}
