@@ -120,10 +120,15 @@ type call struct {
 	outcome string
 	canSkip bool
 	auth    string
+	// value and source are a given's.
+	value, source string
 }
 
 func (c call) String() string {
 	op := strings.TrimPrefix(c.path, "/agent/scope/")
+	if c.path == pathGiven {
+		return op + " " + c.name + "=" + c.value + " @" + c.source
+	}
 	if c.outcome != "" {
 		return op + " " + c.name + " " + c.outcome
 	}
@@ -158,6 +163,10 @@ type fakeAgent struct {
 	end   map[string]reply
 	all   *reply // answers every begin and end when set
 	url   string
+	// gave counts the values the open test gave per name, which the agent
+	// numbers (given:<name>#2); given scripts the answer to a given by name.
+	gave  map[string]int
+	given map[string]reply
 	// claims are the claims made, as "claim <key>"; claim answers them,
 	// with a v1 claim answer when unset.
 	claims []string
@@ -166,7 +175,7 @@ type fakeAgent struct {
 
 func newFakeAgent(t *testing.T) *fakeAgent {
 	t.Helper()
-	a := &fakeAgent{begin: map[string]reply{}, end: map[string]reply{}}
+	a := &fakeAgent{begin: map[string]reply{}, end: map[string]reply{}, given: map[string]reply{}}
 	srv := httptest.NewServer(http.HandlerFunc(a.serve))
 	t.Cleanup(srv.Close)
 	a.url = srv.URL
@@ -179,6 +188,8 @@ func (a *fakeAgent) serve(w http.ResponseWriter, r *http.Request) {
 		Name    string `json:"name"`
 		Outcome string `json:"outcome"`
 		CanSkip bool   `json:"canSkip"`
+		Value   string `json:"value"`
+		Source  string `json:"source"`
 	}
 	_ = json.Unmarshal(raw, &body)
 	a.mu.Lock()
@@ -196,7 +207,8 @@ func (a *fakeAgent) serve(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, rep.body)
 		return
 	}
-	a.calls = append(a.calls, call{path: r.URL.Path, name: body.Name, outcome: body.Outcome, canSkip: body.CanSkip, auth: r.Header.Get("Authorization")})
+	a.calls = append(a.calls, call{path: r.URL.Path, name: body.Name, outcome: body.Outcome, canSkip: body.CanSkip, auth: r.Header.Get("Authorization"),
+		value: body.Value, source: body.Source})
 	rep := ok
 	switch r.URL.Path {
 	case pathBegin:
@@ -218,6 +230,11 @@ func (a *fakeAgent) serve(w http.ResponseWriter, r *http.Request) {
 		default:
 			a.open = body.Name
 		}
+		if a.open == body.Name {
+			a.gave = map[string]int{}
+		}
+	case pathGiven:
+		rep = a.answerGiven(body.Name)
 	case pathEnd:
 		if a.open == body.Name {
 			a.open = ""
@@ -234,6 +251,24 @@ func (a *fakeAgent) serve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(rep.status)
 	_, _ = io.WriteString(w, rep.body)
+}
+
+// answerGiven answers a given like keploy's agent: the variable it holds
+// the value as, numbered for a name the open test gave again. a.mu is held.
+func (a *fakeAgent) answerGiven(name string) reply {
+	if s, scripted := a.given[name]; scripted {
+		return s
+	}
+	if a.open == "" {
+		return reply{422, `{"error":"not_open","message":"a value was given as ` + name + ` while no test was open"}`}
+	}
+	a.gave[name]++
+	v := "given:" + name
+	if n := a.gave[name]; n > 1 {
+		v += "#" + strconv.Itoa(n)
+	}
+	b, _ := json.Marshal(map[string]any{"v": 1, "status": "ok", "variable": v})
+	return reply{200, string(b)}
 }
 
 // opens reports whether a begin answer opens the test: a v1 "run".
@@ -254,6 +289,12 @@ func (a *fakeAgent) onEnd(name string, r reply) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.end[name] = r
+}
+
+func (a *fakeAgent) onGiven(name string, r reply) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.given[name] = r
 }
 
 func (a *fakeAgent) onAll(r reply) {

@@ -3,6 +3,7 @@ package keploytest
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -60,6 +61,9 @@ type answer struct {
 	// TimeFile is the clock file the claim's test process must run on,
 	// empty when keploy's run is not frozen.
 	TimeFile string `json:"timeFile"`
+	// Variable is a given's answer: the variable keploy holds the value
+	// as (given:<name>, numbered for a name the test gave again).
+	Variable string `json:"variable"`
 }
 
 // agentError is the body of a non-2xx answer.
@@ -183,7 +187,7 @@ func (c *client) post(path string, body any) (answer, error) {
 			}
 			return answer{}, fmt.Errorf("keploy: %s", e.Message)
 		}
-		return answer{}, fmt.Errorf("keploy: the keploy agent answered %s to %s: %s", resp.Status, path, quoted(data))
+		return answer{}, &statusError{code: resp.StatusCode, status: resp.Status, path: path, body: quoted(data)}
 	}
 	var a answer
 	if err := json.Unmarshal(data, &a); err != nil {
@@ -198,6 +202,40 @@ func (c *client) post(path string, body any) (answer, error) {
 			"this keploy-go-sdk speaks scope protocol v%d: use a keploy and a keploy-go-sdk of the same release", path, *a.V, quoted(data), protocolVersion)
 	}
 	return a, nil
+}
+
+// ErrNotProven is what a call to keploy's agent fails with, wrapped, when
+// the agent answers its route with a plain 404 (no error of its own): the
+// agent has no such route. The claim a test binary makes before its first
+// test (POST /agent/instance), the refusal and Given's route exist only in
+// a keploy run with the proven switch on (KEPLOY_PROVEN=1 in the
+// environment of keploy mock record and keploy mock replay); without it the
+// agent answers each with a plain 404. A keploy older than this
+// keploy-go-sdk answers its newer routes so too.
+var ErrNotProven = errors.New("keploytest needs keploy run with KEPLOY_PROVEN=1 " +
+	"(export KEPLOY_PROVEN=1 before keploy mock record or keploy mock replay), " +
+	"and a keploy of the same release as this keploy-go-sdk")
+
+// statusError is a non-2xx answer that is not the agent's own error: no
+// message and remedy to show, only its HTTP status. A 404 is ErrNotProven.
+type statusError struct {
+	code         int
+	status, path string
+	body         string // quoted
+}
+
+func (e *statusError) Error() string {
+	if e.code == http.StatusNotFound {
+		return fmt.Sprintf("keploy: the keploy agent has no %s (it answered %s): %v", e.path, e.status, ErrNotProven)
+	}
+	return fmt.Sprintf("keploy: the keploy agent answered %s to %s: %s", e.status, e.path, e.body)
+}
+
+func (e *statusError) Unwrap() error {
+	if e.code == http.StatusNotFound {
+		return ErrNotProven
+	}
+	return nil
 }
 
 // quoted is a bounded, quoted copy of an answer for an error message.
@@ -271,3 +309,31 @@ const codeClockNotFrozen = "clock_not_frozen"
 type refusalError struct{ r runRefusal }
 
 func (e *refusalError) Error() string { return e.r.text() }
+
+const pathGiven = "/agent/scope/given"
+
+// givenReq is the body of POST /agent/scope/given: a value the open test
+// chose and hands the application, under the name the test gave it, and
+// where the test gave it (file:line, relative to the project), which keploy
+// uses only in wording.
+type givenReq struct {
+	Name   string `json:"name"`
+	Value  string `json:"value"`
+	Source string `json:"source,omitempty"`
+}
+
+// given tells the agent that the open test gave value under name. The agent
+// answers with the variable it holds the value as.
+func (c *client) given(name, value, source string) (answer, error) {
+	a, err := c.post(pathGiven, givenReq{Name: name, Value: value, Source: source})
+	if err != nil {
+		return a, err
+	}
+	switch {
+	case a.Status != "ok":
+		return a, fmt.Errorf("keploy: the keploy agent answered the given %s with status %q", name, a.Status)
+	case a.Variable == "":
+		return a, fmt.Errorf("keploy: the keploy agent answered the given %s without the variable it holds it as", name)
+	}
+	return a, nil
+}

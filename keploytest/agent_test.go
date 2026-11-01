@@ -2,6 +2,7 @@ package keploytest
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -168,6 +169,41 @@ func TestEveryUntrustworthyAnswerIsAnError(t *testing.T) {
 				t.Errorf("error %q does not start with keploy:", err)
 			}
 		})
+	}
+}
+
+// keploy's agent answers the claim, the refusal and Given's route with a
+// plain 404 when the keploy run has the proven switch off (KEPLOY_PROVEN
+// unset): a plain 404 on any route fails with ErrNotProven, saying to run
+// keploy with KEPLOY_PROVEN=1, never as an unexplained 404. A 404 that is the agent's own error keeps its words, and
+// another status is not ErrNotProven.
+func TestAPlain404SaysKeployRunsWithoutTheProvenSwitch(t *testing.T) {
+	const want = "(it answered 404 Not Found): keploytest needs keploy run with KEPLOY_PROVEN=1 " +
+		"(export KEPLOY_PROVEN=1 before keploy mock record or keploy mock replay), and a keploy of the same release as this keploy-go-sdk"
+	c := (&answering{status: 404, body: "404 page not found\n"}).serve(t)
+	for path, call := range map[string]func() error{
+		pathInstance: func() error { return c.claim("pkg", t.TempDir()) },
+		pathBegin:    func() error { _, err := c.begin("TestX"); return err },
+		pathEnd:      func() error { _, err := c.end("TestX", outcomePassed); return err },
+		pathRefusal:  func() error { return c.refusal(runRefusal{Code: "x", Message: "m"}) },
+		pathGiven:    func() error { _, err := c.given("nonce", "1", ""); return err },
+	} {
+		err := call()
+		if !errors.Is(err, ErrNotProven) {
+			t.Errorf("%s: err = %v, want ErrNotProven", path, err)
+			continue
+		}
+		if got := err.Error(); got != "keploy: the keploy agent has no "+path+" "+want {
+			t.Errorf("%s: err = %q", path, got)
+		}
+	}
+	own := (&answering{status: 404, body: `{"error":"not_found","message":"no open test"}`}).serve(t)
+	if _, err := own.begin("TestX"); errors.Is(err, ErrNotProven) || err == nil || err.Error() != "keploy: no open test" {
+		t.Errorf("the agent's own 404: err = %v, want its words and not ErrNotProven", err)
+	}
+	other := (&answering{status: 500, body: "boom"}).serve(t)
+	if _, err := other.begin("TestX"); errors.Is(err, ErrNotProven) || err == nil {
+		t.Errorf("a 500: err = %v, want an error that is not ErrNotProven", err)
 	}
 }
 

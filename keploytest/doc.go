@@ -48,6 +48,11 @@
 //	keploy mock record -c "go test -p 1 -json ./..."
 //	keploy mock replay -c "go test -p 1 -json ./..."
 //
+// The run must be made with the proven switch on: KEPLOY_PROVEN=1 in
+// keploy's environment (export KEPLOY_PROVEN=1). Without it keploy's agent
+// answers the routes this package needs, the claim of the run and Given's
+// among them, with a plain 404, which fails the test with ErrNotProven.
+//
 // The command is the one keploy.yml's mock.command names. keploy hands it
 // KEPLOY_MOCK_AGENT (its agent), KEPLOY_MOCK_AGENT_TOKEN and
 // KEPLOY_MOCK_PROJECT (the project's directory). On Linux, keploy has go test
@@ -92,6 +97,20 @@
 // Any answer the package cannot trust fails the test: an agent it cannot
 // reach, an error answer, an unreadable answer, or an answer that does not
 // speak scope protocol v1. Nothing is retried and no clock decides anything.
+//
+// # Values the test chooses
+//
+// A value the test makes itself and hands the application, which sends it on
+// to a dependency (a nonce from the test's own clock, a name it made up),
+// differs on every run, and no clock read of the application's matches it.
+// Given tells keploy that the test chose it:
+//
+//	name := keploytest.Given(t, "app", fmt.Sprintf("[E2E] app-%d", time.Now().UnixNano()))
+//
+// keploy then follows the value into the dependency calls that carry it, and
+// each replay checks that the application sends on the value the test gives
+// then. Give a distinctive value, such as a UnixNano nonce or a prefixed
+// name; Given says what keploy follows and what it does not.
 //
 // # One test at a time
 //
