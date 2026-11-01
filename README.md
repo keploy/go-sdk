@@ -67,6 +67,38 @@ func TestExport(t *testing.T) {
 }
 ```
 
+A value the test makes itself and hands the application, which sends it on to
+a dependency (a nonce from the test's own clock, a name it made up), differs on
+every run. Wrap it in `keploytest.Given`, inside the test, so keploy follows it
+into the calls that carry it whole and each replay checks that the application
+sends on the new value:
+
+```go
+name := keploytest.Given(t, "app", fmt.Sprintf("[E2E] app-%d", time.Now().UnixNano()))
+```
+
+A replay call that carries another value than the test gave fails the test.
+For an HTTP call, keploy's run summary names the given (`given:app`), never a
+value, and says why: the call carried another value, or a value of another JSON
+type, at the part of the call it names (body, a header, a path segment), or the
+test did not give the value before the call.
+
+Give a distinctive value (a UnixNano nonce, a prefixed name), and give the
+value the application sends on whole: keploy finds a given by its exact text,
+at any length, and refuses a call value that holds it inside a longer one and
+changed with it, naming the given (so a short given that stands in another
+value by chance can be refused too). keploy cannot tell a bare Unix time in
+seconds or milliseconds, or an RFC 3339 time at the second, from the
+application's own clock read of that moment. A value the application makes
+from a given without keeping its text (a hash, a cut, a reformat) is not
+followed.
+
+keploy follows a given fully into HTTP calls only, and not yet into MongoDB or
+PostgreSQL calls: a MongoDB field that holds a given whole is followed, and a
+PostgreSQL statement value that is a given is refused, naming it. A given
+inside a longer value in a MongoDB or PostgreSQL call is not followed yet, and
+a MongoDB call's miss of a given does not name it yet.
+
 Run the suite inside a keploy run, with `-p 1` and `-v` or `-json` (so a skip
 and its reason are visible). Set the command once in keploy.yml as
 `mock.command`, record with `keploy mock record`, and replay in CI with:

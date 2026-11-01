@@ -3,6 +3,7 @@ package keploytest
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -60,6 +61,9 @@ type answer struct {
 	// TimeFile is the clock file the claim's test process must run on,
 	// empty when keploy's run is not frozen.
 	TimeFile string `json:"timeFile"`
+	// Variable is a given's answer: the variable keploy holds the value
+	// as (given:<name>, numbered for a name the test gave again).
+	Variable string `json:"variable"`
 }
 
 // agentError is the body of a non-2xx answer.
@@ -183,7 +187,7 @@ func (c *client) post(path string, body any) (answer, error) {
 			}
 			return answer{}, fmt.Errorf("keploy: %s", e.Message)
 		}
-		return answer{}, fmt.Errorf("keploy: the keploy agent answered %s to %s: %s", resp.Status, path, quoted(data))
+		return answer{}, &statusError{code: resp.StatusCode, status: resp.Status, path: path, body: quoted(data)}
 	}
 	var a answer
 	if err := json.Unmarshal(data, &a); err != nil {
@@ -198,6 +202,18 @@ func (c *client) post(path string, body any) (answer, error) {
 			"this keploy-go-sdk speaks scope protocol v%d: use a keploy and a keploy-go-sdk of the same release", path, *a.V, quoted(data), protocolVersion)
 	}
 	return a, nil
+}
+
+// statusError is a non-2xx answer that is not the agent's own error: no
+// message and remedy to show, only its HTTP status.
+type statusError struct {
+	code         int
+	status, path string
+	body         string // quoted
+}
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("keploy: the keploy agent answered %s to %s: %s", e.status, e.path, e.body)
 }
 
 // quoted is a bounded, quoted copy of an answer for an error message.
@@ -271,3 +287,37 @@ const codeClockNotFrozen = "clock_not_frozen"
 type refusalError struct{ r runRefusal }
 
 func (e *refusalError) Error() string { return e.r.text() }
+
+const pathGiven = "/agent/scope/given"
+
+// givenReq is the body of POST /agent/scope/given: a value the open test
+// chose and hands the application, under the name the test gave it, and
+// where the test gave it (file:line, relative to the project), which keploy
+// uses only in wording.
+type givenReq struct {
+	Name   string `json:"name"`
+	Value  string `json:"value"`
+	Source string `json:"source,omitempty"`
+}
+
+// given tells the agent that the open test gave value under name. The agent
+// answers with the variable it holds the value as.
+func (c *client) given(name, value, source string) (answer, error) {
+	a, err := c.post(pathGiven, givenReq{Name: name, Value: value, Source: source})
+	var se *statusError
+	if errors.As(err, &se) && se.code == http.StatusNotFound {
+		// The route came with givens: an agent without it is an older keploy.
+		return a, fmt.Errorf("keploy: this keploy agent does not take a value a test gave (it answered %s to %s); "+
+			"use a keploy and a keploy-go-sdk of the same release", se.status, se.path)
+	}
+	if err != nil {
+		return a, err
+	}
+	switch {
+	case a.Status != "ok":
+		return a, fmt.Errorf("keploy: the keploy agent answered the given %s with status %q", name, a.Status)
+	case a.Variable == "":
+		return a, fmt.Errorf("keploy: the keploy agent answered the given %s without the variable it holds it as", name)
+	}
+	return a, nil
+}
