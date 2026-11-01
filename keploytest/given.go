@@ -56,6 +56,13 @@ const maxSource = 1 << 10
 // given inside a longer value in a MongoDB or PostgreSQL call is not followed
 // yet, and a MongoDB call's miss of a given does not name it yet.
 //
+// keploy takes at most 1024 values from one test, each 1 byte to 64 KiB, and
+// at most 64 MiB of givens in one record (names, values and where the tests
+// gave them). Keploy Cloud also holds one test's givens to 1 MiB in all,
+// counted the same way, in a publish to a Keploy branch only, whose tests are
+// served with every snapshot of their set: past it, that publish is refused,
+// naming the test. A keploy.lock recording is held only to keploy's bounds.
+//
 // name is 1 to 64 letters, digits, '_' or '-'; give a number as its decimal
 // text (strconv.Itoa). Call Given inside the test, from the test's own
 // goroutine, after its keploytest line (in a TP test, after Parallel). A

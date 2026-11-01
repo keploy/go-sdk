@@ -99,6 +99,13 @@ PostgreSQL statement value that is a given is refused, naming it. A given
 inside a longer value in a MongoDB or PostgreSQL call is not followed yet, and
 a MongoDB call's miss of a given does not name it yet.
 
+keploy takes at most 1024 values from one test, each 1 byte to 64 KiB, and at
+most 64 MiB of givens in one record (names, values and where the tests gave
+them). Keploy Cloud also holds one test's givens to 1 MiB in all, counted the
+same way, in a publish to a Keploy branch only, whose tests are served with
+every snapshot of their set: past it, that publish is refused, naming the test.
+A keploy.lock recording is held only to keploy's bounds.
+
 Run the suite inside a keploy run, with `-p 1` and `-v` or `-json` (so a skip
 and its reason are visible). Set the command once in keploy.yml as
 `mock.command`, record with `keploy mock record`, and replay in CI with:
