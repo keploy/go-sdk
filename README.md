@@ -107,6 +107,11 @@ and its reason are visible). Set the command once in keploy.yml as
 keploy mock replay -c "go test -p 1 -json ./..."
 ```
 
+Run keploy with `KEPLOY_PROVEN=1` in its environment (`export KEPLOY_PROVEN=1`).
+Without it keploy's agent answers the routes keploytest needs, the claim of the
+run and `Given`'s among them, with a plain 404, which fails the test with
+`keploytest.ErrNotProven`.
+
 Without keploy (`KEPLOY_MOCK_AGENT` unset or `off`) the line does nothing and
 `Run`/`Parallel` are `t.Run`/`t.Parallel`. With keploy, each test binary claims
 keploy's run before its tests start, and one test runs at a time: parallel

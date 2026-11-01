@@ -210,7 +210,8 @@ func TestAGivenOutsideAnOpenTestFails(t *testing.T) {
 }
 
 // An answer to a given the package cannot trust fails the test with what
-// went wrong; only a 404, an agent without the route, says to upgrade.
+// went wrong; only a plain 404, an agent without the route, says to run keploy
+// with KEPLOY_PROVEN=1 and a keploy of the same release.
 func TestAGivenTheAgentRefusesFailsTheTest(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -220,7 +221,7 @@ func TestAGivenTheAgentRefusesFailsTheTest(t *testing.T) {
 		{"refused", reply{400, `{"error":"bad_request","message":"a given's name is 1 to 64 letters, digits, '_' or '-', not \"a b\"","remedy":"name it with 1 to 64 letters, digits, '_' or '-'"}`},
 			`keploy: a given's name is 1 to 64 letters, digits, '_' or '-', not "a b" (name it with 1 to 64 letters, digits, '_' or '-')`},
 		{"old", reply{404, "404 page not found\n"},
-			"keploy: this keploy agent does not take a value a test gave (it answered 404 Not Found to /agent/scope/given); use a keploy and a keploy-go-sdk of the same release"},
+			"keploy: the keploy agent has no /agent/scope/given (it answered 404 Not Found): keploytest needs keploy run with KEPLOY_PROVEN=1 (export KEPLOY_PROVEN=1 before keploy mock record or keploy mock replay), and a keploy of the same release as this keploy-go-sdk"},
 		{"broken", reply{500, "boom"},
 			`keploy: the keploy agent answered 500 Internal Server Error to /agent/scope/given: "boom"`},
 		{"novar", reply{200, `{"v":1,"status":"ok"}`},
@@ -235,7 +236,7 @@ func TestAGivenTheAgentRefusesFailsTheTest(t *testing.T) {
 			env[envGiven] = tc.name
 			c := runChild(t, env, dir, "^TestChildGivenOne$")
 			c.want(t, "TestChildGivenOne", "FAIL", tc.says)
-			if strings.Contains(c.out, bodyRan) || (tc.name != "old" && strings.Contains(c.out, "does not take a value")) {
+			if strings.Contains(c.out, bodyRan) || (tc.name != "old" && strings.Contains(c.out, "KEPLOY_PROVEN")) {
 				t.Errorf("wrong failure\n%s", c.out)
 			}
 			wantCalls(t, a, "begin TestChildGivenOne", "given "+tc.name+"=v-1761609600123456789 @"+at(t, "one"), "end TestChildGivenOne failed")
