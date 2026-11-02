@@ -175,7 +175,7 @@ func TestAGivenOutsideAnOpenTestFails(t *testing.T) {
 		test, says string
 		calls      []string
 	}{
-		{"TestChildGivenNoLine", "keploy: TestChildGivenNoLine has no keploytest line, so it cannot give app; run keploy mock codemod go", nil},
+		{"TestChildGivenNoLine", "keploy: TestChildGivenNoLine has no keploytest line, so it cannot give app; make its first statement defer keploytest.T(t)(), or defer keploytest.TP(t)() when it calls keploytest.Parallel", nil},
 		{"TestChildGivenRawRun", "keploy: TestChildGivenRawRun/raw was started by t.Run, so it cannot give app; start it with keploytest.Run",
 			[]string{"begin TestChildGivenRawRun", "end TestChildGivenRawRun failed"}},
 		{"TestChildGivenBeforeParallel", "keploy: TestChildGivenBeforeParallel gives early before keploytest.Parallel, while it has not begun; give it after keploytest.Parallel(t)", nil},
@@ -185,6 +185,12 @@ func TestAGivenOutsideAnOpenTestFails(t *testing.T) {
 		c.want(t, tc.test, "FAIL", tc.says)
 		if strings.Contains(c.out, bodyRan) {
 			t.Errorf("%s went on past Given\n%s", tc.test, c.out)
+		}
+		// No keploy release has a codemod: a fix naming one is no fix. The
+		// check matches the lowercase word only, the one spelling every text
+		// that named the codemod used.
+		if strings.Contains(c.out, "codemod") {
+			t.Errorf("%s's failure names a codemod\n%s", tc.test, c.out)
 		}
 		wantCalls(t, a, tc.calls...)
 	}

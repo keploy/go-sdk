@@ -219,7 +219,7 @@ func (a *fakeAgent) serve(w http.ResponseWriter, r *http.Request) {
 			b, _ := json.Marshal(map[string]string{
 				"error":   "one_test_at_a_time",
 				"message": body.Name + " began while " + a.open + " was still open: two tests ran at once in one test process",
-				"remedy":  "run them one at a time: start parallel tests with keploytest.Parallel and subtests with keploytest.Run (keploy mock codemod go writes them); parallel test workers arrive in a later keploy release",
+				"remedy":  "run them one at a time: in Go, start parallel tests with keploytest.Parallel and subtests with keploytest.Run, which take turns; elsewhere, end each test before the next one begins; parallel test workers arrive in a later keploy release",
 			})
 			rep = reply{422, string(b)}
 		case scripted:
@@ -1607,7 +1607,7 @@ func TestTheGuardsFailTheTestWithTheFix(t *testing.T) {
 		{"TestChildGuardParallelInT", "keploy: TestChildGuardParallelInT calls keploytest.Parallel; make its first statement defer keploytest.TP(t)()", nil},
 		{"TestChildGuardTPWithoutParallel", "keploy: TestChildGuardTPWithoutParallel starts with keploytest.TP but ended without calling keploytest.Parallel", nil},
 		{"TestChildGuardNoFirstLine", "keploy: make TestChildGuardNoFirstLine's first statement defer keploytest.TP(t)()", nil},
-		{"TestChildGuardRunWithoutFirstLine", "keploy: TestChildGuardRunWithoutFirstLine has no keploytest line; run keploy mock codemod go", nil},
+		{"TestChildGuardRunWithoutFirstLine", "keploy: TestChildGuardRunWithoutFirstLine has no keploytest line; make its first statement defer keploytest.T(t)(), or defer keploytest.TP(t)() when it calls keploytest.Parallel", nil},
 		{"TestChildGuardRawRun", "keploy: TestChildGuardRawRun/x was started by t.Run; start it with keploytest.Run", nil},
 		{"TestChildGuardRawParallel", "keploy: TestChildGuardRawParallel/x calls t.Parallel() directly; use keploytest.Parallel(t)", nil},
 		{"TestChildGuardOtherGoroutine", `keploy: keploytest.Run(TestChildGuardOtherGoroutine, "x") from another goroutine; start subtests from the test's own goroutine`, nil},
@@ -1623,6 +1623,12 @@ func TestTheGuardsFailTheTestWithTheFix(t *testing.T) {
 			c.want(t, tc.test, "FAIL", tc.says)
 			if c.code != 1 {
 				t.Errorf("exit %d, want 1", c.code)
+			}
+			// No keploy release has a codemod: a fix naming one is no fix.
+			// The check matches the lowercase word only, the one spelling
+			// every text that named the codemod used.
+			if strings.Contains(c.out, "codemod") {
+				t.Errorf("%s's failure names a codemod\n%s", tc.test, c.out)
 			}
 		})
 	}
