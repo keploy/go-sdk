@@ -48,7 +48,7 @@ Package `github.com/keploy/go-sdk/v3/keploytest` joins a `go test` suite to
 them in CI, skips the tests listed in `keploy/<set>/verdicts.yaml` with their
 reason, and fails a test whose dependency calls changed.
 
-Every top-level test starts with one line (`keploy mock codemod go` writes it):
+Every top-level test starts with one line:
 
 ```go
 import "github.com/keploy/go-sdk/v3/keploytest"

@@ -169,7 +169,7 @@ func T(t *testing.T) func() {
 	st := enter(t, kindT)
 	open(t, st)
 	// The exit cleanup does the work; the deferred call is what keeps the
-	// line one statement that codemod can write and check.
+	// line one statement.
 	return func() {}
 }
 
@@ -201,6 +201,9 @@ func TP(t *testing.T) func() {
 	}
 }
 
+// noLineFix is what a test that has no keploytest line does: start with one.
+const noLineFix = "make its first statement defer keploytest.T(t)(), or defer keploytest.TP(t)() when it calls keploytest.Parallel"
+
 // Run replaces t.Run: it runs f as a subtest of t. With keploy, a subtest that
 // calls Parallel runs after its parent's body returns, one at a time in source
 // order. Without keploy, Run calls t.Run.
@@ -219,7 +222,7 @@ func Run(t *testing.T, name string, f func(t *testing.T)) bool {
 		if strings.Contains(t.Name(), "/") {
 			t.Errorf("keploy: %s was started by t.Run; start it with keploytest.Run", t.Name())
 		} else {
-			t.Errorf("keploy: %s has no keploytest line; run keploy mock codemod go", t.Name())
+			t.Errorf("keploy: %s has no keploytest line; "+noLineFix, t.Name())
 		}
 		return false
 	}

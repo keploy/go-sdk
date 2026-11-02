@@ -26,13 +26,11 @@
 //	}
 //
 // Subtests are started with Run instead of t.Run, and go parallel with
-// Parallel instead of t.Parallel. `keploy mock codemod go` writes all of this.
-// The line must be the test's first statement: it registers the test's exit
-// cleanup first, so that cleanup runs after every other cleanup of the test,
-// and keploy sees each test's whole run, cleanups included. A cleanup
-// registered above the line runs after the test has ended, outside it (for a
-// parallel test, while the next one runs); `keploy mock codemod go --check`
-// finds such tests.
+// Parallel instead of t.Parallel. The line must be the test's first
+// statement: it registers the test's exit cleanup first, so that cleanup runs
+// after every other cleanup of the test, and keploy sees each test's whole
+// run, cleanups included. A cleanup registered above the line runs after the
+// test has ended, outside it (for a parallel test, while the next one runs).
 //
 // # Inert without keploy
 //

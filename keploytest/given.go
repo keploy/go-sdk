@@ -99,7 +99,7 @@ func Given(t testing.TB, name, value string) string {
 	case st == nil && strings.Contains(tt.Name(), "/"):
 		t.Fatalf("keploy: %s was started by t.Run, so it cannot give %s; start it with keploytest.Run", tt.Name(), name)
 	case st == nil:
-		t.Fatalf("keploy: %s has no keploytest line, so it cannot give %s; run keploy mock codemod go", tt.Name(), name)
+		t.Fatalf("keploy: %s has no keploytest line, so it cannot give %s; "+noLineFix, tt.Name(), name)
 	case st.gid != gid():
 		// t.Fatal ends only the goroutine that calls it.
 		t.Errorf("keploy: keploytest.Given(%s) from another goroutine of %s; give values from the test's own goroutine", name, tt.Name())
