@@ -1624,6 +1624,12 @@ func TestTheGuardsFailTheTestWithTheFix(t *testing.T) {
 			if c.code != 1 {
 				t.Errorf("exit %d, want 1", c.code)
 			}
+			// No keploy release has a codemod: a fix naming one is no fix.
+			// The check matches the lowercase word only, the one spelling
+			// every text that named the codemod used.
+			if strings.Contains(c.out, "codemod") {
+				t.Errorf("%s's failure names a codemod\n%s", tc.test, c.out)
+			}
 		})
 	}
 }

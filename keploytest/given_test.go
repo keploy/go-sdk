@@ -186,6 +186,12 @@ func TestAGivenOutsideAnOpenTestFails(t *testing.T) {
 		if strings.Contains(c.out, bodyRan) {
 			t.Errorf("%s went on past Given\n%s", tc.test, c.out)
 		}
+		// No keploy release has a codemod: a fix naming one is no fix. The
+		// check matches the lowercase word only, the one spelling every text
+		// that named the codemod used.
+		if strings.Contains(c.out, "codemod") {
+			t.Errorf("%s's failure names a codemod\n%s", tc.test, c.out)
+		}
 		wantCalls(t, a, tc.calls...)
 	}
 
