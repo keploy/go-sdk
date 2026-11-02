@@ -79,6 +79,14 @@ type coverageRecord struct {
 	// the first record of each test set only, since it is the same for every
 	// test of one build.
 	BuildBlocks map[string][]codeBlock `json:"buildBlocks,omitempty"`
+	// ModulePath, VCSRevision and VCSModified say where the build's code is,
+	// so Keploy can show the app's own code next to its coverage: the main
+	// module's path, and the git commit the binary was built from and whether
+	// its tree had changes (only when Go stamped them: a build in a git
+	// checkout, -buildvcs not false). They go with BuildBlocks.
+	ModulePath  string `json:"modulePath,omitempty"`
+	VCSRevision string `json:"vcsRevision,omitempty"`
+	VCSModified bool   `json:"vcsModified,omitempty"`
 	// Reason says why the test has no coverage; nil when coverage was taken.
 	Reason *noCoverageReason `json:"reason,omitempty"`
 }
@@ -296,6 +304,8 @@ func buildRecord(testID string, processed processedCoverage, hash string, withTa
 	}
 	if withTable {
 		record.BuildBlocks = processed.codeBlocks(false)
+		src := appBuildSource()
+		record.ModulePath, record.VCSRevision, record.VCSModified = src.modulePath, src.revision, src.modified
 	}
 	return record
 }
@@ -539,6 +549,39 @@ func parseProfiles(path, modulePath string) (processedCoverage, error) {
 	}
 
 	return processedCoverage{executedLines: executedLinesByFile, blocks: blocksByFile}, nil
+}
+
+// buildSource is where a build's code is: its main module's path, and the git
+// commit Go stamped in the binary with whether the tree had changes.
+type buildSource struct {
+	modulePath string
+	revision   string
+	modified   bool
+}
+
+// appBuildSource is the running binary's buildSource.
+func appBuildSource() buildSource {
+	info, _ := debug.ReadBuildInfo()
+	return sourceOf(info)
+}
+
+// sourceOf reads info's main module path and its git stamps: vcs.revision
+// and vcs.modified, taken only when vcs is git (a binary built outside a git
+// checkout, or with -buildvcs=false, has none).
+func sourceOf(info *debug.BuildInfo) buildSource {
+	if info == nil {
+		return buildSource{}
+	}
+	src := buildSource{modulePath: info.Main.Path}
+	settings := map[string]string{}
+	for _, kv := range info.Settings {
+		settings[kv.Key] = kv.Value
+	}
+	if settings["vcs"] == "git" {
+		src.revision = settings["vcs.revision"]
+		src.modified = settings["vcs.modified"] == "true"
+	}
+	return src
 }
 
 // mainModulePath returns the app's main module path from its build info, e.g.

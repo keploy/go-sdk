@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"runtime"
 	"runtime/coverage"
+	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
@@ -343,6 +344,17 @@ func TestBuildRecord(t *testing.T) {
 		if !step.wantTable && rec.BuildBlocks != nil {
 			t.Errorf("%s: BuildBlocks = %v, want none after the set's first test", step.testID, rec.BuildBlocks)
 		}
+		// Where the code is goes with the table, and only with it.
+		wantModule := ""
+		if step.wantTable {
+			wantModule = "github.com/keploy/go-sdk/v3"
+		}
+		if rec.ModulePath != wantModule {
+			t.Errorf("%s: ModulePath = %q, want %q", step.testID, rec.ModulePath, wantModule)
+		}
+		if !step.wantTable && (rec.VCSRevision != "" || rec.VCSModified) {
+			t.Errorf("%s: git stamps %q/%v sent without the table", step.testID, rec.VCSRevision, rec.VCSModified)
+		}
 		if withTable {
 			// What reportCoverage does once the record is sent.
 			buildTableSent, buildTableSentForSet = true, set
@@ -376,6 +388,46 @@ func TestCoverageRecordWithBlocks(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := `{"id":"set-0/test-1","executedLinesByFile":{"a.go":[3]},"executedBlocksByFile":{"a.go":[[3,2,3,20,1]]}}`
+	if string(data) != want {
+		t.Fatalf("record JSON = %s, want %s", data, want)
+	}
+}
+
+// The module path always, the git stamps only when Go stamped a git build.
+func TestSourceOf(t *testing.T) {
+	main := debug.Module{Path: "example.com/app"}
+	for _, tc := range []struct {
+		name     string
+		settings []debug.BuildSetting
+		want     buildSource
+	}{
+		{"git build, clean", []debug.BuildSetting{{Key: "vcs", Value: "git"}, {Key: "vcs.revision", Value: "abc123"}, {Key: "vcs.modified", Value: "false"}},
+			buildSource{modulePath: "example.com/app", revision: "abc123"}},
+		{"git build, changed tree", []debug.BuildSetting{{Key: "vcs", Value: "git"}, {Key: "vcs.revision", Value: "abc123"}, {Key: "vcs.modified", Value: "true"}},
+			buildSource{modulePath: "example.com/app", revision: "abc123", modified: true}},
+		{"no stamps (-buildvcs=false, no checkout)", nil, buildSource{modulePath: "example.com/app"}},
+		{"another VCS", []debug.BuildSetting{{Key: "vcs", Value: "hg"}, {Key: "vcs.revision", Value: "f00d"}, {Key: "vcs.modified", Value: "true"}},
+			buildSource{modulePath: "example.com/app"}},
+	} {
+		if got := sourceOf(&debug.BuildInfo{Main: main, Settings: tc.settings}); got != tc.want {
+			t.Errorf("%s: sourceOf = %+v, want %+v", tc.name, got, tc.want)
+		}
+	}
+	if got := sourceOf(nil); got != (buildSource{}) {
+		t.Errorf("sourceOf(nil) = %+v, want nothing", got)
+	}
+}
+
+// The where-the-code-is fields go out next to the table, under these names.
+func TestCoverageRecordWithBuildSource(t *testing.T) {
+	data, err := json.Marshal(coverageRecord{
+		ID: "set-0/test-1", ExecutedLinesByFile: map[string][]int{},
+		ModulePath: "example.com/app", VCSRevision: "abc123", VCSModified: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"id":"set-0/test-1","executedLinesByFile":{},"modulePath":"example.com/app","vcsRevision":"abc123","vcsModified":true}`
 	if string(data) != want {
 		t.Fatalf("record JSON = %s, want %s", data, want)
 	}
