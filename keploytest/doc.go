@@ -134,7 +134,10 @@
 // it has no answer for against the test that begins next. Run refuses to start
 // a subtest there.
 //
-// Parallel test workers (several test binaries at once) arrive in a later
-// release of keploy; until then run go test with -p 1, which the package
-// requires.
+// Each test binary claims keploy's run as one of the test workers go test
+// runs at once (its -p). keploy's agent takes them all, keeping each one's
+// calls in its own tests by the processes that made them, or refuses the run
+// whole before any test runs, naming why: a keploy that runs one test
+// worker at a time, keploy mock record, and a replay that moves the run's
+// one clock to each test's recorded begin take -p 1 only.
 package keploytest

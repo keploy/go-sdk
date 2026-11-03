@@ -122,6 +122,10 @@ run and `Given`'s among them, with a plain 404, which fails the test with
 Without keploy (`KEPLOY_MOCK_AGENT` unset or `off`) the line does nothing and
 `Run`/`Parallel` are `t.Run`/`t.Parallel`. With keploy, each test binary claims
 keploy's run before its tests start, and one test runs at a time: parallel
-tests run in source order, each with its subtests and cleanups. Parallel test
-workers (several test binaries at once) arrive in a later keploy release; until
-then `go test` runs with `-p 1`, and the package refuses anything else.
+tests run in source order, each with its subtests and cleanups. Each test
+binary claims the run as one of the test workers `go test` runs at once (its
+`-p`). keploy's agent takes them all, keeping each one's calls in its own tests
+by the processes that made them, or refuses the run whole before any test runs,
+naming why: a keploy that runs one test worker at a time, `keploy mock record`,
+and a replay that moves the run's one clock to each test's recorded begin take
+`-p 1` only.

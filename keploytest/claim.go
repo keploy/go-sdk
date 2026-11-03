@@ -18,8 +18,9 @@ import (
 // package it imports; other imported packages that do not import keploytest
 // may initialize first, in import-path order), it claims the run for itself,
 // unless keploy's Go launcher claimed it for the binary before it started,
-// and refuses what keploy's first release cannot judge. A refusal fails
-// every test that has a keploytest line, with the fix.
+// as one of the test workers go test runs at once, and refuses what keploy
+// cannot judge. A refusal fails every test that has a keploytest line, with
+// the fix.
 
 // keployParallel is the -test.parallel the package gives the binary.
 // Parallel serializes parallel tests by tickets: each waiting test holds a
@@ -44,17 +45,20 @@ func claimRun(getenv func(string) string, args []string, pid, ppid int) joining 
 	_ = os.Setenv(envTestPID, self)
 	if strings.TrimSpace(getenv(envTestClaimed)) != self {
 		c := newClient(j.url, j.token)
-		if r := oneTestProcess(getenv, ppid); r != nil {
-			return refuseRun(c, r)
-		}
 		key, dir, err := packageKey(getenv(envProject))
 		if err != nil {
 			return refuse("%s", err.Error())
 		}
-		if err := c.claim(key, dir); err != nil {
+		w := goTestWorkers(getenv, ppid)
+		if err := c.claim(key, dir, w); err != nil {
 			var re *refusalError
 			if errors.As(err, &re) {
 				return refuseRun(c, &re.r)
+			}
+			if w.n > 1 {
+				// The agent's refusal names the count; say where it came
+				// from, which the test command may not spell out.
+				return refuse("%s; %s", err.Error(), w.said())
 			}
 			return refuse("%s", err.Error())
 		}
@@ -122,32 +126,42 @@ func realPath(p string) string {
 // procRoot is where the parent's command line is read; a var for tests.
 var procRoot = "/proc"
 
-// oneTestProcess refuses a go test that may run two test binaries at once:
-// keploy's first release judges one test process at a time, and cannot tell
-// two apart. It reads cmd/go's own configuration, never timing: the -p it
-// was given, else GOFLAGS' (the environment's, else go env -w's), else its
-// default (GOMAXPROCS). cmd/go is the binary's parent, or, under go test
-// -exec, the nearest go test among its ancestors. A binary no go test runs
-// (one a test binary starts, say) runs alone. It reads /proc: keploy's
-// first release runs the test command natively on Linux only.
-func oneTestProcess(getenv func(string) string, ppid int) *runRefusal {
+// workers is how many test processes the go test running this binary runs
+// at once (its -p), and where that number comes from; one, from nowhere,
+// for a binary no go test runs.
+type workers struct {
+	n    int
+	from string
+}
+
+// said is where the count comes from, as a refusal names it.
+func (w workers) said() string {
+	return fmt.Sprintf("go test runs up to %d test processes at once (%s), each a test worker of keploy's run", w.n, w.from)
+}
+
+// goTestWorkers is how many test binaries the go test running this one may
+// run at once: each claims keploy's run as one of that many test workers,
+// and keploy's agent takes the run, or refuses it whole, by that count,
+// never by how the binaries happen to overlap. It reads cmd/go's own
+// configuration, never timing: the -p it was given, else GOFLAGS' (the
+// environment's, else go env -w's), else its default (GOMAXPROCS). cmd/go
+// is the binary's parent, or, under go test -exec, the nearest go test
+// among its ancestors. A binary no go test runs (one a test binary starts,
+// say) runs alone. It reads /proc: keploy runs the test command natively
+// on Linux only.
+func goTestWorkers(getenv func(string) string, ppid int) workers {
 	args, direct, ok := ancestorGoTest(ppid)
 	if !ok || (!direct && !execs(args, getenv)) {
-		return nil
+		return workers{n: 1}
 	}
-	if p, from := effectiveP(args, getenv); p > 1 {
-		return &runRefusal{
-			Code:    codeOneTestProcess,
-			Message: fmt.Sprintf("keploy runs one test process at a time in this release, and go test runs up to %d at once (%s)", p, from),
-			Remedy:  "add -p 1 (go test -p 1 -json ./...); parallel test workers arrive in a later keploy release",
-		}
-	}
-	return nil
+	p, from := effectiveP(args, getenv)
+	return workers{n: p, from: from}
 }
 
 // codeOneTestProcess is the scope protocol's code for a second test process
 // in one keploy run: the agent refuses a second claim with it, and this
-// package a go test that would run one.
+// package a go test of more than one test process that a keploy agent
+// predating test workers took as the run's only one.
 const codeOneTestProcess = "one_test_process_at_a_time"
 
 // runRefusal is a refusal of the whole test process that this package makes

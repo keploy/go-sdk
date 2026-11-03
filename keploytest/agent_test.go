@@ -182,7 +182,7 @@ func TestAPlain404SaysKeployRunsWithoutTheProvenSwitch(t *testing.T) {
 		"(export KEPLOY_PROVEN=1 before keploy mock record or keploy mock replay), and a keploy of the same release as this keploy-go-sdk"
 	c := (&answering{status: 404, body: "404 page not found\n"}).serve(t)
 	for path, call := range map[string]func() error{
-		pathInstance: func() error { return c.claim("pkg", t.TempDir()) },
+		pathInstance: func() error { return c.claim("pkg", t.TempDir(), workers{n: 1}) },
 		pathBegin:    func() error { _, err := c.begin("TestX"); return err },
 		pathEnd:      func() error { _, err := c.end("TestX", outcomePassed); return err },
 		pathRefusal:  func() error { return c.refusal(runRefusal{Code: "x", Message: "m"}) },
@@ -280,12 +280,51 @@ func TestARedirectIsAnErrorAndIsNotFollowed(t *testing.T) {
 // recordings made on another.
 func TestAClaimWithAFrozenClockIsRefused(t *testing.T) {
 	a := &answering{status: 200, body: `{"v":1,"instance":"run"}`}
-	if err := a.serve(t).claim("orders", "/p/orders"); err != nil {
+	if err := a.serve(t).claim("orders", "/p/orders", workers{n: 1}); err != nil {
 		t.Fatalf("a run without a frozen clock: %v", err)
 	}
 	b := &answering{status: 200, body: `{"v":1,"instance":"run","timeFile":"/tmp/keploy-time"}`}
-	err := b.serve(t).claim("orders", "/p/orders")
+	err := b.serve(t).claim("orders", "/p/orders", workers{n: 1})
 	if err == nil || !strings.Contains(err.Error(), "freezes its tests' clock") || !strings.Contains(err.Error(), "keploy-go-exec <test binary> -test.v") {
 		t.Fatalf("got %v, want the frozen clock refused with the fix: start the binary through keploy's Go launcher", err)
+	}
+}
+
+// A claim says how many test processes go test runs at once. One of more
+// than one that the agent takes as a test worker (its instance a number) is
+// taken; one the agent takes as the run's only test process (instanceRun)
+// came to a keploy agent that reads no count and would refuse the next test
+// process while this one runs, so it is refused, with the fix, whatever go
+// test then schedules. A test process that runs alone is taken as before.
+func TestAClaimOfMoreThanOneWorkerTakenAsTheRunsOnlyProcessIsRefused(t *testing.T) {
+	four := workers{n: 4, from: "-p 4"}
+	for _, tc := range []struct {
+		name   string
+		w      workers
+		answer string
+		refuse string
+	}{
+		{"a worker of four", four, `{"v":1,"instance":"2"}`, ""},
+		{"four taken as the run's only one", four, `{"v":1,"instance":"run"}`,
+			"keploy: this keploy runs one test process at a time, and go test runs up to 4 test processes at once (-p 4), each a test worker of keploy's run: add -p 1 (go test -p 1 -json ./...), or use a keploy that runs test workers at once"},
+		{"one alone", workers{n: 1}, `{"v":1,"instance":"run"}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &answering{status: 200, body: tc.answer}
+			err := a.serve(t).claim("orders", "/p/orders", tc.w)
+			if got := a.sent["workers"]; got != float64(tc.w.n) {
+				t.Fatalf("sent workers %v, want %d", got, tc.w.n)
+			}
+			if tc.refuse == "" {
+				if err != nil {
+					t.Fatalf("refused: %v", err)
+				}
+				return
+			}
+			var re *refusalError
+			if !errors.As(err, &re) || re.r.Code != codeOneTestProcess || err.Error() != tc.refuse {
+				t.Fatalf("got %v, want the refusal %q told to the agent", err, tc.refuse)
+			}
+		})
 	}
 }

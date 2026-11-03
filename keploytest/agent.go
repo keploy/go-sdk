@@ -55,8 +55,9 @@ type answer struct {
 	Status string `json:"status"`
 	Action string `json:"action"`
 	Reason string `json:"reason"`
-	// Instance is the claim's answer: the run itself in keploy's first
-	// release.
+	// Instance is the claim's answer: the run itself (instanceRun) for a
+	// test process that runs alone, the worker's keploy instance for one of
+	// more test workers.
 	Instance string `json:"instance"`
 	// TimeFile is the clock file the claim's test process must run on,
 	// empty when keploy's run is not frozen.
@@ -268,21 +269,40 @@ const pathInstance = "/agent/instance"
 
 // instanceReq is the body of POST /agent/instance: the test process claims
 // keploy's run. Key is its package directory relative to the project, and
-// Dir the directory itself. The agent reads which process calls from the
-// connection.
+// Dir the directory itself. Workers is how many test processes of the run
+// go test runs at once, this one among them: the agent takes each as a test
+// worker of its own, or refuses the count whole (too_many_workers). The
+// agent reads which process calls from the connection.
 type instanceReq struct {
-	Key string `json:"key"`
-	Dir string `json:"dir"`
+	Key     string `json:"key"`
+	Dir     string `json:"dir"`
+	Workers int    `json:"workers"`
 }
 
-// claim claims keploy's run for this test process, before any test runs.
-func (c *client) claim(key, dir string) error {
-	a, err := c.post(pathInstance, instanceReq{Key: key, Dir: dir})
+// instanceRun is the claim's answer for a test process that runs alone: the
+// instance is the run itself.
+const instanceRun = "run"
+
+// claim claims keploy's run for this test process, as one of w's test
+// workers, before any test runs.
+func (c *client) claim(key, dir string, w workers) error {
+	a, err := c.post(pathInstance, instanceReq{Key: key, Dir: dir, Workers: w.n})
 	if err != nil {
 		return err
 	}
 	if a.Instance == "" {
 		return fmt.Errorf("keploy: the keploy agent answered the claim of this test process without an instance")
+	}
+	if w.n > 1 && a.Instance == instanceRun {
+		// A keploy agent that predates test workers reads no count, and
+		// took this process as the run's only one: it would refuse the
+		// next test process go test starts while this one runs, so the
+		// run's outcome would hang on how go test happens to schedule them.
+		return &refusalError{runRefusal{
+			Code:    codeOneTestProcess,
+			Message: "this keploy runs one test process at a time, and " + w.said(),
+			Remedy:  "add -p 1 (go test -p 1 -json ./...), or use a keploy that runs test workers at once",
+		}}
 	}
 	if a.TimeFile != "" {
 		// The run's clock is frozen, and only keploy's Go launcher freezes a
