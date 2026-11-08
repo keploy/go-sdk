@@ -25,12 +25,13 @@ import (
 	"golang.org/x/tools/cover"
 )
 
-const (
-	// controlSocketPath is used by Keploy to send commands (START/END) to the app.
-	controlSocketPath = "/tmp/coverage_control.sock"
-	// dataSocketPath is used by the app to send coverage data back to Keploy.
-	dataSocketPath = "/tmp/coverage_data.sock"
-)
+// controlSocketPath is used by Keploy to send commands (START/END) to the app.
+// A variable for this package's tests, which set it before init binds it, so
+// they never bind the socket of an app running on the same machine.
+var controlSocketPath = "/tmp/coverage_control.sock"
+
+// dataSocketPath is used by the app to send coverage data back to Keploy.
+const dataSocketPath = "/tmp/coverage_data.sock"
 
 // The SDK's answers on the control socket: one line for every command it
 // reads, written before it closes the connection. ACK says it took the command:

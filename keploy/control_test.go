@@ -3,6 +3,7 @@ package keploy
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -18,6 +19,28 @@ import (
 // (TestControlSocketIsBoundBeforeMain).
 const dialAtMainEnv = "KEPLOY_GO_SDK_TEST_DIAL_AT_MAIN"
 
+// socketPathEnv is the control socket path a child of
+// TestControlSocketIsBoundBeforeMain binds: one its parent chose.
+const socketPathEnv = "KEPLOY_GO_SDK_TEST_CONTROL_SOCKET"
+
+// testSocketDir holds the control socket this test binary's init binds.
+// Package variables are set before any init runs, so init binds a path of
+// these tests' own, never /tmp/coverage_control.sock, which a
+// Keploy-instrumented app on the same machine may be serving. A child given
+// socketPathEnv binds that path, and this is "".
+var testSocketDir = func() string {
+	if p := os.Getenv(socketPathEnv); p != "" {
+		controlSocketPath = p
+		return ""
+	}
+	dir, err := os.MkdirTemp("", "kc")
+	if err != nil {
+		panic(err)
+	}
+	controlSocketPath = filepath.Join(dir, "c.sock")
+	return dir
+}()
+
 func TestMain(m *testing.M) {
 	if os.Getenv(dialAtMainEnv) == "1" {
 		c, err := net.Dial("unix", controlSocketPath)
@@ -28,7 +51,24 @@ func TestMain(m *testing.M) {
 		_ = c.Close()
 		os.Exit(0)
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	if testSocketDir != "" {
+		_ = os.RemoveAll(testSocketDir)
+	}
+	os.Exit(code)
+}
+
+// The tests' init bound the control socket at a path of their own, not the
+// path an app's init binds.
+func TestTheTestsBindAControlSocketOfTheirOwn(t *testing.T) {
+	if controlSocketPath == "/tmp/coverage_control.sock" || !strings.HasPrefix(controlSocketPath, testSocketDir+string(filepath.Separator)) {
+		t.Fatalf("init bound %s, want a path in %s", controlSocketPath, testSocketDir)
+	}
+	c, err := net.Dial("unix", controlSocketPath)
+	if err != nil {
+		t.Fatalf("init did not bind %s: %v", controlSocketPath, err)
+	}
+	_ = c.Close()
 }
 
 // TestControlSocketIsBoundBeforeMain runs this test binary again with one P, so
@@ -41,16 +81,14 @@ func TestControlSocketIsBoundBeforeMain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The children exit with their socket file still there.
-	t.Cleanup(func() { _ = os.Remove(controlSocketPath) })
+	// Each child binds a path of its own, which no one else serves, so it can
+	// reach no socket but one it bound itself. The children exit with their
+	// socket files still there.
+	dir := shortTempDir(t)
 	for i := 0; i < 5; i++ {
-		// This process's init bound the same path: remove it, so the child can
-		// reach no socket but one it bound itself.
-		if err := os.RemoveAll(controlSocketPath); err != nil {
-			t.Fatal(err)
-		}
 		cmd := exec.Command(exe, "-test.run=^$")
-		cmd.Env = append(os.Environ(), dialAtMainEnv+"=1", "GOMAXPROCS=1")
+		cmd.Env = append(os.Environ(), dialAtMainEnv+"=1", "GOMAXPROCS=1",
+			socketPathEnv+"="+filepath.Join(dir, fmt.Sprintf("c%d.sock", i)))
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("run %d: the control socket was not there when main ran (%v):\n%s", i, err, out)
@@ -58,17 +96,23 @@ func TestControlSocketIsBoundBeforeMain(t *testing.T) {
 	}
 }
 
-// startTestServer binds a control socket in a temp dir, as init does, and
-// returns its path.
-func startTestServer(t *testing.T) string {
+// shortTempDir is a temp dir removed when t ends, with a short path: a Unix
+// socket path is limited to about 100 bytes, which t.TempDir can pass.
+func shortTempDir(t *testing.T) string {
 	t.Helper()
-	// A short dir: a Unix socket path is limited to about 100 bytes.
 	dir, err := os.MkdirTemp("", "kc")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	path := filepath.Join(dir, "c.sock")
+	return dir
+}
+
+// startTestServer binds a control socket in a temp dir, as init does, and
+// returns its path.
+func startTestServer(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(shortTempDir(t), "c.sock")
 	// One P: a bind left on a goroutine would not have run by the dial below.
 	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(1))
 	if err := startControlServer(path); err != nil {
