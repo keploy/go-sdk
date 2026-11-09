@@ -25,11 +25,24 @@ import (
 	"golang.org/x/tools/cover"
 )
 
+// controlSocketPath is used by Keploy to send commands (START/END) to the app.
+// A variable for this package's tests, which set it before init binds it, so
+// they never bind the socket of an app running on the same machine.
+var controlSocketPath = "/tmp/coverage_control.sock"
+
+// dataSocketPath is used by the app to send coverage data back to Keploy.
+const dataSocketPath = "/tmp/coverage_data.sock"
+
+// The SDK's answers on the control socket: one line for every command it
+// reads, written before it closes the connection. ACK says it took the command:
+// it reset the counters for a START, or published the test's coverage for an
+// END. IGNORED says it read the command and did not take it. proto=2 says this
+// SDK answers every command it reads, so Keploy can read a close with no answer
+// as a command not taken: on macOS a connection closed with the command unread
+// gives Keploy no error, only the close.
 const (
-	// controlSocketPath is used by Keploy to send commands (START/END) to the app.
-	controlSocketPath = "/tmp/coverage_control.sock"
-	// dataSocketPath is used by the app to send coverage data back to Keploy.
-	dataSocketPath = "/tmp/coverage_data.sock"
+	replyTaken   = "ACK proto=2\n"
+	replyIgnored = "IGNORED proto=2\n"
 )
 
 var (
@@ -37,26 +50,40 @@ var (
 	controlMu sync.Mutex
 	// currentTestID stores the ID of the test case currently being recorded.
 	currentTestID string
+
+	// clearCounters and publishCoverage reset the counters at a START and
+	// publish a test's coverage at an END. Variables for tests.
+	clearCounters   = coverage.ClearCounters
+	publishCoverage = reportCoverage
 )
 
-// init starts the background control server that listens for commands from the Keploy test runner.
+// init binds the control socket before the app's main runs, so the socket is
+// there before the app can say it is ready: bound on a goroutine, the bind
+// could come after the app's port, and the first test's START then found no
+// one listening and its coverage was lost. It then serves Keploy's commands on
+// a goroutine.
 func init() {
-	go startControlServer()
+	if err := startControlServer(controlSocketPath); err != nil {
+		log.Printf("[Agent] 🚨 FATAL: Could not start control server: %v", err)
+	}
 }
 
-// startControlServer sets up and runs the Unix socket server that listens for commands from Keploy.
-func startControlServer() {
-	err := os.RemoveAll(controlSocketPath)
-	if err != nil {
-		log.Printf("[Agent] Failed to remove old control socket: %v", err)
-		return
+// startControlServer binds the Unix socket at path, replacing a stale one, and
+// returns once it is bound, serving Keploy's commands on it on a goroutine.
+func startControlServer(path string) error {
+	if err := os.RemoveAll(path); err != nil {
+		return fmt.Errorf("failed to remove old control socket: %w", err)
 	}
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		return err
+	}
+	go serveControl(ln)
+	return nil
+}
 
-	ln, err := net.Listen("unix", controlSocketPath)
-	if err != nil {
-		log.Printf("[Agent] 🚨 FATAL: Could not start control server: %v", err)
-		return
-	}
+// serveControl handles each connection on ln until ln is closed.
+func serveControl(ln net.Listener) {
 	defer func() {
 		if err := ln.Close(); err != nil {
 			log.Printf("[Agent] Error closing control server: %v", err)
@@ -76,7 +103,9 @@ func startControlServer() {
 	}
 }
 
-// handleControlRequest parses commands from Keploy ("START testID", "END testID")
+// handleControlRequest reads one command from Keploy ("START testID", "END
+// testID"), runs it, and answers it (replyTaken, replyIgnored) before it
+// closes the connection.
 func handleControlRequest(conn net.Conn) {
 	defer func() {
 		if err := conn.Close(); err != nil {
@@ -90,11 +119,22 @@ func handleControlRequest(conn net.Conn) {
 		return
 	}
 
+	reply := replyIgnored
+	if runCommand(strings.TrimSpace(command)) {
+		reply = replyTaken
+	}
+	if _, err := conn.Write([]byte(reply)); err != nil {
+		log.Printf("[Agent] Error answering %q to controller: %v", strings.TrimSpace(reply), err)
+	}
+}
+
+// runCommand runs one command and reports whether it took it.
+func runCommand(command string) bool {
 	// Split the command into action and testID
-	parts := strings.SplitN(strings.TrimSpace(command), " ", 2)
+	parts := strings.SplitN(command, " ", 2)
 	if len(parts) != 2 {
 		log.Printf("[Agent] Invalid command format: '%s'", command)
-		return
+		return false
 	}
 	action, id := parts[0], parts[1]
 
@@ -103,29 +143,30 @@ func handleControlRequest(conn net.Conn) {
 
 	switch action {
 	case "START":
-		currentTestID = id
-		err := coverage.ClearCounters()
-		if err != nil {
+		// A START whose counters were not reset is not taken: the test's
+		// coverage would hold the lines of the tests before it.
+		if err := clearCounters(); err != nil {
+			currentTestID = ""
 			log.Printf("[Agent] Error clearing coverage counters: %v", err)
+			return false
 		}
+		currentTestID = id
+		return true
 	case "END":
 		if currentTestID != id {
 			log.Printf("[Agent] Warning: Mismatched END command. Expected '%s', got '%s'. Skipping coverage report to avoid inconsistent state.", currentTestID, id)
-			return
-		}
-		err := reportCoverage(id)
-		if err != nil {
-			log.Printf("[Agent] 🚨 Error reporting coverage for test %s: %v", id, err)
+			return false
 		}
 		// Reset the currentTestID to an empty string to indicate that no test is currently being recorded.
 		currentTestID = ""
-
-		_, err = conn.Write([]byte("ACK\n"))
-		if err != nil {
-			log.Printf("[Agent] Error sending ACK to controller: %v", err)
+		if err := publishCoverage(id); err != nil {
+			log.Printf("[Agent] 🚨 Error reporting coverage for test %s: %v", id, err)
+			return false
 		}
+		return true
 	default:
 		log.Printf("[Agent] Unrecognized command: %s", action)
+		return false
 	}
 }
 
