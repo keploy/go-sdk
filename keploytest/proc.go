@@ -12,7 +12,8 @@ import (
 // package reads it to tell whether this process runs inside keploy's test
 // process (runsInside) and which go test runs it (oneTestProcess). On Linux
 // it is /proc; on Windows, the system's process snapshot and each process's
-// own command line (proc_windows.go). On a system it does not read (macOS),
+// own command line (proc_windows.go); on macOS, sysctl kern.proc.pid, for
+// each process's parent only (proc_darwin.go). On a system it does not read,
 // readsParents is false.
 
 // procRoot is where /proc is read; a var for tests.

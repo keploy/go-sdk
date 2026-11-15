@@ -1386,14 +1386,8 @@ func TestAMemberIsInert(t *testing.T) {
 // reports its tests. The marker here names a live process, so it is the
 // ancestry that counts, not the liveness.
 func TestAStaleMarkerStillClaims(t *testing.T) {
-	if _, err := os.Stat("/proc/self/stat"); err != nil {
-		t.Skip("no /proc on this system: the marker is taken at its word")
-	}
-	sib := exec.Command("sleep", "60")
-	if err := sib.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = sib.Process.Kill(); _ = sib.Wait() }()
+	readsTable(t)
+	sib := startIdle(t)
 	a := newFakeAgent(t)
 	env := a.active()
 	env[envTestPID] = strconv.Itoa(sib.Process.Pid)
@@ -1740,8 +1734,11 @@ func TestKeploysVariablesDefeatTheTestCache(t *testing.T) {
 			}
 		}
 		// The shared build cache: the module's directory is new, so no
-		// earlier run's result can be served for it.
-		cmd.Env = append(cmd.Env, "GOFLAGS=")
+		// earlier run's result can be served for it. The module requires
+		// only the SDK: -mod=mod lets go add what the SDK builds with on
+		// this system (golang.org/x/sys on macOS), as go get would, from
+		// the same module cache.
+		cmd.Env = append(cmd.Env, "GOFLAGS=-mod=mod")
 		cmd.Env = append(cmd.Env, env...)
 		out, err := cmd.CombinedOutput()
 		if err != nil {

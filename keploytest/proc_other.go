@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && !darwin
 
 package keploytest
 
@@ -8,8 +8,8 @@ import "os"
 const namesFoldCase = false
 
 // readsParents reports whether the package reads this system's process
-// table: Linux's /proc. Without it (macOS) the package cannot tell which
-// process runs inside which.
+// table: Linux's /proc. Without it the package cannot tell which process
+// runs inside which.
 func readsParents() bool {
 	_, err := os.Stat("/proc/self/stat")
 	return err == nil

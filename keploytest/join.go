@@ -99,8 +99,8 @@ func refuse(format string, args ...any) joining {
 // runsInside reports whether this process runs inside process pid: pid is
 // its parent, or an ancestor of it. It reads the parent chain from the
 // system's process table (procParent). On a system whose table the package
-// does not read (readsParents: macOS) it cannot tell, and takes the marker at
-// its word.
+// does not read (readsParents: one other than Linux, Windows and macOS) it
+// cannot tell, and takes the marker at its word.
 var runsInside = func(pid int) bool {
 	if !readsParents() {
 		return true

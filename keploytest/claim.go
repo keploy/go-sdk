@@ -139,9 +139,9 @@ func realPath(p string) string {
 // default (GOMAXPROCS). cmd/go is the binary's parent, or, under go test
 // -exec, the nearest go test among its ancestors. A binary no go test runs
 // (one a test binary starts, say) runs alone. It reads the system's process
-// table (procParent, procCmdline): on a system the package does not read, it
-// refuses nothing here, and keploy's agent refuses a second test process of
-// the run.
+// table (procParent, procCmdline): on a system whose command lines the
+// package does not read (macOS), it refuses nothing here, and keploy's agent
+// refuses a second test process of the run.
 func oneTestProcess(getenv func(string) string, ppid int) *runRefusal {
 	args, direct, ok := ancestorGoTest(ppid)
 	if !ok || (!direct && !execs(args, getenv)) {

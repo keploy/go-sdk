@@ -80,9 +80,21 @@ func init() {
 func readsTable(t *testing.T) {
 	t.Helper()
 	switch runtime.GOOS {
-	case "linux", "windows":
+	case "linux", "windows", "darwin":
 	default:
 		t.Skipf("the package reads no process table on %s", runtime.GOOS)
+	}
+}
+
+// readsCommandLines skips a row on a system whose command lines the package
+// does not read (macOS): there it reads no go test -p, and keploy's agent
+// refuses a second test process of the run.
+func readsCommandLines(t *testing.T) {
+	t.Helper()
+	switch runtime.GOOS {
+	case "linux", "windows":
+	default:
+		t.Skipf("the package reads no command line on %s", runtime.GOOS)
 	}
 }
 
@@ -124,7 +136,8 @@ func startIdle(t *testing.T) *exec.Cmd {
 
 // keploy's test process, which KEPLOY_TEST_PID names, is one this process
 // runs inside only when it is its parent or an ancestor, read from the
-// system's process table (Linux's /proc, Windows' process snapshot). A
+// system's process table (Linux's /proc, Windows' process snapshot, macOS's
+// sysctl kern.proc.pid). A
 // process this one started is neither: a marker naming it was inherited from
 // elsewhere, and the binary joins keploy's run as a test process of its own,
 // rather than run inert with its tests unjudged.
@@ -157,7 +170,7 @@ func TestAMarkerNamingAProcessItStartedJoins(t *testing.T) {
 // its name matched as the system matches file names (Go.exe is go.exe on
 // Windows).
 func TestTheGoTestAboveIsReadFromItsCommandLine(t *testing.T) {
-	readsTable(t)
+	readsCommandLines(t)
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -360,7 +373,8 @@ func TestNoConfigDirReadsNoGoEnvFile(t *testing.T) {
 
 // A process whose parent ended is not read as that parent's child: Windows
 // keeps the ended parent's pid in its record of the child, and may give the
-// pid to a later process; on Linux the child passes to another process.
+// pid to a later process; on Linux and macOS the child passes to another
+// process.
 func TestAProcessWhoseParentEndedIsNotItsChild(t *testing.T) {
 	readsTable(t)
 	self, err := os.Executable()
