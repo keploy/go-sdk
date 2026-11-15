@@ -96,13 +96,16 @@ func systemCmdline(pid int) ([]string, bool) {
 	return nil, false
 }
 
+// unicodeString is Windows' UNICODE_STRING: Length bytes of UTF-16 text at
+// Buffer.
+type unicodeString struct {
+	Length, MaximumLength uint16
+	Buffer                uintptr
+}
+
 // unicodeStringIn is the text of the UNICODE_STRING at the start of buf,
 // whose characters lie in buf itself.
 func unicodeStringIn(buf []byte) (string, bool) {
-	type unicodeString struct {
-		Length, MaximumLength uint16
-		Buffer                uintptr
-	}
 	if len(buf) < int(unsafe.Sizeof(unicodeString{})) {
 		return "", false
 	}

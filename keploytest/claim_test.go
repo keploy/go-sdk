@@ -55,6 +55,7 @@ func TestOneTestProcess(t *testing.T) {
 		{"-p after -args is the binary's", []string{"go", "test", "-p", "1", "./...", "-args", "-p", "8"}, "", ""},
 		{"-C before test", []string{"go", "-C", "/src", "test", "-p", "1", "./..."}, "", ""},
 		{"not go test", []string{"/bin/sh", "-c", "x"}, "", ""},
+		{"a program not named go", []string{"/usr/bin/gotest", "test", "-p", "4", "./..."}, "", ""},
 		{"go build", []string{"go", "build"}, "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

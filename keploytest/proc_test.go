@@ -17,10 +17,11 @@ import (
 // role before TestMain parses any flag, so a child started with go test's own
 // command line (test -p 4 ./...) plays its role and runs no test.
 const (
-	// envProcRole is the role: idle (wait, then exit), gocmd (this binary
-	// named go, with go test's command line: it starts the probe as cmd/go
-	// starts a test binary) or probe (print what the package reads of the go
-	// test above it).
+	// envProcRole is the role: idle (wait, then exit), spawner (start an
+	// idle child and exit before it), gocmd (this binary named go, with go
+	// test's command line: it starts the probe as cmd/go starts a test
+	// binary) or probe (print what the package reads of the go test above
+	// it).
 	envProcRole = "KEPLOYTEST_PROC_ROLE"
 	// envProcSelf is the test binary the gocmd role starts as the probe.
 	envProcSelf = "KEPLOYTEST_PROC_SELF"
@@ -32,6 +33,17 @@ func init() {
 		return
 	case "idle":
 		time.Sleep(2 * time.Minute)
+		os.Exit(0)
+	case "spawner":
+		// Start this binary as an idle child, with none of this process's
+		// output, say its pid and exit: the child outlives its parent.
+		c := exec.Command(os.Getenv(envProcSelf))
+		c.Env = append(os.Environ(), envProcRole+"=idle")
+		if err := c.Start(); err != nil {
+			fmt.Printf("SPAWN %v\n", err)
+			os.Exit(3)
+		}
+		fmt.Printf("CHILD %d\n", c.Process.Pid)
 		os.Exit(0)
 	case "gocmd":
 		c := exec.Command(os.Getenv(envProcSelf))
@@ -175,7 +187,7 @@ func copyExecutable(t *testing.T, from, to string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 	out, err := os.OpenFile(to, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 	if err != nil {
 		t.Fatal(err)
@@ -257,6 +269,7 @@ func TestSplitCommandLineReadsWhatAGoProgramReads(t *testing.T) {
 	}{
 		{`go test -p 4 ./...`, []string{"go", "test", "-p", "4", "./..."}},
 		{"  go\t test  ", []string{"go", "test"}},
+		{"a \nb", []string{"a", "\nb"}},
 		{`"C:\Program Files\Go\bin\go.exe" test`, []string{`C:\Program Files\Go\bin\go.exe`, "test"}},
 		{`a\\b c\d`, []string{`a\\b`, `c\d`}},
 		{`"a\\" b`, []string{`a\`, "b"}},
@@ -318,5 +331,91 @@ func TestUserConfigDirIsEachSystemsOwn(t *testing.T) {
 		if got := userConfigDir(tc.goos, vars(tc.env)); got != tc.want {
 			t.Errorf("%s %v: %q, want %q", tc.goos, tc.env, got, tc.want)
 		}
+	}
+}
+
+// With no config dir (the variable it needs unset), cmd/go reads no go env
+// file, and neither does the package: not go/env under the working
+// directory.
+func TestNoConfigDirReadsNoGoEnvFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "go"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go", "env"), []byte("GOFLAGS=-p=4\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(wd) })
+	if got := goEnvFile(vars(map[string]string{}), "GOFLAGS"); got != "" {
+		t.Fatalf("go env GOFLAGS read as %q with no config dir, want none", got)
+	}
+}
+
+// A process whose parent ended is not read as that parent's child: Windows
+// keeps the ended parent's pid in its record of the child, and may give the
+// pid to a later process; on Linux the child passes to another process.
+func TestAProcessWhoseParentEndedIsNotItsChild(t *testing.T) {
+	readsTable(t)
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sp := procChild(t, self, "spawner")
+	out, err := sp.Output()
+	var pid int
+	if _, serr := fmt.Sscanf(string(out), "CHILD %d", &pid); serr != nil || pid <= 0 {
+		t.Fatalf("no child pid from the spawner (%v): %q", err, out)
+	}
+	t.Cleanup(func() {
+		if p, err := os.FindProcess(pid); err == nil {
+			_ = p.Kill()
+			_ = p.Release()
+		}
+	})
+	if err != nil {
+		t.Fatalf("spawner: %v: %s", err, out)
+	}
+	if got, ok := procParent(pid); ok && got == sp.Process.Pid {
+		t.Fatalf("process %d is read as the child of %d, which ended", pid, got)
+	}
+}
+
+// A process that cannot read its own parent cannot tell what it runs
+// inside, so it runs inside none: a marker it holds is taken as one
+// inherited from elsewhere, and it joins keploy's run as a test process of
+// its own (judged) rather than run inert.
+func TestAProcessThatCannotReadItsParentRunsInsideNone(t *testing.T) {
+	readsTable(t)
+	was := procParent
+	procParent = func(int) (int, bool) { return 0, false }
+	t.Cleanup(func() { procParent = was })
+	if runsInside(os.Getppid()) {
+		t.Fatal("inside its parent, whose pid it could not read")
+	}
+}
+
+// A process with an empty command line (Windows lets a program start one) is
+// not cmd/go.
+func TestAnEmptyCommandLineIsNotGoTest(t *testing.T) {
+	was := procCmdline
+	procCmdline = func(int) ([]string, bool) { return nil, true }
+	t.Cleanup(func() { procCmdline = was })
+	args, ok := func() (args []string, ok bool) {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("an empty command line panics: %v", r)
+			}
+		}()
+		return parentGoTest(77)
+	}()
+	if ok {
+		t.Errorf("an empty command line is read as go test %q", args)
 	}
 }
