@@ -123,7 +123,8 @@ func packageKey(project string) (string, string, error) {
 // its directories that does, and the rest joined on: so it and a path that
 // exists are read on the same terms, a symlink in a directory both name
 // (macOS's /var, a Windows profile's short name) resolved in both. A path
-// none of whose directories resolves comes back absolute, as it is.
+// none of whose directories resolves comes back as it is (absolute, when
+// filepath.Abs can make it so).
 func realPath(p string) string {
 	if abs, err := filepath.Abs(p); err == nil {
 		p = abs
