@@ -1,6 +1,7 @@
 package keploytest
 
 import (
+	"fmt"
 	"testing"
 	"unicode/utf16"
 	"unsafe"
@@ -44,6 +45,74 @@ func TestUnicodeStringInReadsOnlyItsBuffer(t *testing.T) {
 		}()
 		if ok != tc.ok || got != tc.want {
 			t.Errorf("%s: %q, %v, want %q, %v", tc.name, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+// commandLineFrom reads a command line only from an answer of success that
+// holds a string in its buffer, and asks again only for more room.
+func TestCommandLineFromReadsOnlyASuccessHoldingItsString(t *testing.T) {
+	const accessDenied = 0xC0000022
+	hdr := int(unsafe.Sizeof(unicodeString{}))
+	// answer is one answer of the system: its status and the size it says
+	// the answer needs; with text, "go test -p 1" is put in the buffer as a
+	// UNICODE_STRING (its header at the start, its text after it).
+	type answer struct {
+		status uintptr
+		need   uint32
+		text   bool
+	}
+	put := func(buf []byte) {
+		u := utf16.Encode([]rune("go test -p 1"))
+		for i, c := range u {
+			buf[hdr+2*i], buf[hdr+2*i+1] = byte(c), byte(c>>8)
+		}
+		us := (*unicodeString)(unsafe.Pointer(&buf[0]))
+		us.Length, us.MaximumLength = uint16(2*len(u)), uint16(2*len(u))
+		us.Buffer = uintptr(unsafe.Pointer(&buf[hdr]))
+	}
+	mismatch := func(need uint32) answer { return answer{statusInfoLengthMismatch, need, false} }
+	for _, tc := range []struct {
+		name    string
+		answers []answer
+		want    []string
+		ok      bool
+		// sizes is the length of the buffer each question was asked with.
+		sizes []int
+	}{
+		{"a success holding the string", []answer{{0, 0, true}},
+			[]string{"go", "test", "-p", "1"}, true, []int{512}},
+		{"a status that is not success, the buffer holding a string", []answer{{accessDenied, 0, true}},
+			nil, false, []int{512}},
+		{"a success holding no string", []answer{{0, 0, false}},
+			nil, false, []int{512}},
+		{"a command line longer than the buffer, asked again with the room it needs",
+			[]answer{mismatch(2048), {0, 0, true}},
+			[]string{"go", "test", "-p", "1"}, true, []int{512, 2048}},
+		{"a mismatch asking for no more room than the buffer has", []answer{mismatch(100), {0, 0, true}},
+			nil, false, []int{512}},
+		{"four mismatches", []answer{mismatch(1024), mismatch(2048), mismatch(4096), mismatch(8192), {0, 0, true}},
+			nil, false, []int{512, 1024, 2048, 4096}},
+	} {
+		var sizes []int
+		got, ok := commandLineFrom(func(buf []byte, need *uint32) uintptr {
+			sizes = append(sizes, len(buf))
+			if len(sizes) > len(tc.answers) {
+				t.Errorf("%s: asked %d times, more than it was answered", tc.name, len(sizes))
+				return accessDenied
+			}
+			a := tc.answers[len(sizes)-1]
+			if a.text {
+				put(buf)
+			}
+			*need = a.need
+			return a.status
+		})
+		if ok != tc.ok || fmt.Sprintf("%q", got) != fmt.Sprintf("%q", tc.want) {
+			t.Errorf("%s: %q, %v; want %q, %v", tc.name, got, ok, tc.want, tc.ok)
+		}
+		if fmt.Sprint(sizes) != fmt.Sprint(tc.sizes) {
+			t.Errorf("%s: asked with buffers of %v bytes, want %v", tc.name, sizes, tc.sizes)
 		}
 	}
 }

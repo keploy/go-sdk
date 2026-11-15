@@ -78,13 +78,26 @@ func systemCmdline(pid int) ([]string, bool) {
 		return nil, false
 	}
 	defer syscall.CloseHandle(h)
-	// The answer is a UNICODE_STRING whose text follows it in the buffer. A
-	// command line longer than the buffer is answered with its size.
+	return commandLineFrom(func(buf []byte, need *uint32) uintptr {
+		st, _, _ := ntQueryInformationProcess.Call(uintptr(h), processCommandLineInformation,
+			uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)), uintptr(unsafe.Pointer(need)))
+		return st
+	})
+}
+
+// commandLineFrom is the command line query answers: query is
+// NtQueryInformationProcess for one process, answering a status, the answer
+// in buf, and the size the answer needs in need. The answer is a
+// UNICODE_STRING whose text follows it in buf. A command line longer than
+// buf is answered STATUS_INFO_LENGTH_MISMATCH with the larger size it needs,
+// and is asked again with that room, up to four times. Any other answer is
+// no command line: a status that is not success, a mismatch asking for no
+// more room than buf has, or a success that holds no string in buf.
+func commandLineFrom(query func(buf []byte, need *uint32) uintptr) ([]string, bool) {
 	buf := make([]byte, 512)
 	for tries := 0; tries < 4; tries++ {
 		var need uint32
-		st, _, _ := ntQueryInformationProcess.Call(uintptr(h), processCommandLineInformation,
-			uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)), uintptr(unsafe.Pointer(&need)))
+		st := query(buf, &need)
 		if st == statusInfoLengthMismatch && int(need) > len(buf) {
 			buf = make([]byte, need)
 			continue
