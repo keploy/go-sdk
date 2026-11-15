@@ -87,8 +87,13 @@ func procfsCmdline(pid int) ([]string, bool) {
 // system's ticks): Windows keeps a process's parent pid after that parent
 // exits, and may give the pid to a later process, which is not pid's parent.
 // A parent is the process that started pid, so it was created no later than
-// pid. Both times are read while the processes are open, so neither pid can
-// pass to another process meanwhile. Recorded 0 is no parent (the system's
+// pid. The recorded parent pid and the creation times are not read at one
+// instant: on Windows the snapshot answers the recorded pid, then each
+// process is opened in turn for its creation time, so a pid can pass to
+// another process in between. A parent pid reused that way names a process
+// created after pid, which is rejected as a parent the system does not
+// answer for, so every caller fails closed (not inside the run, not the
+// launcher's child, no go test above). Recorded 0 is no parent (the system's
 // first processes).
 func trueParent(pid, recorded int, created func(pid int) (int64, bool)) (int, bool) {
 	if recorded == 0 {
