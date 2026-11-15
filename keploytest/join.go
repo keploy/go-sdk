@@ -29,6 +29,16 @@ const (
 	// execs keeps, and so does the package once its own claim is taken. A
 	// binary whose pid it names claims nothing more.
 	envTestClaimed = "KEPLOY_TEST_CLAIMED"
+	// envTestLauncher names, on Windows, keploy's Go launcher that claimed
+	// the run for the test binary it started: "<pid>:<creation time>", the
+	// launcher's pid and its creation time in Windows' 100 ns ticks since
+	// 1601 (a FILETIME). Windows has no exec, so the launcher creates the
+	// binary as its child, suspended, claims the run for the child's pid,
+	// and only then lets it run. A binary whose parent is the process the
+	// marker names, created at that time, claims nothing more; one whose
+	// parent is any other process (a marker inherited from elsewhere, or a
+	// launcher's pid another process took since) claims the run itself.
+	envTestLauncher = "KEPLOY_TEST_LAUNCHER"
 )
 
 type mode int

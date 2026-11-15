@@ -439,3 +439,84 @@ func TestTheMarkersOfAClaimedAndOfARefusedBinary(t *testing.T) {
 		})
 	}
 }
+
+// standInLauncher stands in the process table for the launcher marker rows:
+// process 4242's parent as the table answers it, and each process's creation
+// time.
+func standInLauncher(t *testing.T, parent int, parentOK bool, created map[int]int64) {
+	t.Helper()
+	oldParent, oldCreated := procParent, procCreated
+	procParent = func(pid int) (int, bool) {
+		if pid != 4242 {
+			return 0, false
+		}
+		return parent, parentOK
+	}
+	procCreated = func(pid int) (int64, bool) {
+		c, ok := created[pid]
+		return c, ok
+	}
+	t.Cleanup(func() { procParent, procCreated = oldParent, oldCreated })
+}
+
+// On Windows keploy's Go launcher creates the test binary as its child,
+// claims the run for the child's pid and names itself, by pid and creation
+// time, in KEPLOY_TEST_LAUNCHER. Only the launcher's direct child, whose
+// parent is that process created at that time, takes the claim as its own;
+// a binary whose parent is any other process claims the run itself, so a
+// stale or reused marker never leaves it unjudged. Either way the marker is
+// gone from the processes it starts, and the run is marked as this pid's.
+func TestALauncherMarkerClaimsOnlyForItsDirectChild(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		marker   string
+		parent   int
+		parentOK bool
+		created  map[int]int64
+		claims   bool
+	}{
+		{"the launcher's child", "900:5555", 900, true, map[int]int64{900: 5555}, false},
+		{"a marker with spaces around it", " 900:5555\t", 900, true, map[int]int64{900: 5555}, false},
+		{"no marker", "", 900, true, map[int]int64{900: 5555}, true},
+		{"a launcher pid another process took", "900:5555", 900, true, map[int]int64{900: 6666}, true},
+		{"a launcher above the parent", "900:5555", 901, true, map[int]int64{900: 5555, 901: 7777}, true},
+		{"a parent the table did not answer for", "900:5555", 900, false, map[int]int64{900: 5555}, true},
+		{"a parent whose creation time is unread", "900:0", 900, true, map[int]int64{}, true},
+		{"a malformed marker", "900", 900, true, map[int]int64{900: 5555}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(envTestPID, "")
+			t.Setenv(envTestClaimed, "")
+			t.Setenv(envTestLauncher, "inherited")
+			keepParallel(t)
+			fakeProc(t, "77", "go", "test", "-p", "1", "./...")
+			standInLauncher(t, tc.parent, tc.parentOK, tc.created)
+			var mu sync.Mutex
+			var calls []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				calls = append(calls, r.URL.Path)
+				mu.Unlock()
+				_, _ = io.WriteString(w, `{"v":1,"instance":"run","timeFile":""}`)
+			}))
+			t.Cleanup(srv.Close)
+			env := map[string]string{envAgent: srv.URL, envToken: "tok", envProject: "/", envTestLauncher: tc.marker}
+			j := claimRun(func(k string) string { return env[k] }, []string{"x.test"}, 4242, 77)
+			if j.mode != active || j.url != srv.URL {
+				t.Fatalf("got %+v, want the run joined", j)
+			}
+			mu.Lock()
+			got := strings.Join(calls, " ")
+			mu.Unlock()
+			if want := map[bool]string{true: pathInstance, false: ""}[tc.claims]; got != want {
+				t.Fatalf("called the agent %q, want %q", got, want)
+			}
+			if v, ok := os.LookupEnv(envTestLauncher); ok {
+				t.Fatalf("KEPLOY_TEST_LAUNCHER=%q is left for the processes this one starts", v)
+			}
+			if os.Getenv(envTestPID) != "4242" || os.Getenv(envTestClaimed) != "4242" {
+				t.Fatalf("KEPLOY_TEST_PID=%q KEPLOY_TEST_CLAIMED=%q, want this pid in both", os.Getenv(envTestPID), os.Getenv(envTestClaimed))
+			}
+		})
+	}
+}

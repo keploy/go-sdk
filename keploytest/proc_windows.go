@@ -51,7 +51,12 @@ func snapshotParent(pid uint32) (int, bool) {
 	return 0, false
 }
 
-// creationTime is when process pid was created, in 100 ns ticks.
+// systemCreated is when process pid was created, as keploy's Go launcher
+// names itself in envTestLauncher.
+func systemCreated(pid int) (int64, bool) { return creationTime(pid) }
+
+// creationTime is when process pid was created, in 100 ns ticks since 1601
+// (the FILETIME GetProcessTimes answers).
 func creationTime(pid int) (int64, bool) {
 	h, err := syscall.OpenProcess(processQueryLimitedInformation, false, uint32(pid))
 	if err != nil {
@@ -62,7 +67,7 @@ func creationTime(pid int) (int64, bool) {
 	if err := syscall.GetProcessTimes(h, &created, &exited, &kernel, &user); err != nil {
 		return 0, false
 	}
-	return created.Nanoseconds() / 100, true
+	return int64(created.HighDateTime)<<32 | int64(created.LowDateTime), true
 }
 
 // systemCmdline is process pid's command line, as the process's own

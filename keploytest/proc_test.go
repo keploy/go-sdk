@@ -54,6 +54,9 @@ func init() {
 			os.Exit(3)
 		}
 		os.Exit(0)
+	case "launched":
+		fmt.Printf("LAUNCHED %v\n", launchedBy(os.Getenv(envTestLauncher), os.Getpid()))
+		os.Exit(0)
 	case "probe":
 		args, direct, ok := ancestorGoTest(os.Getppid())
 		fmt.Printf("PROBE ok=%v direct=%v args=%q\n", ok, direct, args)
@@ -431,5 +434,63 @@ func TestAnEmptyCommandLineIsNotGoTest(t *testing.T) {
 	}()
 	if ok {
 		t.Errorf("an empty command line is read as go test %q", args)
+	}
+}
+
+// A test binary is keploy's Go launcher's direct child, read from the
+// system's process table: on Windows, a child of this process whose marker
+// names this process by its pid and creation time takes the launcher's
+// claim; a marker naming this pid at another creation time (a pid another
+// process took since) or naming this process's own parent (a launcher above
+// the child's parent) does not. On Linux and macOS the launcher execs the
+// binary and names no parent, and no marker is taken.
+func TestALauncherMarkerNamesTheChildsOwnParent(t *testing.T) {
+	readsTable(t)
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	launched := func(marker string) string {
+		t.Helper()
+		c := procChild(t, self, "launched")
+		c.Env = append(c.Env, envTestLauncher+"="+marker)
+		out, err := c.Output()
+		if err != nil {
+			t.Fatalf("child: %v (%s)", err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	created, ok := procCreated(os.Getpid())
+	if runtime.GOOS != "windows" {
+		if ok {
+			t.Fatalf("read this process's creation time on %s, where the launcher execs the binary", runtime.GOOS)
+		}
+		if got := launched(launcherMarker(os.Getpid(), 0)); got != "LAUNCHED false" {
+			t.Fatalf("%s: the marker of its parent was taken on %s", got, runtime.GOOS)
+		}
+		return
+	}
+	if !ok {
+		t.Fatal("cannot read this process's creation time")
+	}
+	// The launcher names itself in Windows' own unit, a FILETIME: 100 ns
+	// ticks since 1601, which this process was created a moment before now.
+	if now := time.Now().UnixNano()/100 + 116444736000000000; created > now || created < now-int64(time.Hour/100) {
+		t.Fatalf("creation time %d is not a FILETIME of the last hour (now %d)", created, now)
+	}
+	parentCreated, ok := procCreated(os.Getppid())
+	if !ok {
+		t.Fatal("cannot read the creation time of this process's parent")
+	}
+	for _, tc := range []struct {
+		name, marker, want string
+	}{
+		{"this process", launcherMarker(os.Getpid(), created), "LAUNCHED true"},
+		{"this pid created at another time", launcherMarker(os.Getpid(), created+1), "LAUNCHED false"},
+		{"this process's parent", launcherMarker(os.Getppid(), parentCreated), "LAUNCHED false"},
+	} {
+		if got := launched(tc.marker); got != tc.want {
+			t.Errorf("%s (%s): %s, want %s", tc.name, tc.marker, got, tc.want)
+		}
 	}
 }

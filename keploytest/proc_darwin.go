@@ -47,3 +47,8 @@ func systemParent(pid int) (int, bool) {
 // go test -p there (oneTestProcess); keploy's agent refuses a second test
 // process of the run.
 func systemCmdline(int) ([]string, bool) { return nil, false }
+
+// systemCreated: on macOS keploy's Go launcher execs the test binary, which
+// keeps the claim the launcher made for its pid, so no launcher marker names
+// a parent there, and none is honored.
+func systemCreated(int) (int64, bool) { return 0, false }

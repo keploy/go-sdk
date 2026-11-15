@@ -25,7 +25,33 @@ var procRoot = "/proc"
 var (
 	procParent  = systemParent
 	procCmdline = systemCmdline
+	// procCreated is process pid's creation time, read where keploy's Go
+	// launcher starts the test binary as its child (Windows); elsewhere the
+	// launcher execs the binary, and none is read.
+	procCreated = systemCreated
 )
+
+// launcherMarker is the envTestLauncher value that names keploy's Go
+// launcher pid, created at created.
+func launcherMarker(pid int, created int64) string {
+	return strconv.Itoa(pid) + ":" + strconv.FormatInt(created, 10)
+}
+
+// launchedBy reports whether process pid is the direct child of the launcher
+// marker names (envTestLauncher): its parent, read from the system's process
+// table as the process that started pid (trueParent on Windows), is the
+// process the marker names, created at the time it names. A launcher's pid
+// another process took since has another creation time; a parent the table
+// does not answer for, or one whose creation time it does not, is no
+// launcher.
+func launchedBy(marker string, pid int) bool {
+	parent, ok := procParent(pid)
+	if !ok {
+		return false
+	}
+	created, ok := procCreated(parent)
+	return ok && marker == launcherMarker(parent, created)
+}
 
 // procfsParent is process pid's parent, from <procRoot>/<pid>/stat.
 func procfsParent(pid int) (int, bool) {

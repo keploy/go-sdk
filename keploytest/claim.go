@@ -41,7 +41,11 @@ func claimRun(getenv func(string) string, args []string, pid, ppid int) joining 
 	self := strconv.Itoa(pid)
 	// Processes this one starts are members of its run, refused or not.
 	_ = os.Setenv(envTestPID, self)
-	if strings.TrimSpace(getenv(envTestClaimed)) != self {
+	// The launcher marker is this process's only: a process it starts is a
+	// member, or claims for itself.
+	launcher := strings.TrimSpace(getenv(envTestLauncher))
+	_ = os.Unsetenv(envTestLauncher)
+	if strings.TrimSpace(getenv(envTestClaimed)) != self && !launchedBy(launcher, pid) {
 		c := newClient(j.url, j.token)
 		if r := oneTestProcess(getenv, ppid); r != nil {
 			return refuseRun(c, r)
@@ -57,15 +61,20 @@ func claimRun(getenv func(string) string, args []string, pid, ppid int) joining 
 			}
 			return refuse("%s", err.Error())
 		}
-		// The run is this pid's: an image it execs keeps it.
-		_ = os.Setenv(envTestClaimed, self)
 	}
-	// Otherwise the run is this process's already: keploy's Go launcher
-	// (keploy-go-exec, which keploy has go test run each test binary
-	// through) claimed it for this pid before it exec'd the binary, so before
+	// The run is this pid's: an image it execs keeps it.
+	_ = os.Setenv(envTestClaimed, self)
+	// Unless the package claimed it here, the run was this process's
+	// already: keploy's Go launcher (keploy-go-exec, which keploy has go test
+	// run each test binary through) claimed it for this pid before it exec'd
+	// the binary, so before
 	// any init ran, and froze the binary's clock and refused the go test
 	// keploy cannot judge; or this binary claimed it and exec'd itself again.
-	// The package claims nothing more, and checks the rest at the first test.
+	// On Windows, which has no exec, the launcher created the binary
+	// suspended, claimed the run for its pid and named itself in
+	// envTestLauncher: the binary is that launcher's direct child
+	// (launchedBy). The package claims nothing more, and checks the rest at
+	// the first test.
 	//
 	// The -test.parallel is set either way: the launcher passes its own on
 	// the command line, which the flag parse applies after this, and a binary
