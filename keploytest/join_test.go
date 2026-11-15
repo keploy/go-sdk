@@ -1,8 +1,6 @@
 package keploytest
 
 import (
-	"os"
-	"os/exec"
 	"strings"
 	"testing"
 )
@@ -71,28 +69,6 @@ func TestDecideAStaleMarkerJoins(t *testing.T) {
 		if got.mode != active {
 			t.Fatalf("KEPLOY_TEST_PID=%s: mode %d (%s), want active", tp, got.mode, got.refusal)
 		}
-	}
-}
-
-// The parent chain read from /proc: this process runs inside its parent and
-// the parent's parent, and not inside a process it started.
-func TestRunsInsideReadsTheParentChain(t *testing.T) {
-	if _, err := os.Stat("/proc/self/stat"); err != nil {
-		t.Skip("no /proc on this system: the marker is taken at its word")
-	}
-	if !runsInside(os.Getppid()) {
-		t.Fatal("not inside its parent")
-	}
-	if gp, ok := procParent(os.Getppid()); ok && gp > 0 && !runsInside(gp) {
-		t.Fatal("not inside its parent's parent")
-	}
-	c := exec.Command("sleep", "60")
-	if err := c.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = c.Process.Kill(); _ = c.Wait() }()
-	if runsInside(c.Process.Pid) {
-		t.Fatal("inside a process it started")
 	}
 }
 

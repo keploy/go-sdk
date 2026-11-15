@@ -15,6 +15,15 @@ import (
 	"testing"
 )
 
+// useProcTree has the package read the /proc tree at root as the process
+// table, on any system, until the test ends.
+func useProcTree(t *testing.T, root string) {
+	t.Helper()
+	oldRoot, oldParent, oldCmdline := procRoot, procParent, procCmdline
+	procRoot, procParent, procCmdline = root, procfsParent, procfsCmdline
+	t.Cleanup(func() { procRoot, procParent, procCmdline = oldRoot, oldParent, oldCmdline })
+}
+
 // fakeProc writes a /proc with process pid's command line.
 func fakeProc(t *testing.T, pid string, argv ...string) {
 	t.Helper()
@@ -25,9 +34,7 @@ func fakeProc(t *testing.T, pid string, argv ...string) {
 	if err := os.WriteFile(filepath.Join(root, pid, "cmdline"), []byte(strings.Join(argv, "\x00")+"\x00"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	old := procRoot
-	procRoot = root
-	t.Cleanup(func() { procRoot = old })
+	useProcTree(t, root)
 }
 
 // go test may run two test binaries at once unless -p is 1, from its command
@@ -108,9 +115,7 @@ func TestOneTestProcessFindsGoTestAboveAnExecWrapper(t *testing.T) {
 	// runs that other binary, not this one.
 	write(88, 99, "/tmp/go-build/parent.test", "-test.run=X")
 	write(99, 55, "go", "test", "-p", "4", "./...")
-	old := procRoot
-	procRoot = root
-	t.Cleanup(func() { procRoot = old })
+	useProcTree(t, root)
 	r := oneTestProcess(func(string) string { return "" }, 77)
 	if r == nil || !strings.Contains(r.text(), "-p 4") {
 		t.Fatalf("got %+v, want the -p 4 of the go test above the wrapper refused", r)

@@ -1,11 +1,9 @@
 package keploytest
 
 import (
-	"bytes"
 	"fmt"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -99,14 +97,18 @@ func refuse(format string, args ...any) joining {
 }
 
 // runsInside reports whether this process runs inside process pid: pid is
-// its parent, or an ancestor of it. It reads the parent chain from /proc;
-// without /proc (a system other than Linux) it cannot tell, and takes the
-// marker at its word.
+// its parent, or an ancestor of it. It reads the parent chain from the
+// system's process table (procParent). On a system whose table the package
+// does not read (readsParents: macOS) it cannot tell, and takes the marker at
+// its word.
 var runsInside = func(pid int) bool {
-	if _, err := os.Stat("/proc/self/stat"); err != nil {
+	if !readsParents() {
 		return true
 	}
-	p := os.Getppid()
+	p, ok := procParent(os.Getpid())
+	if !ok {
+		return false
+	}
 	for i := 0; i < 128 && p > 0; i++ {
 		if p == pid {
 			return true
@@ -118,24 +120,4 @@ var runsInside = func(pid int) bool {
 		p = next
 	}
 	return false
-}
-
-// procParent is process pid's parent, from /proc/<pid>/stat.
-func procParent(pid int) (int, bool) {
-	b, err := os.ReadFile(filepath.Join(procRoot, strconv.Itoa(pid), "stat"))
-	if err != nil {
-		return 0, false
-	}
-	// The command name (field 2) is parenthesised and may hold spaces and
-	// parentheses: the fields that follow come after its last ')'.
-	i := bytes.LastIndexByte(b, ')')
-	if i < 0 {
-		return 0, false
-	}
-	f := strings.Fields(string(b[i+1:]))
-	if len(f) < 2 {
-		return 0, false
-	}
-	ppid, err := strconv.Atoi(f[1])
-	return ppid, err == nil
 }

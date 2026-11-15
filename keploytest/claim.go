@@ -1,7 +1,6 @@
 package keploytest
 
 import (
-	"bytes"
 	"errors"
 	"flag"
 	"fmt"
@@ -119,17 +118,16 @@ func realPath(p string) string {
 	return p
 }
 
-// procRoot is where the parent's command line is read; a var for tests.
-var procRoot = "/proc"
-
 // oneTestProcess refuses a go test that may run two test binaries at once:
 // keploy's first release judges one test process at a time, and cannot tell
 // two apart. It reads cmd/go's own configuration, never timing: the -p it
 // was given, else GOFLAGS' (the environment's, else go env -w's), else its
 // default (GOMAXPROCS). cmd/go is the binary's parent, or, under go test
 // -exec, the nearest go test among its ancestors. A binary no go test runs
-// (one a test binary starts, say) runs alone. It reads /proc: keploy's
-// first release runs the test command natively on Linux only.
+// (one a test binary starts, say) runs alone. It reads the system's process
+// table (procParent, procCmdline): on a system the package does not read, it
+// refuses nothing here, and keploy's agent refuses a second test process of
+// the run.
 func oneTestProcess(getenv func(string) string, ppid int) *runRefusal {
 	args, direct, ok := ancestorGoTest(ppid)
 	if !ok || (!direct && !execs(args, getenv)) {
@@ -227,12 +225,8 @@ func execs(testArgs []string, getenv func(string) string) bool {
 // parentGoTest is the arguments after "test" of process ppid's command
 // line, when it is cmd/go running go test.
 func parentGoTest(ppid int) ([]string, bool) {
-	raw, err := os.ReadFile(filepath.Join(procRoot, strconv.Itoa(ppid), "cmdline"))
-	if err != nil || len(raw) == 0 {
-		return nil, false
-	}
-	argv := strings.Split(string(bytes.TrimRight(raw, "\x00")), "\x00")
-	if base := filepath.Base(argv[0]); base != "go" && base != "go.exe" {
+	argv, ok := procCmdline(ppid)
+	if !ok || len(argv) == 0 || !isGoCommand(filepath.Base(argv[0])) {
 		return nil, false
 	}
 	// cmd/go takes one flag before its subcommand: -C <dir>.
@@ -283,13 +277,9 @@ func goEnvFile(getenv func(string) string, key string) string {
 	case "off":
 		return ""
 	case "":
-		dir := getenv("XDG_CONFIG_HOME")
+		dir := userConfigDir(runtime.GOOS, getenv)
 		if dir == "" {
-			home := getenv("HOME")
-			if home == "" {
-				return ""
-			}
-			dir = filepath.Join(home, ".config")
+			return ""
 		}
 		path = filepath.Join(dir, "go", "env")
 	}
@@ -305,6 +295,29 @@ func goEnvFile(getenv func(string) string, key string) string {
 		}
 	}
 	return val
+}
+
+// userConfigDir is os.UserConfigDir on system goos, read through getenv
+// (cmd/go keeps its go env file there): %AppData% on Windows,
+// ~/Library/Application Support on macOS, else $XDG_CONFIG_HOME or
+// ~/.config; "" when the variable it needs is unset.
+func userConfigDir(goos string, getenv func(string) string) string {
+	switch goos {
+	case "windows":
+		return getenv("AppData")
+	case "darwin", "ios":
+		if home := getenv("HOME"); home != "" {
+			return filepath.Join(home, "Library", "Application Support")
+		}
+		return ""
+	}
+	if dir := getenv("XDG_CONFIG_HOME"); dir != "" {
+		return dir
+	}
+	if home := getenv("HOME"); home != "" {
+		return filepath.Join(home, ".config")
+	}
+	return ""
 }
 
 // lastP is the last -p in args. stopAtArgs ends the scan at -args, after
