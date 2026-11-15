@@ -2,6 +2,7 @@ package keploytest
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 )
 
@@ -150,6 +152,50 @@ func TestOneTestProcessReadsGoEnvW(t *testing.T) {
 		case tc.refuse != "" && (r == nil || !strings.Contains(r.text(), tc.refuse)):
 			t.Fatalf("%q: got %+v, want a refusal saying %q", tc.file, r, tc.refuse)
 		}
+	}
+}
+
+// lacksSymlinkPrivilege says err is Windows refusing os.Symlink to a user
+// who holds no SeCreateSymbolicLinkPrivilege (ERROR_PRIVILEGE_NOT_HELD,
+// 1314): a standard user, unless Developer Mode is on. Such a user can make
+// no symlink, so a row that needs one is not run; any other error is the
+// row's failure.
+func lacksSymlinkPrivilege(err error) bool {
+	var errno syscall.Errno
+	return runtime.GOOS == "windows" && errors.As(err, &errno) && errno == 1314
+}
+
+// A path that does not exist is resolved through the nearest of its
+// directories that does: a symlinked directory it names reads as the
+// directory it links to, as a path that exists does, and the missing rest is
+// joined on as it is. A path that exists is resolved whole.
+func TestRealPathResolvesAMissingPathThroughItsDirectories(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proj := filepath.Join(root, "proj")
+	if err := os.MkdirAll(filepath.Join(proj, "tests"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := realPath(filepath.Join(proj, "tests")); got != filepath.Join(proj, "tests") {
+		t.Errorf("an existing directory: %q, want %q", got, filepath.Join(proj, "tests"))
+	}
+	if got, want := realPath(filepath.Join(proj, "tests", "gone", "apps_test.go")), filepath.Join(proj, "tests", "gone", "apps_test.go"); got != want {
+		t.Errorf("a missing file in a missing directory: %q, want %q", got, want)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(proj, link); err != nil {
+		if lacksSymlinkPrivilege(err) {
+			t.Skipf("the symlink rows are not run: %v", err)
+		}
+		t.Fatal(err)
+	}
+	if got := realPath(link); got != proj {
+		t.Errorf("an existing symlink: %q, want %q", got, proj)
+	}
+	if got, want := realPath(filepath.Join(link, "tests", "gone", "apps_test.go")), filepath.Join(proj, "tests", "gone", "apps_test.go"); got != want {
+		t.Errorf("a missing file under a symlinked directory: %q, want %q", got, want)
 	}
 }
 

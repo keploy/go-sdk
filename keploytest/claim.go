@@ -108,14 +108,28 @@ func packageKey(project string) (string, string, error) {
 	return filepath.ToSlash(rel), dir, nil
 }
 
+// realPath is p made absolute with its symlinks resolved (on Windows, its
+// short names read long too). A path that does not exist, such as the source
+// file of a test binary built elsewhere, is resolved through the nearest of
+// its directories that does, and the rest joined on: so it and a path that
+// exists are read on the same terms, a symlink in a directory both name
+// (macOS's /var, a Windows profile's short name) resolved in both. A path
+// none of whose directories resolves comes back absolute, as it is.
 func realPath(p string) string {
 	if abs, err := filepath.Abs(p); err == nil {
 		p = abs
 	}
-	if r, err := filepath.EvalSymlinks(p); err == nil {
-		p = r
+	for dir, rest := p, ""; ; {
+		if r, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(r, rest)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return p
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
+		dir = parent
 	}
-	return p
 }
 
 // oneTestProcess refuses a go test that may run two test binaries at once:

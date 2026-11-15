@@ -1268,7 +1268,11 @@ func TestTheBinaryClaimsTheRunOnce(t *testing.T) {
 	dir := t.TempDir()
 	c := runChild(t, env, dir, "^TestChildBody2?$")
 	c.want(t, "TestChildBody", "PASS", bodyRan)
-	want := "claim " + strings.TrimPrefix(realPath(dir), "/") + " auth=Bearer tok"
+	// The fake agent's project is the file system's root ("/"): on Windows,
+	// the root of the directory's drive. The claim names the directory
+	// relative to it, with forward slashes on every system.
+	abs := realPath(dir)
+	want := "claim " + strings.TrimPrefix(filepath.ToSlash(strings.TrimPrefix(abs, filepath.VolumeName(abs))), "/") + " auth=Bearer tok"
 	if claims := a.claimed(); len(claims) != 1 || claims[0] != want {
 		t.Fatalf("claims %v, want [%s]: one, for the child's directory relative to the project (/)", claims, want)
 	}
