@@ -256,23 +256,31 @@ func TestGivenSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	proj := t.TempDir()
-	link := filepath.Join(t.TempDir(), "proj")
-	if err := os.Symlink(proj, link); err != nil {
-		t.Fatal(err)
-	}
 	long := "/" + strings.Repeat("d/", maxSource/2) + "x_test.go"
-	for _, tc := range []struct {
+	type row struct {
 		project, file string
 		want          string
-	}{
+	}
+	rows := []row{
 		{proj, filepath.Join(proj, "tests", "e2e", "apps_test.go"), "tests/e2e/apps_test.go:20"},
-		{link, filepath.Join(proj, "tests", "apps_test.go"), "tests/apps_test.go:20"},
 		{proj, filepath.Join(filepath.Dir(proj), "other", "apps_test.go"), filepath.ToSlash(filepath.Join(filepath.Dir(proj), "other", "apps_test.go")) + ":20"},
 		{proj, "github.com/acme/api/tests/apps_test.go", "github.com/acme/api/tests/apps_test.go:20"},
 		{"", filepath.Join(wd, "apps_test.go"), filepath.ToSlash(filepath.Join(wd, "apps_test.go")) + ":20"},
 		{proj, long, "x_test.go:20"},
 		{proj, "", ""},
-	} {
+	}
+	// A project named by a symlink to it, and a file named through one.
+	link := filepath.Join(t.TempDir(), "proj")
+	if err := os.Symlink(proj, link); err == nil {
+		rows = append(rows,
+			row{link, filepath.Join(proj, "tests", "apps_test.go"), "tests/apps_test.go:20"},
+			row{proj, filepath.Join(link, "tests", "apps_test.go"), "tests/apps_test.go:20"})
+	} else if lacksSymlinkPrivilege(err) {
+		t.Logf("the symlink rows are not run: %v", err)
+	} else {
+		t.Fatal(err)
+	}
+	for _, tc := range rows {
 		if got := givenSource(tc.project, tc.file, 20); got != tc.want {
 			t.Errorf("givenSource(%q, %q) = %q, want %q", tc.project, tc.file, got, tc.want)
 		}

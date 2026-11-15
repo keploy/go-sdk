@@ -59,7 +59,10 @@
 // call an init or TestMain makes is the binary's), freezes its clock, refuses
 // a go test that keploy's first release cannot judge, sets its -test.parallel
 // and names the binary's pid in KEPLOY_TEST_CLAIMED; the package then claims
-// nothing, and makes its checks at the first test. A run whose clock is frozen
+// nothing, and makes its checks at the first test. On Windows the launcher
+// starts the binary as its child and names itself (its pid and creation time)
+// in KEPLOY_TEST_LAUNCHER: a binary whose parent is not that process claims
+// the run itself. A run whose clock is frozen
 // refuses a test binary started without the launcher, which only the launcher
 // can freeze, and tells keploy's agent. Without the launcher, as a test binary
 // starts, before the test package's own init and TestMain run, the package

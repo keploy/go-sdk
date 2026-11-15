@@ -1,11 +1,9 @@
 package keploytest
 
 import (
-	"bytes"
 	"fmt"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,6 +29,16 @@ const (
 	// execs keeps, and so does the package once its own claim is taken. A
 	// binary whose pid it names claims nothing more.
 	envTestClaimed = "KEPLOY_TEST_CLAIMED"
+	// envTestLauncher names, on Windows, keploy's Go launcher that claimed
+	// the run for the test binary it started: "<pid>:<creation time>", the
+	// launcher's pid and its creation time in Windows' 100 ns ticks since
+	// 1601 (a FILETIME). Windows has no exec, so the launcher creates the
+	// binary as its child, suspended, claims the run for the child's pid,
+	// and only then lets it run. A binary whose parent is the process the
+	// marker names, created at that time, claims nothing more; one whose
+	// parent is any other process (a marker inherited from elsewhere, or a
+	// launcher's pid another process took since) claims the run itself.
+	envTestLauncher = "KEPLOY_TEST_LAUNCHER"
 )
 
 type mode int
@@ -99,14 +107,18 @@ func refuse(format string, args ...any) joining {
 }
 
 // runsInside reports whether this process runs inside process pid: pid is
-// its parent, or an ancestor of it. It reads the parent chain from /proc;
-// without /proc (a system other than Linux) it cannot tell, and takes the
-// marker at its word.
+// its parent, or an ancestor of it. It reads the parent chain from the
+// system's process table (procParent). On a system whose table the package
+// does not read (readsParents: one other than Linux, Windows and macOS) it
+// cannot tell, and takes the marker at its word.
 var runsInside = func(pid int) bool {
-	if _, err := os.Stat("/proc/self/stat"); err != nil {
+	if !readsParents() {
 		return true
 	}
-	p := os.Getppid()
+	p, ok := procParent(os.Getpid())
+	if !ok {
+		return false
+	}
 	for i := 0; i < 128 && p > 0; i++ {
 		if p == pid {
 			return true
@@ -118,24 +130,4 @@ var runsInside = func(pid int) bool {
 		p = next
 	}
 	return false
-}
-
-// procParent is process pid's parent, from /proc/<pid>/stat.
-func procParent(pid int) (int, bool) {
-	b, err := os.ReadFile(filepath.Join(procRoot, strconv.Itoa(pid), "stat"))
-	if err != nil {
-		return 0, false
-	}
-	// The command name (field 2) is parenthesised and may hold spaces and
-	// parentheses: the fields that follow come after its last ')'.
-	i := bytes.LastIndexByte(b, ')')
-	if i < 0 {
-		return 0, false
-	}
-	f := strings.Fields(string(b[i+1:]))
-	if len(f) < 2 {
-		return 0, false
-	}
-	ppid, err := strconv.Atoi(f[1])
-	return ppid, err == nil
 }

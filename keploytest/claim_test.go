@@ -2,6 +2,7 @@ package keploytest
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -12,8 +13,18 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 )
+
+// useProcTree has the package read the /proc tree at root as the process
+// table, on any system, until the test ends.
+func useProcTree(t *testing.T, root string) {
+	t.Helper()
+	oldRoot, oldParent, oldCmdline := procRoot, procParent, procCmdline
+	procRoot, procParent, procCmdline = root, procfsParent, procfsCmdline
+	t.Cleanup(func() { procRoot, procParent, procCmdline = oldRoot, oldParent, oldCmdline })
+}
 
 // fakeProc writes a /proc with process pid's command line.
 func fakeProc(t *testing.T, pid string, argv ...string) {
@@ -25,9 +36,7 @@ func fakeProc(t *testing.T, pid string, argv ...string) {
 	if err := os.WriteFile(filepath.Join(root, pid, "cmdline"), []byte(strings.Join(argv, "\x00")+"\x00"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	old := procRoot
-	procRoot = root
-	t.Cleanup(func() { procRoot = old })
+	useProcTree(t, root)
 }
 
 // go test may run two test binaries at once unless -p is 1, from its command
@@ -48,6 +57,7 @@ func TestOneTestProcess(t *testing.T) {
 		{"-p after -args is the binary's", []string{"go", "test", "-p", "1", "./...", "-args", "-p", "8"}, "", ""},
 		{"-C before test", []string{"go", "-C", "/src", "test", "-p", "1", "./..."}, "", ""},
 		{"not go test", []string{"/bin/sh", "-c", "x"}, "", ""},
+		{"a program not named go", []string{"/usr/bin/gotest", "test", "-p", "4", "./..."}, "", ""},
 		{"go build", []string{"go", "build"}, "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -108,9 +118,7 @@ func TestOneTestProcessFindsGoTestAboveAnExecWrapper(t *testing.T) {
 	// runs that other binary, not this one.
 	write(88, 99, "/tmp/go-build/parent.test", "-test.run=X")
 	write(99, 55, "go", "test", "-p", "4", "./...")
-	old := procRoot
-	procRoot = root
-	t.Cleanup(func() { procRoot = old })
+	useProcTree(t, root)
 	r := oneTestProcess(func(string) string { return "" }, 77)
 	if r == nil || !strings.Contains(r.text(), "-p 4") {
 		t.Fatalf("got %+v, want the -p 4 of the go test above the wrapper refused", r)
@@ -144,6 +152,50 @@ func TestOneTestProcessReadsGoEnvW(t *testing.T) {
 		case tc.refuse != "" && (r == nil || !strings.Contains(r.text(), tc.refuse)):
 			t.Fatalf("%q: got %+v, want a refusal saying %q", tc.file, r, tc.refuse)
 		}
+	}
+}
+
+// lacksSymlinkPrivilege says err is Windows refusing os.Symlink to a user
+// who holds no SeCreateSymbolicLinkPrivilege (ERROR_PRIVILEGE_NOT_HELD,
+// 1314): a standard user, unless Developer Mode is on. Such a user can make
+// no symlink, so a row that needs one is not run; any other error is the
+// row's failure.
+func lacksSymlinkPrivilege(err error) bool {
+	var errno syscall.Errno
+	return runtime.GOOS == "windows" && errors.As(err, &errno) && errno == 1314
+}
+
+// A path that does not exist is resolved through the nearest of its
+// directories that does: a symlinked directory it names reads as the
+// directory it links to, as a path that exists does, and the missing rest is
+// joined on as it is. A path that exists is resolved whole.
+func TestRealPathResolvesAMissingPathThroughItsDirectories(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proj := filepath.Join(root, "proj")
+	if err := os.MkdirAll(filepath.Join(proj, "tests"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := realPath(filepath.Join(proj, "tests")); got != filepath.Join(proj, "tests") {
+		t.Errorf("an existing directory: %q, want %q", got, filepath.Join(proj, "tests"))
+	}
+	if got, want := realPath(filepath.Join(proj, "tests", "gone", "apps_test.go")), filepath.Join(proj, "tests", "gone", "apps_test.go"); got != want {
+		t.Errorf("a missing file in a missing directory: %q, want %q", got, want)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(proj, link); err != nil {
+		if lacksSymlinkPrivilege(err) {
+			t.Skipf("the symlink rows are not run: %v", err)
+		}
+		t.Fatal(err)
+	}
+	if got := realPath(link); got != proj {
+		t.Errorf("an existing symlink: %q, want %q", got, proj)
+	}
+	if got, want := realPath(filepath.Join(link, "tests", "gone", "apps_test.go")), filepath.Join(proj, "tests", "gone", "apps_test.go"); got != want {
+		t.Errorf("a missing file under a symlinked directory: %q, want %q", got, want)
 	}
 }
 
@@ -383,6 +435,87 @@ func TestTheMarkersOfAClaimedAndOfARefusedBinary(t *testing.T) {
 			}
 			if tc.joinedAs == refused && (sent["code"] != "clock_not_frozen" || !strings.Contains(fmt.Sprint(sent["remedy"]), "keploy-go-exec <test binary> -test.v")) {
 				t.Fatalf("told the agent %v", sent)
+			}
+		})
+	}
+}
+
+// standInLauncher stands in the process table for the launcher marker rows:
+// process 4242's parent as the table answers it, and each process's creation
+// time.
+func standInLauncher(t *testing.T, parent int, parentOK bool, created map[int]int64) {
+	t.Helper()
+	oldParent, oldCreated := procParent, procCreated
+	procParent = func(pid int) (int, bool) {
+		if pid != 4242 {
+			return 0, false
+		}
+		return parent, parentOK
+	}
+	procCreated = func(pid int) (int64, bool) {
+		c, ok := created[pid]
+		return c, ok
+	}
+	t.Cleanup(func() { procParent, procCreated = oldParent, oldCreated })
+}
+
+// On Windows keploy's Go launcher creates the test binary as its child,
+// claims the run for the child's pid and names itself, by pid and creation
+// time, in KEPLOY_TEST_LAUNCHER. Only the launcher's direct child, whose
+// parent is that process created at that time, takes the claim as its own;
+// a binary whose parent is any other process claims the run itself, so a
+// stale or reused marker never leaves it unjudged. Either way the marker is
+// gone from the processes it starts, and the run is marked as this pid's.
+func TestALauncherMarkerClaimsOnlyForItsDirectChild(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		marker   string
+		parent   int
+		parentOK bool
+		created  map[int]int64
+		claims   bool
+	}{
+		{"the launcher's child", "900:5555", 900, true, map[int]int64{900: 5555}, false},
+		{"a marker with spaces around it", " 900:5555\t", 900, true, map[int]int64{900: 5555}, false},
+		{"no marker", "", 900, true, map[int]int64{900: 5555}, true},
+		{"a launcher pid another process took", "900:5555", 900, true, map[int]int64{900: 6666}, true},
+		{"a launcher above the parent", "900:5555", 901, true, map[int]int64{900: 5555, 901: 7777}, true},
+		{"a parent the table did not answer for", "900:5555", 900, false, map[int]int64{900: 5555}, true},
+		{"a parent whose creation time is unread", "900:0", 900, true, map[int]int64{}, true},
+		{"a malformed marker", "900", 900, true, map[int]int64{900: 5555}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(envTestPID, "")
+			t.Setenv(envTestClaimed, "")
+			t.Setenv(envTestLauncher, "inherited")
+			keepParallel(t)
+			fakeProc(t, "77", "go", "test", "-p", "1", "./...")
+			standInLauncher(t, tc.parent, tc.parentOK, tc.created)
+			var mu sync.Mutex
+			var calls []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				calls = append(calls, r.URL.Path)
+				mu.Unlock()
+				_, _ = io.WriteString(w, `{"v":1,"instance":"run","timeFile":""}`)
+			}))
+			t.Cleanup(srv.Close)
+			env := map[string]string{envAgent: srv.URL, envToken: "tok", envProject: "/", envTestLauncher: tc.marker}
+			j := claimRun(func(k string) string { return env[k] }, []string{"x.test"}, 4242, 77)
+			if j.mode != active || j.url != srv.URL {
+				t.Fatalf("got %+v, want the run joined", j)
+			}
+			mu.Lock()
+			got := strings.Join(calls, " ")
+			mu.Unlock()
+			if want := map[bool]string{true: pathInstance, false: ""}[tc.claims]; got != want {
+				t.Fatalf("called the agent %q, want %q", got, want)
+			}
+			if v, ok := os.LookupEnv(envTestLauncher); ok {
+				t.Fatalf("KEPLOY_TEST_LAUNCHER=%q is left for the processes this one starts", v)
+			}
+			if os.Getenv(envTestPID) != "4242" || os.Getenv(envTestClaimed) != "4242" {
+				t.Fatalf("KEPLOY_TEST_PID=%q KEPLOY_TEST_CLAIMED=%q, want this pid in both", os.Getenv(envTestPID), os.Getenv(envTestClaimed))
 			}
 		})
 	}

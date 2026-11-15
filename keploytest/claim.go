@@ -1,7 +1,6 @@
 package keploytest
 
 import (
-	"bytes"
 	"errors"
 	"flag"
 	"fmt"
@@ -42,7 +41,11 @@ func claimRun(getenv func(string) string, args []string, pid, ppid int) joining 
 	self := strconv.Itoa(pid)
 	// Processes this one starts are members of its run, refused or not.
 	_ = os.Setenv(envTestPID, self)
-	if strings.TrimSpace(getenv(envTestClaimed)) != self {
+	// The launcher marker is this process's only: a process it starts is a
+	// member, or claims for itself.
+	launcher := strings.TrimSpace(getenv(envTestLauncher))
+	_ = os.Unsetenv(envTestLauncher)
+	if strings.TrimSpace(getenv(envTestClaimed)) != self && !launchedBy(launcher, pid) {
 		c := newClient(j.url, j.token)
 		if r := oneTestProcess(getenv, ppid); r != nil {
 			return refuseRun(c, r)
@@ -58,15 +61,20 @@ func claimRun(getenv func(string) string, args []string, pid, ppid int) joining 
 			}
 			return refuse("%s", err.Error())
 		}
-		// The run is this pid's: an image it execs keeps it.
-		_ = os.Setenv(envTestClaimed, self)
 	}
-	// Otherwise the run is this process's already: keploy's Go launcher
-	// (keploy-go-exec, which keploy has go test run each test binary
-	// through) claimed it for this pid before it exec'd the binary, so before
+	// The run is this pid's: an image it execs keeps it.
+	_ = os.Setenv(envTestClaimed, self)
+	// Unless the package claimed it here, the run was this process's
+	// already: keploy's Go launcher (keploy-go-exec, which keploy has go test
+	// run each test binary through) claimed it for this pid before it exec'd
+	// the binary, so before
 	// any init ran, and froze the binary's clock and refused the go test
 	// keploy cannot judge; or this binary claimed it and exec'd itself again.
-	// The package claims nothing more, and checks the rest at the first test.
+	// On Windows, which has no exec, the launcher created the binary
+	// suspended, claimed the run for its pid and named itself in
+	// envTestLauncher: the binary is that launcher's direct child
+	// (launchedBy). The package claims nothing more, and checks the rest at
+	// the first test.
 	//
 	// The -test.parallel is set either way: the launcher passes its own on
 	// the command line, which the flag parse applies after this, and a binary
@@ -109,18 +117,30 @@ func packageKey(project string) (string, string, error) {
 	return filepath.ToSlash(rel), dir, nil
 }
 
+// realPath is p made absolute with its symlinks resolved (on Windows, its
+// short names read long too). A path that does not exist, such as the source
+// file of a test binary built elsewhere, is resolved through the nearest of
+// its directories that does, and the rest joined on: so it and a path that
+// exists are read on the same terms, a symlink in a directory both name
+// (macOS's /var, a Windows profile's short name) resolved in both. A path
+// none of whose directories resolves comes back as it is (absolute, when
+// filepath.Abs can make it so).
 func realPath(p string) string {
 	if abs, err := filepath.Abs(p); err == nil {
 		p = abs
 	}
-	if r, err := filepath.EvalSymlinks(p); err == nil {
-		p = r
+	for dir, rest := p, ""; ; {
+		if r, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(r, rest)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return p
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
+		dir = parent
 	}
-	return p
 }
-
-// procRoot is where the parent's command line is read; a var for tests.
-var procRoot = "/proc"
 
 // oneTestProcess refuses a go test that may run two test binaries at once:
 // keploy's first release judges one test process at a time, and cannot tell
@@ -128,8 +148,10 @@ var procRoot = "/proc"
 // was given, else GOFLAGS' (the environment's, else go env -w's), else its
 // default (GOMAXPROCS). cmd/go is the binary's parent, or, under go test
 // -exec, the nearest go test among its ancestors. A binary no go test runs
-// (one a test binary starts, say) runs alone. It reads /proc: keploy's
-// first release runs the test command natively on Linux only.
+// (one a test binary starts, say) runs alone. It reads the system's process
+// table (procParent, procCmdline): on a system whose command lines the
+// package does not read (macOS), it refuses nothing here, and keploy's agent
+// refuses a second test process of the run.
 func oneTestProcess(getenv func(string) string, ppid int) *runRefusal {
 	args, direct, ok := ancestorGoTest(ppid)
 	if !ok || (!direct && !execs(args, getenv)) {
@@ -227,12 +249,8 @@ func execs(testArgs []string, getenv func(string) string) bool {
 // parentGoTest is the arguments after "test" of process ppid's command
 // line, when it is cmd/go running go test.
 func parentGoTest(ppid int) ([]string, bool) {
-	raw, err := os.ReadFile(filepath.Join(procRoot, strconv.Itoa(ppid), "cmdline"))
-	if err != nil || len(raw) == 0 {
-		return nil, false
-	}
-	argv := strings.Split(string(bytes.TrimRight(raw, "\x00")), "\x00")
-	if base := filepath.Base(argv[0]); base != "go" && base != "go.exe" {
+	argv, ok := procCmdline(ppid)
+	if !ok || len(argv) == 0 || !isGoCommand(filepath.Base(argv[0])) {
 		return nil, false
 	}
 	// cmd/go takes one flag before its subcommand: -C <dir>.
@@ -283,13 +301,9 @@ func goEnvFile(getenv func(string) string, key string) string {
 	case "off":
 		return ""
 	case "":
-		dir := getenv("XDG_CONFIG_HOME")
+		dir := userConfigDir(runtime.GOOS, getenv)
 		if dir == "" {
-			home := getenv("HOME")
-			if home == "" {
-				return ""
-			}
-			dir = filepath.Join(home, ".config")
+			return ""
 		}
 		path = filepath.Join(dir, "go", "env")
 	}
@@ -305,6 +319,29 @@ func goEnvFile(getenv func(string) string, key string) string {
 		}
 	}
 	return val
+}
+
+// userConfigDir is os.UserConfigDir on system goos, read through getenv
+// (cmd/go keeps its go env file there): %AppData% on Windows,
+// ~/Library/Application Support on macOS, else $XDG_CONFIG_HOME or
+// ~/.config; "" when the variable it needs is unset.
+func userConfigDir(goos string, getenv func(string) string) string {
+	switch goos {
+	case "windows":
+		return getenv("AppData")
+	case "darwin", "ios":
+		if home := getenv("HOME"); home != "" {
+			return filepath.Join(home, "Library", "Application Support")
+		}
+		return ""
+	}
+	if dir := getenv("XDG_CONFIG_HOME"); dir != "" {
+		return dir
+	}
+	if home := getenv("HOME"); home != "" {
+		return filepath.Join(home, ".config")
+	}
+	return ""
 }
 
 // lastP is the last -p in args. stopAtArgs ends the scan at -args, after
