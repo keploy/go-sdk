@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -220,19 +221,20 @@ type instanceReq struct {
 	Dir string `json:"dir"`
 }
 
-// claim claims keploy's run for this test process, before any test runs.
-func (c *client) claim(key, dir string) error {
+// claim claims keploy's run for this test process, before any test runs,
+// and returns the clock file the process must run on ("" when the run is
+// not frozen).
+func (c *client) claim(key, dir string) (string, error) {
 	a, err := c.post(pathInstance, instanceReq{Key: key, Dir: dir})
 	if err != nil {
-		return err
+		return "", err
 	}
 	if a.Instance == "" {
-		return fmt.Errorf("keploy: the keploy agent answered the claim of this test process without an instance")
+		return "", fmt.Errorf("keploy: the keploy agent answered the claim of this test process without an instance")
 	}
-	if a.TimeFile != "" {
-		// A frozen clock this package cannot apply would let the tests run
-		// on the real one, against recordings made on another.
-		return fmt.Errorf("keploy: this keploy run gives its tests a frozen clock, which this version of keploytest cannot apply; upgrade github.com/keploy/go-sdk")
+	if a.TimeFile != "" && !filepath.IsAbs(a.TimeFile) {
+		// Each process would look for it in its own working directory.
+		return "", fmt.Errorf("keploy: the keploy agent answered the claim of this test process with the clock file %q, which is not an absolute path", a.TimeFile)
 	}
-	return nil
+	return a.TimeFile, nil
 }

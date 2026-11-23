@@ -16,8 +16,10 @@ import (
 // package's own init and TestMain run (they come after the init of every
 // package it imports; other imported packages that do not import keploytest
 // may initialize first, in import-path order), it claims the run for itself,
-// and refuses what keploy's first release cannot judge. A refusal fails
-// every test that has a keploytest line, with the fix.
+// exports the clock file the claim answers with, and refuses what keploy's
+// first release cannot judge. A binary whose claim was made before it
+// started (keploy-go-exec claims for it and execs it) does not claim again.
+// A refusal fails every test that has a keploytest line, with the fix.
 
 // keployParallel is the -test.parallel the package gives the binary.
 // Parallel serializes parallel tests by tickets: each waiting test holds a
@@ -42,18 +44,47 @@ func claimRun(getenv func(string) string, args []string, pid, ppid int) joining 
 	if err := oneTestProcess(getenv, ppid); err != nil {
 		return refuse("%s", err.Error())
 	}
-	key, dir, err := packageKey(getenv(envProject))
-	if err != nil {
-		return refuse("%s", err.Error())
-	}
-	if err := newClient(j.url, j.token).claim(key, dir); err != nil {
-		return refuse("%s", err.Error())
+	if !j.inherited {
+		if err := claimFor(j, getenv); err != nil {
+			return refuse("%s", err.Error())
+		}
 	}
 	testing.Init()
 	if f := flag.Lookup("test.parallel"); f != nil {
 		_ = f.Value.Set(strconv.Itoa(keployParallel))
 	}
 	return j
+}
+
+// claimFor claims keploy's run for this process, with its package directory
+// relative to the project as the key, and exports the clock file the claim
+// answers with into the process's real environment (release1-cut §2.2 MUST
+// 2): every process it starts inherits it, and keploy's clock shim
+// (LD_PRELOAD), in a process that loads it, reads the run's clock from it.
+// Go programs do not load the shim. A claim answered without one leaves the
+// environment as it is: the agent does not freeze the run itself, and a value
+// keploy gave the command stays the command's (keploy mock replay points it
+// at its own clock shim's file while today's agent answers the claim without
+// one; removing it would put every process the tests start on the real
+// clock).
+func claimFor(j joining, getenv func(string) string) error {
+	key, dir, err := packageKey(getenv(envProject))
+	if err != nil {
+		return err
+	}
+	timeFile, err := newClient(j.url, j.token).claim(key, dir)
+	if err != nil {
+		return err
+	}
+	if timeFile == "" {
+		return nil
+	}
+	if err := os.Setenv(envTimeFile, timeFile); err != nil {
+		// Its tests would run on the real clock, against recordings made on
+		// the run's.
+		return fmt.Errorf("keploy: the clock file keploy's claim answered with (%q) cannot be exported as %s: %v", timeFile, envTimeFile, err)
+	}
+	return nil
 }
 
 // listing reports whether the binary was asked to list its tests

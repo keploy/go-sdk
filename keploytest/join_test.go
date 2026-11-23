@@ -96,14 +96,23 @@ func TestRunsInsideReadsTheParentChain(t *testing.T) {
 	}
 }
 
-func TestDecideTheTestProcessIsActive(t *testing.T) {
+// A marker naming this very process means the run was claimed for it before
+// it started (keploy-go-exec claims, exports its own pid and execs the
+// binary, which keeps it): the process is the test process, and does not
+// claim again. It needs no project, which only the claim's key is built from.
+func TestDecideAMarkerNamingThisProcessIsAnInheritedClaim(t *testing.T) {
 	got := decide(vars(map[string]string{
 		envAgent:   "http://127.0.0.1:16789/",
-		envTestPID: "7",
+		envTestPID: " 7 ",
 		envToken:   "tok",
 	}), 7)
-	want := joining{mode: active, url: "http://127.0.0.1:16789", token: "tok"}
+	want := joining{mode: active, url: "http://127.0.0.1:16789", token: "tok", inherited: true}
 	if got != want {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	// Without a marker the process claims for itself.
+	got = decide(vars(map[string]string{envAgent: "http://127.0.0.1:16789/", envToken: "tok"}), 7)
+	if want.inherited = false; got != want {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
 }

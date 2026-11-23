@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"flag"
 	"os"
-	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -63,6 +62,12 @@ type tstate struct {
 	began bool
 	// paralleled: Parallel was called for the test.
 	paralleled bool
+	// finished: package testing takes the test as finished, as its first
+	// line's deferred call (T, TP) or Run's deferred call saw (noteEnd), or
+	// as open knows before it skips or fails the test: its function returned
+	// normally, or its own FailNow or SkipNow ended it. A Goexit in one of
+	// its cleanups then does not end the process, whatever called it.
+	finished bool
 	// q is the queue whose ticket the test holds, nil when it holds none.
 	q *queue
 }
@@ -119,27 +124,6 @@ func waitNoLoose() {
 	}
 }
 
-// testingState is package testing's own record of t: whether it called
-// t.Parallel (common.isParallel), and whether its function finished, by
-// returning or through its own FailNow or SkipNow (common.finished). ok is
-// false when this Go's testing has no such fields, and joinTop then refuses
-// the run; TestTestingState pins them on every Go the package is tested
-// with. Read only from t's own goroutine, which wrote them, or after testing
-// has synchronized with it. finished is read without testing's lock, which
-// only a misuse can race with (a goroutine of the test's own calling
-// t.SkipNow while its cleanups run).
-func testingState(t *testing.T) (parallel, finished, ok bool) {
-	c := reflect.ValueOf(t).Elem().FieldByName("common")
-	if !c.IsValid() {
-		return false, false, false
-	}
-	p, f := c.FieldByName("isParallel"), c.FieldByName("finished")
-	if !p.IsValid() || !f.IsValid() || p.Kind() != reflect.Bool || f.Kind() != reflect.Bool {
-		return false, false, false
-	}
-	return p.Bool(), f.Bool(), true
-}
-
 // gid is the id of the calling goroutine.
 func gid() uint64 {
 	var b [64]byte
@@ -168,9 +152,34 @@ func T(t *testing.T) func() {
 	}
 	st := enter(t, kindT)
 	open(t, st)
-	// The exit cleanup does the work; the deferred call is what keeps the
-	// line one statement that codemod can write and check.
-	return func() {}
+	// The exit cleanup does the work. The deferred call keeps the line one
+	// statement that codemod can write and check, and, as the function's
+	// first deferred call, runs last of them: it sees how the function ended.
+	return func() { noteEnd(t, st) }
+}
+
+// noteEnd records whether package testing takes the test as finished, and
+// reports whether its function returned normally (no panic and no Goexit is
+// under way). It runs as the test function's last deferred call (the first
+// line's), or as Run's deferred call around the subtest's function, so
+// nothing of the function runs after it. The test is finished when its
+// function returned normally, or when package testing's Goexit ended it and
+// it is failed or skipped: its own FailNow fails it and its own SkipNow
+// skips it before marking it finished. Another test's FailNow or SkipNow
+// leaves it neither, unless it had already failed.
+func noteEnd(t *testing.T, st *tstate) bool {
+	how := howEnding()
+	if how == endNormal || (how == endFinished && (t.Failed() || t.Skipped())) {
+		markFinished(st)
+	}
+	return how == endNormal
+}
+
+// markFinished records that package testing takes the test as finished.
+func markFinished(st *tstate) {
+	mu.Lock()
+	st.finished = true
+	mu.Unlock()
 }
 
 // TP is the first statement of a top-level test that calls Parallel:
@@ -188,15 +197,17 @@ func TP(t *testing.T) func() {
 	st := enter(t, kindTP)
 	return func() {
 		t.Helper()
-		if howEnding() != endNormal {
+		if !noteEnd(t, st) {
 			return
 		}
 		mu.Lock()
 		p := st.paralleled
 		mu.Unlock()
-		if raw, _, _ := testingState(t); !p && !t.Skipped() && !t.Failed() && !raw {
+		if !p && !t.Skipped() && !t.Failed() {
+			// Also a test that called t.Parallel() in place of Parallel: it
+			// never began, and ran outside the turns.
 			t.Errorf("keploy: %s starts with keploytest.TP but ended without calling keploytest.Parallel; "+
-				"call keploytest.Parallel(t) on every path through it, or start it with keploytest.T", t.Name())
+				"call keploytest.Parallel(t), not t.Parallel(), on every path through it, or start it with keploytest.T", t.Name())
 		}
 	}
 }
@@ -249,6 +260,9 @@ func Run(t *testing.T, name string, f func(t *testing.T)) bool {
 		child, cst = c, s
 		mu.Unlock()
 		defer done.Store(true)
+		// This function is the subtest's own: how it ends is how the
+		// subtest ends.
+		defer noteEnd(c, s)
 		f(c)
 	})
 	mu.Lock()
@@ -342,33 +356,11 @@ func joinTop(t *testing.T, line string) bool {
 	if strings.Contains(t.Name(), "/") {
 		t.Fatalf("keploy: keploytest.%s is the first statement of a top-level test, and %s is a subtest; start subtests with keploytest.Run", line, t.Name())
 	}
-	par, _, ok := testingState(t)
-	if !ok {
-		t.Fatalf("keploy: this Go (%s) changed package testing in a way this keploytest cannot read (whether a test went parallel or finished); upgrade github.com/keploy/go-sdk", runtime.Version())
-	}
-	if par {
-		t.Fatalf("keploy: %s calls t.Parallel() before keploytest.%s; make defer keploytest.TP(t)() its first statement and call keploytest.Parallel(t) in place of t.Parallel()", t.Name(), line)
-	}
 	mu.Lock()
 	_, twice := state[t]
-	var blocker *testing.T
-	for lt := range loose {
-		// In the sequential phase a loose T test other than this one is a
-		// paused one that called t.Parallel() itself, while open: this
-		// test cannot begin until it ends. (It wrote isParallel before it
-		// paused, and package testing ran this test after that.)
-		if st := state[lt]; st != nil && st.kind == kindT && st.began {
-			if p, _, _ := testingState(lt); p {
-				blocker = lt
-			}
-		}
-	}
 	mu.Unlock()
 	if twice {
 		t.Fatalf("keploy: %s calls keploytest.T or keploytest.TP twice", t.Name())
-	}
-	if blocker != nil && line == "T" {
-		t.Fatalf("keploy: %s cannot begin: %s called t.Parallel() directly and is still open; fix %s (start it with defer keploytest.TP(t)() and call keploytest.Parallel(t))", t.Name(), blocker.Name(), blocker.Name())
 	}
 	return true
 }
@@ -422,6 +414,10 @@ func open(t *testing.T, st *tstate) {
 	t.Helper()
 	a, err := agent().begin(t.Name())
 	if err != nil {
+		// Its own FailNow, from its own goroutine (T's line, or Parallel
+		// after its goroutine check): testing takes it as finished. T's
+		// deferred call is not registered yet, so it cannot see that.
+		markFinished(st)
 		t.Fatal(err.Error())
 	}
 	if a.Action == actionSkip {
@@ -429,6 +425,7 @@ func open(t *testing.T, st *tstate) {
 		if reason == "" {
 			reason = "keploy: quarantined in verdicts.yaml (the agent gave no reason)"
 		}
+		markFinished(st)
 		t.Skip(reason)
 	}
 	mu.Lock()
@@ -444,15 +441,19 @@ const (
 	// t.FailNow or t.SkipNow (t.Fatal, t.Skip), or t.Run aborting a parent
 	// whose subtest called FailNow on the parent's t. Go reports the test
 	// and the run goes on, even when that Goexit ended a panic, except
-	// when a parallel test calls FailNow on an ancestor's t: Go then ends
-	// the process, and exit tells that case apart by testing's own record.
+	// when another test's t ended a top-level or parallel test (a parallel
+	// subtest calling FailNow on its parent's t): Go then ends the process
+	// (exit).
 	endFinished
 	// endPanic: it is panicking. Go marks the test failed after its
 	// cleanups, and ends the process.
 	endPanic
-	// endGoexit: runtime.Goexit called from outside package testing. Go
-	// fails the test with "test executed panic(nil) or runtime.Goexit"
-	// after its cleanups, and ends the process.
+	// endGoexit: runtime.Goexit called from outside package testing. While
+	// the test's function runs, Go fails the test with "test executed
+	// panic(nil) or runtime.Goexit" after its cleanups, and ends the
+	// process; from a cleanup of a test package testing takes as finished
+	// (its function returned, or its own FailNow or SkipNow ended it), Go
+	// reports the test as it stands and goes on with the run (exit).
 	endGoexit
 )
 
@@ -507,31 +508,32 @@ func testingFunc(name string) bool {
 func exit(t *testing.T, st *tstate) {
 	t.Helper()
 	mu.Lock()
-	began := st.began
+	began, paralleled, finished := st.began, st.paralleled, st.finished
 	mu.Unlock()
-	// The process is about to end: a panic in the test or in one of its
-	// cleanups, or a raw Goexit (Go runs the remaining cleanups, fails the
-	// test and ends the process); this cleanup running on another goroutine
-	// than the test's (Go does so only on that panic path); or, by
-	// testing's own rule, a parallel test whose FailNow did not finish it:
-	// FailNow called on an ancestor's t, after which Go ends the process.
+	// The process is about to end when:
+	//   - the test or one of its cleanups panics (Go runs the remaining
+	//     cleanups, fails the test and ends the process), or this cleanup
+	//     runs on another goroutine than the test's (Go does so only on the
+	//     path where it fails the test and ends the process);
+	//   - package testing does not take the test as finished (noteEnd), and
+	//     a raw Goexit ended it, or package testing ended it through another
+	//     test's t while it is a top-level test or a parallel one. (Go fails
+	//     a sequential subtest its parent's FailNow ended, and goes on.) A
+	//     test that package testing ended, and that is neither failed nor
+	//     skipped, was ended through another test's t.
+	// A Goexit in a cleanup of a finished test, whatever called it, does not
+	// end the process. Package testing's exported API does not say which t
+	// ended a test, nor whether testing took it as finished. So a test that
+	// had already failed (itself, or through one of its subtests) when
+	// another test's t ended it, or t.Run ended it, is taken for finished
+	// while Go ends the process, and so is a subtest that called t.Parallel()
+	// itself: it gives up its turn, and a test after it may start while the
+	// process goes down, which fails the run all the same. The other way
+	// round, keeping the turn of a test whose process goes on, would hang
+	// the run.
 	how := howEnding()
-	raw, finished := false, false
-	onOwn := gid() == st.gid
-	if onOwn {
-		// joinTop refused a Go whose testing these fields are missing from.
-		raw, finished, _ = testingState(t)
-	}
-	dying := how == endPanic || how == endGoexit || !onOwn || (how == endFinished && raw && !finished)
-	// A T test, or a TP test that never called Parallel, that called
-	// t.Parallel() itself ran outside the turns: it is failed, by name.
-	if raw && (st.kind == kindT || (st.kind == kindTP && !st.paralleled)) && !dying {
-		fix := "start it with defer keploytest.TP(t)() and call keploytest.Parallel(t)"
-		if st.kind == kindTP {
-			fix = "call keploytest.Parallel(t) in place of t.Parallel()"
-		}
-		t.Errorf("keploy: %s calls t.Parallel() directly; %s", t.Name(), fix)
-	}
+	byOther := how == endFinished && (paralleled || st.kind != kindSub) && !t.Failed() && !t.Skipped()
+	dying := how == endPanic || gid() != st.gid || (!finished && (how == endGoexit || byOther))
 	if began {
 		outcome := outcomePassed
 		switch {

@@ -25,6 +25,11 @@ const (
 	// inside that binary (a helper process the test starts, a binary built
 	// and run from a test) is a member: it stays inert.
 	envTestPID = "KEPLOY_TEST_PID"
+	// envTimeFile is the run's clock file, as keploy's clock shim
+	// (LD_PRELOAD) reads it. keploy's claim answers with it when the run is
+	// frozen, and the claimer exports it, so the processes the test process
+	// starts that load the shim run on the run's clock.
+	envTimeFile = "KEPLOY_TIME_FILE"
 )
 
 type mode int
@@ -44,6 +49,10 @@ type joining struct {
 	url     string
 	token   string
 	refusal string
+	// inherited: keploy's run was claimed for this process before it
+	// started, so the package does not claim it again, and only begins and
+	// ends the tests.
+	inherited bool
 }
 
 var (
@@ -74,7 +83,20 @@ func decide(getenv func(string) string, pid int) joining {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return refuse("keploy: KEPLOY_MOCK_AGENT=%q is neither off nor the http URL of a keploy agent; set it to off to run without keploy", v)
 	}
-	if tp := strings.TrimSpace(getenv(envTestPID)); tp != "" && tp != strconv.Itoa(pid) {
+	j := joining{mode: active, url: strings.TrimRight(v, "/"), token: getenv(envToken)}
+	switch tp := strings.TrimSpace(getenv(envTestPID)); {
+	case tp == strconv.Itoa(pid):
+		// The marker names this process: the run was claimed for it before
+		// it started. A launcher (keploy-go-exec) claims the run for the
+		// test binary, exports the marker with its own pid, and execs the
+		// binary, which keeps that pid (and the claim, which the agent
+		// holds by process). Only an exec gives a process a marker naming
+		// itself: keploy removes the marker from the environment of the
+		// command it runs, and a claimer exports its own pid, which a
+		// process it starts does not have. A begin while no live process
+		// holds the run's claim is refused by the agent.
+		j.inherited = true
+	case tp != "":
 		// Another process joined keploy's run. This one is a member only
 		// when it runs inside that process: a marker naming any other
 		// process was inherited from elsewhere (a stale environment), and
@@ -85,7 +107,7 @@ func decide(getenv func(string) string, pid int) joining {
 			return joining{mode: inert}
 		}
 	}
-	return joining{mode: active, url: strings.TrimRight(v, "/"), token: getenv(envToken)}
+	return j
 }
 
 func refuse(format string, args ...any) joining {

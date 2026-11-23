@@ -221,16 +221,20 @@ func TestARedirectIsAnErrorAndIsNotFollowed(t *testing.T) {
 	}
 }
 
-// A claim answered with a frozen clock this package cannot apply is refused:
-// the tests would run on the real clock against recordings made on another.
-func TestAClaimWithAFrozenClockIsRefused(t *testing.T) {
+// The claim gives back the clock file the run's answer names ("" when the
+// run is not frozen), for the test process to export. A relative one is
+// refused: each process would look for it in its own working directory.
+func TestAClaimGivesBackTheRunsClockFile(t *testing.T) {
 	a := &answering{status: 200, body: `{"v":1,"instance":"run"}`}
-	if err := a.serve(t).claim("orders", "/p/orders"); err != nil {
-		t.Fatalf("a run without a frozen clock: %v", err)
+	if f, err := a.serve(t).claim("orders", "/p/orders"); err != nil || f != "" {
+		t.Fatalf("a run without a frozen clock: %q, %v; want \"\", nil", f, err)
 	}
-	b := &answering{status: 200, body: `{"v":1,"instance":"run","timeFile":"/tmp/keploy-time"}`}
-	err := b.serve(t).claim("orders", "/p/orders")
-	if err == nil || !strings.Contains(err.Error(), "frozen clock") || !strings.Contains(err.Error(), "upgrade github.com/keploy/go-sdk") {
-		t.Fatalf("got %v, want the frozen clock refused with the fix", err)
+	b := &answering{status: 200, body: `{"v":1,"instance":"run","timeFile":"/var/run/keploy/clock/t"}`}
+	if f, err := b.serve(t).claim("orders", "/p/orders"); err != nil || f != "/var/run/keploy/clock/t" {
+		t.Fatalf("a frozen run: %q, %v; want its clock file", f, err)
+	}
+	c := &answering{status: 200, body: `{"v":1,"instance":"run","timeFile":"clock/t"}`}
+	if f, err := c.serve(t).claim("orders", "/p/orders"); err == nil || !strings.Contains(err.Error(), `"clock/t", which is not an absolute path`) {
+		t.Fatalf("a relative clock file: %q, %v; want it refused", f, err)
 	}
 }

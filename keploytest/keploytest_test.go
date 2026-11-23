@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"go/parser"
+	"go/token"
 	"io"
 	"net"
 	"net/http"
@@ -425,6 +427,19 @@ func TestChildBody2(t *testing.T) {
 	fmt.Println(bodyRan)
 }
 
+// TestChildClock prints the clock file its process runs on, and the one a
+// process it starts inherits.
+func TestChildClock(t *testing.T) {
+	childOnly(t)
+	defer T(t)()
+	fmt.Printf("CLOCK-SELF=%s\n", os.Getenv(envTimeFile))
+	out, err := exec.Command("sh", "-c", `printf '%s' "$`+envTimeFile+`"`).Output()
+	if err != nil {
+		t.Fatalf("starting a process: %v", err)
+	}
+	fmt.Printf("CLOCK-CHILD=%s\n", out)
+}
+
 // Inert, Parallel and Run are t.Parallel and t.Run: with -test.parallel=4
 // they would refuse if they were not.
 func TestChildInert(t *testing.T) {
@@ -481,9 +496,18 @@ func TestChildTPThenRawRaw(t *testing.T) {
 	work()
 }
 
+// lateOpen is closed once TestChildLateOpenTP has begun; lateTDone and
+// lateTPDone once TestChildLateT and TestChildLateTP have ended. The three
+// run together, once (TestAKeploytestLineAfterTParallelBeginsOutsideTheTurns).
+var lateOpen, lateTDone, lateTPDone = make(chan struct{}), make(chan struct{}), make(chan struct{})
+
+// A T line after t.Parallel(): the test reaches it once Go resumes it, here
+// while a parallel test is open.
 func TestChildLateT(t *testing.T) {
 	childOnly(t)
 	t.Parallel()
+	<-lateOpen
+	t.Cleanup(func() { close(lateTDone) }) // runs after T's exit cleanup
 	defer T(t)()
 	work()
 }
@@ -491,16 +515,98 @@ func TestChildLateT(t *testing.T) {
 func TestChildLateTP(t *testing.T) {
 	childOnly(t)
 	t.Parallel()
+	<-lateOpen
+	t.Cleanup(func() { close(lateTPDone) })
 	defer TP(t)()
 	work()
 }
 
-func TestChildAfterLate(t *testing.T) {
+func TestChildLateOpenTP(t *testing.T) {
 	childOnly(t)
 	defer TP(t)()
 	Parallel(t)
+	close(lateOpen)
+	<-lateTDone
+	<-lateTPDone
 	fmt.Println(bodyRan)
-	work()
+}
+
+// savedT is the t of a test that has ended.
+var savedT *testing.T
+
+func TestChildSaveT(t *testing.T) { childOnly(t); savedT = t }
+
+// A T test that another test's SkipNow ends: Go ends the process.
+func TestChildOthersSkipNow(t *testing.T) {
+	childOnly(t)
+	defer T(t)()
+	savedT.SkipNow()
+}
+
+// A parallel subtest whose cleanup fails its parent through the parent's t,
+// after its own function returned: Go fails the parent and goes on with the
+// run.
+func TestChildCleanupFailsParent(t *testing.T) {
+	childOnly(t)
+	defer TP(t)()
+	Parallel(t)
+	Run(t, "p", func(c *testing.T) {
+		Parallel(c)
+		c.Cleanup(func() { t.Fatal("a cleanup failed the parent through its t") })
+	})
+	Run(t, "q", func(c *testing.T) {
+		Parallel(c)
+		fmt.Println("Q-RAN")
+	})
+}
+
+func TestChildCleanupFailsParent2(t *testing.T) { childOnly(t); next(t) }
+
+// endAs ends a test as KEPLOYTEST_BODY says: its function returns (""),
+// or its own SkipNow ("skip") or FailNow ("fail") ends it.
+func endAs(t *testing.T) {
+	switch os.Getenv(envBody) {
+	case "skip":
+		t.Skip("it skipped itself")
+	case "fail":
+		t.Fatal("its own fatal")
+	}
+}
+
+// A raw Goexit in a cleanup, after package testing took the test as
+// finished: Go reports the test as it stands and goes on with the run. The
+// TP test registers its cleanup before Parallel, so it also runs after
+// keploy's own skip there.
+func TestChildCleanupGoexitT(t *testing.T) {
+	childOnly(t)
+	defer T(t)()
+	t.Cleanup(func() { runtime.Goexit() })
+	endAs(t)
+}
+
+func TestChildCleanupGoexitTP(t *testing.T) {
+	childOnly(t)
+	defer TP(t)()
+	t.Cleanup(func() { runtime.Goexit() })
+	Parallel(t)
+	endAs(t)
+}
+
+func TestChildCleanupGoexitNext(t *testing.T) { childOnly(t); next(t) }
+
+func TestChildCleanupGoexitSub(t *testing.T) {
+	childOnly(t)
+	defer TP(t)()
+	Parallel(t)
+	Run(t, "p", func(c *testing.T) {
+		Parallel(c)
+		c.Cleanup(func() { runtime.Goexit() })
+		endAs(c)
+	})
+	Run(t, "q", func(c *testing.T) {
+		Parallel(c)
+		fmt.Println("Q-RAN")
+	})
 }
 
 func TestChildRawTP(t *testing.T) {
@@ -1013,7 +1119,7 @@ func TestARawParallelTPTestNeverOverlapsAParallelTest(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		a := newFakeAgent(t)
 		c := runChild(t, a.active(), "", "^TestChild(Raw|Good)TP$")
-		c.want(t, "TestChildRawTP", "FAIL", "keploy: TestChildRawTP calls t.Parallel() directly; call keploytest.Parallel(t) in place of t.Parallel()")
+		c.want(t, "TestChildRawTP", "FAIL", "keploy: TestChildRawTP starts with keploytest.TP but ended without calling keploytest.Parallel; call keploytest.Parallel(t), not t.Parallel()")
 		c.want(t, "TestChildGoodTP", "PASS", bodyRan)
 		if strings.Contains(c.ktlog(), "OVL(") {
 			t.Fatalf("the raw parallel test overlapped the parallel test: %s\n%s", c.ktlog(), c.out)
@@ -1037,43 +1143,122 @@ func TestARawParallelTTestThatPanicsHoldsTheTurns(t *testing.T) {
 }
 
 // A parallel subtest that failed itself and then fails its parent through
-// the parent's t ends the process all the same: it keeps its turn, so its
-// sibling never starts.
-func TestAFailedParallelSubtestFailingItsParentKeepsTheTurns(t *testing.T) {
+// the parent's t ends the process. Package testing's exported API does not
+// say which t ended it, so it is taken for one its own FailNow ended, and
+// gives up its turn: its sibling may run while the process goes down. The
+// run fails all the same: the binary exits non-zero, and Go runs the
+// parent's cleanups on the dying subtest's goroutine, so the test ends
+// failed on the agent.
+func TestAFailedParallelSubtestFailingItsParentFailsTheRun(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		a := newFakeAgent(t)
 		c := runChild(t, a.active(), "", "^TestChildFailedThenParentFatal$")
-		if c.code == 0 || strings.Contains(c.out, "Q-RAN") {
-			t.Fatalf("exit %d; the sibling ran while the process went down\n%s", c.code, c.out)
+		if c.code == 0 || c.status("TestChildFailedThenParentFatal") == "PASS" || strings.Contains(c.out, "timed out") {
+			t.Fatalf("exit %d; want the process to end with the failure, without a hang\n%s", c.code, c.out)
 		}
+		wantCalls(t, a, "begin TestChildFailedThenParentFatal", "end TestChildFailedThenParentFatal failed")
 	}
 }
 
-// testingState reads package testing's own record on this Go: whether a
-// test called t.Parallel, and whether its function finished. The package
-// relies on it to tell a raw t.Parallel and a dying parallel test apart; a
-// Go whose testing renames these fields fails here.
-func TestTestingState(t *testing.T) {
-	par, fin, ok := testingState(t)
-	if !ok {
-		t.Fatal("this Go's testing has no common.isParallel or common.finished")
-	}
-	if par || fin {
-		t.Fatalf("a running sequential test reads parallel=%v finished=%v", par, fin)
-	}
-	t.Run("parallel", func(c *testing.T) {
-		c.Parallel()
-		if par, fin, _ := testingState(c); !par || fin {
-			c.Fatalf("a running parallel test reads parallel=%v finished=%v", par, fin)
+// A Goexit in a cleanup of a test package testing takes as finished (its
+// function returned, or its own Skip or Fatal ended it) does not end the
+// process: Go reports the test and goes on. Such a test gives up its turn
+// (it hung the next test until -test.timeout when it kept it), and keploy
+// gets the outcome Go reports. The parent's t failed from a subtest's
+// cleanup; a raw runtime.Goexit in a T test, a TP test and a parallel
+// subtest, after each way of finishing, and after keploy's own skip.
+func TestAGoexitInACleanupOfAFinishedTestGivesUpTheTurn(t *testing.T) {
+	t.Run("parent's FailNow", func(t *testing.T) {
+		a := newFakeAgent(t)
+		c := runChild(t, a.active(), "", "^TestChildCleanupFailsParent2?$")
+		c.want(t, "TestChildCleanupFailsParent", "FAIL", "a cleanup failed the parent through its t", "Q-RAN")
+		c.want(t, "TestChildCleanupFailsParent/p", "PASS")
+		c.want(t, "TestChildCleanupFailsParent/q", "PASS")
+		c.want(t, "TestChildCleanupFailsParent2", "PASS", bodyRan)
+		if c.code != 1 || strings.Contains(c.out, "timed out") {
+			t.Errorf("exit %d, want 1 and no hang\n%s", c.code, c.out)
 		}
+		wantCalls(t, a, "begin TestChildCleanupFailsParent", "end TestChildCleanupFailsParent failed",
+			"begin TestChildCleanupFailsParent2", "end TestChildCleanupFailsParent2 passed")
 	})
-	t.Run("finished", func(c *testing.T) {
-		c.Cleanup(func() {
-			if _, fin, _ := testingState(c); !fin {
-				c.Error("a test that returned reads finished=false in its cleanup")
+	for _, tc := range []struct {
+		// body is how each test ends (endAs), status and outcome what Go
+		// reports and keploy hears; a failed subtest fails its parent.
+		body, status, outcome, parent, parentOutcome string
+		code                                         int
+	}{
+		{"", "PASS", "passed", "PASS", "passed", 0},
+		{"skip", "SKIP", "skipped", "PASS", "passed", 0},
+		{"fail", "FAIL", "failed", "FAIL", "failed", 1},
+	} {
+		t.Run("raw Goexit after "+tc.outcome, func(t *testing.T) {
+			a := newFakeAgent(t)
+			env := a.active()
+			env[envBody] = tc.body
+			c := runChild(t, env, "", "^TestChildCleanupGoexit(T|TP|Next|Sub)$")
+			for _, n := range []string{"TestChildCleanupGoexitT", "TestChildCleanupGoexitTP", "TestChildCleanupGoexitSub/p"} {
+				c.want(t, n, tc.status)
 			}
+			c.want(t, "TestChildCleanupGoexitSub", tc.parent)
+			c.want(t, "TestChildCleanupGoexitSub/q", "PASS", "Q-RAN")
+			c.want(t, "TestChildCleanupGoexitNext", "PASS", bodyRan)
+			if c.code != tc.code || strings.Contains(c.out, "timed out") {
+				t.Errorf("exit %d, want %d and no hang\n%s", c.code, tc.code, c.out)
+			}
+			wantCalls(t, a, "begin TestChildCleanupGoexitT", "end TestChildCleanupGoexitT "+tc.outcome,
+				"begin TestChildCleanupGoexitTP", "end TestChildCleanupGoexitTP "+tc.outcome,
+				"begin TestChildCleanupGoexitNext", "end TestChildCleanupGoexitNext passed",
+				"begin TestChildCleanupGoexitSub", "end TestChildCleanupGoexitSub "+tc.parentOutcome)
 		})
+	}
+	t.Run("raw Goexit after keploy's skip", func(t *testing.T) {
+		a := newFakeAgent(t)
+		a.onBegin("TestChildCleanupGoexitTP", skip("keploy: quarantined, see verdicts.yaml"))
+		c := runChild(t, a.active(), "", "^TestChildCleanupGoexit(TP|Next)$")
+		c.want(t, "TestChildCleanupGoexitTP", "SKIP", "keploy: quarantined, see verdicts.yaml")
+		c.want(t, "TestChildCleanupGoexitNext", "PASS", bodyRan)
+		if c.code != 0 || strings.Contains(c.out, "timed out") {
+			t.Errorf("exit %d, want 0 and no hang\n%s", c.code, c.out)
+		}
+		wantCalls(t, a, "begin TestChildCleanupGoexitTP", "begin TestChildCleanupGoexitNext", "end TestChildCleanupGoexitNext passed")
 	})
+}
+
+// The package reads no unexported state of package testing: no reflection,
+// unsafe or linkname into testing's own fields, which a Go release may
+// rename or drop (design v14 §6.5, "no reflection").
+func TestThePackageUsesOnlyTestingsExportedAPI(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	checked := 0
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, parser.ParseComments)
+		if err != nil {
+			t.Fatal(err)
+		}
+		checked++
+		for _, imp := range f.Imports {
+			if p, _ := strconv.Unquote(imp.Path.Value); p == "reflect" || p == "unsafe" {
+				t.Errorf("%s imports %s", fset.Position(imp.Pos()), p)
+			}
+		}
+		for _, cg := range f.Comments {
+			for _, c := range cg.List {
+				if strings.HasPrefix(c.Text, "//go:linkname") {
+					t.Errorf("%s: %s", fset.Position(c.Pos()), c.Text)
+				}
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no source file of the package was checked")
+	}
 }
 
 // A parallel subtest that fails its parent through the parent's t makes Go
@@ -1088,21 +1273,25 @@ func TestAParallelSubtestFailingItsParentKeepsTheTurns(t *testing.T) {
 	wantCalls(t, a, "begin TestChildCapturedFatalTP", "end TestChildCapturedFatalTP failed")
 }
 
-// exit keeps the turn of a test a raw Goexit ends (the process goes down with
-// it), and gives up the turn of one package testing ends.
+// exit keeps the turn of a test a raw Goexit ends before package testing
+// takes it as finished (the process goes down with it), and gives up the
+// turn of one testing takes as finished, also when a cleanup's raw Goexit
+// follows (Go goes on).
 func TestExitKeepsTheTurnOnlyOfADyingTest(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		end  func()
-		kept bool
+		name     string
+		finished bool
+		end      func()
+		kept     bool
 	}{
-		{"a raw Goexit", runtime.Goexit, true},
-		{"a normal return", func() {}, false},
+		{"a raw Goexit", false, runtime.Goexit, true},
+		{"a normal return", false, func() {}, false},
+		{"a raw Goexit after the test finished", true, runtime.Goexit, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			q := &queue{}
 			_, _ = q.take()
-			st := &tstate{q: q}
+			st := &tstate{q: q, finished: tc.finished}
 			before := q.serving
 			done := make(chan struct{})
 			go func() {
@@ -1230,6 +1419,113 @@ func TestTheBinaryClaimsTheRunOnce(t *testing.T) {
 		c.want(t, n, "FAIL", "two test processes ran at once", "go test -p 1")
 	}
 	wantCalls(t, b)
+}
+
+// The clock file keploy's claim answers with is exported into the test
+// process's real environment, where every process it starts inherits it
+// (release1-cut §2.2 MUST 2). A claim answered without one changes nothing:
+// a value keploy put in the command's environment stays.
+func TestTheClaimsClockIsExported(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh to start a process with")
+	}
+	clock := filepath.Join(t.TempDir(), "kclk1", "t")
+	a := newFakeAgent(t)
+	a.mu.Lock()
+	a.claim = &reply{200, `{"v":1,"instance":"run","timeFile":` + strconv.Quote(clock) + `}`}
+	a.mu.Unlock()
+	env := a.active()
+	env[envTimeFile] = "/inherited/from/the/command"
+	c := runChild(t, env, "", "^TestChildClock$")
+	c.want(t, "TestChildClock", "PASS", "CLOCK-SELF="+clock+"\n", "CLOCK-CHILD="+clock+"\n")
+	if len(a.claimed()) != 1 {
+		t.Fatalf("claims %v, want one", a.claimed())
+	}
+
+	b := newFakeAgent(t)
+	env = b.active()
+	env[envTimeFile] = "/from/the/command"
+	c = runChild(t, env, "", "^TestChildClock$")
+	c.want(t, "TestChildClock", "PASS", "CLOCK-SELF=/from/the/command\n", "CLOCK-CHILD=/from/the/command\n")
+}
+
+// A clock file the package cannot export is a claim answer it cannot trust:
+// every test fails, rather than run on a clock other than the run's.
+func TestAClockFileThatCannotBeExportedFailsEveryTest(t *testing.T) {
+	for _, tc := range []struct{ name, file, says string }{
+		{"relative", "kclk1/t", `is not an absolute path`},
+		{"NUL", "/tmp/kclk1/t\x00x", `cannot be exported`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newFakeAgent(t)
+			body, _ := json.Marshal(map[string]any{"v": 1, "instance": "run", "timeFile": tc.file})
+			a.mu.Lock()
+			a.claim = &reply{200, string(body)}
+			a.mu.Unlock()
+			c := runChild(t, a.active(), "", "^TestChildBody2?$")
+			for _, n := range []string{"TestChildBody", "TestChildBody2"} {
+				c.want(t, n, "FAIL", tc.says)
+			}
+			wantCalls(t, a)
+		})
+	}
+}
+
+// inheritedClaim runs the child as keploy-go-exec will: a launcher that
+// claims keploy's run for the test binary, exports KEPLOY_TEST_PID (its own
+// pid), and execs the binary, which keeps the pid. A shell that exports the
+// variable as $$ and execs does exactly that, minus the claim. Unlike
+// runChild it leaves -test.parallel to the package, which must set it on
+// this path too for Parallel to serialize.
+func inheritedClaim(t *testing.T, env map[string]string, run string) childRun {
+	t.Helper()
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh to exec the binary with")
+	}
+	argv := []string{"-test.run=" + run, "-test.v", "-test.count=1"}
+	if deadline, has := t.Deadline(); has {
+		// As in runChild: a hang dumps its goroutines within the parent's
+		// own budget.
+		argv = append(argv, "-test.timeout="+(time.Until(deadline)*9/10).String())
+	}
+	cmd := childCmd(env, t.TempDir(), argv)
+	cmd.Path = sh
+	cmd.Args = append([]string{"sh", "-c", "export " + envTestPID + `=$$; exec "$0" "$@"`, os.Args[0]}, argv...)
+	out, err := cmd.CombinedOutput()
+	code := 0
+	if err != nil {
+		ee, isExit := err.(*exec.ExitError)
+		if !isExit {
+			t.Fatalf("running the child: %v\n%s", err, out)
+		}
+		code = ee.ExitCode()
+	}
+	return childRun{out: string(out), code: code}
+}
+
+// A binary whose claim was made before it started (KEPLOY_TEST_PID already
+// names it) does not claim again: it only begins and ends its tests. It
+// needs no project, which only the claim's key is built from, and runs on
+// the clock file the launcher exported with the claim's answer.
+func TestAnInheritedClaimIsNotMadeAgain(t *testing.T) {
+	a := newFakeAgent(t)
+	env := map[string]string{envAgent: a.url, envTimeFile: "/from/the/launcher"}
+	c := inheritedClaim(t, env, "^TestChild(Body2?|Clock|OrderTP2)$")
+	c.want(t, "TestChildBody", "PASS", bodyRan)
+	c.want(t, "TestChildBody2", "PASS")
+	c.want(t, "TestChildClock", "PASS", "CLOCK-SELF=/from/the/launcher\n", "CLOCK-CHILD=/from/the/launcher\n")
+	c.want(t, "TestChildOrderTP2", "PASS")
+	if claims := a.claimed(); len(claims) != 0 {
+		t.Fatalf("claims %v, want none: the run was claimed for this process before it started", claims)
+	}
+	wantCalls(t, a, "begin TestChildBody", "end TestChildBody passed",
+		"begin TestChildBody2", "end TestChildBody2 passed",
+		"begin TestChildClock", "end TestChildClock passed",
+		"begin TestChildOrderTP2", "end TestChildOrderTP2 passed")
+	if c.code != 0 {
+		t.Errorf("exit %d, want 0", c.code)
+	}
 }
 
 // When it joins, the package gives the binary its -test.parallel, so
@@ -1378,34 +1674,54 @@ func TestTheTokenIsSentOnEveryCall(t *testing.T) {
 	}
 }
 
-// A T test that calls t.Parallel() itself is failed by name; the next
-// sequential T test cannot begin while it is open, and says which test to
-// fix.
-func TestARawTopLevelParallelIsFailedByName(t *testing.T) {
+// A T test that calls t.Parallel() itself stays open on keploy's agent while
+// Go pauses it. The package reads only testing's exported API, so it does not
+// see the call: keploy's agent refuses to begin the next T test (one test at
+// a time), which fails with the agent's words, naming both tests and the fix
+// (release1-cut §5.5: the agent's refusal plus the documented rule).
+func TestARawTopLevelParallelIsRefusedByTheAgent(t *testing.T) {
 	a := newFakeAgent(t)
 	c := runChild(t, a.active(), "", "^TestChildRawPar[AB]$")
-	c.want(t, "TestChildRawParA", "FAIL", "keploy: TestChildRawParA calls t.Parallel() directly; start it with defer keploytest.TP(t)()")
-	c.want(t, "TestChildRawParB", "FAIL", "keploy: TestChildRawParB cannot begin: TestChildRawParA called t.Parallel() directly and is still open; fix TestChildRawParA")
-	wantCalls(t, a, "begin TestChildRawParA", "end TestChildRawParA failed")
+	c.want(t, "TestChildRawParA", "PASS")
+	c.want(t, "TestChildRawParB", "FAIL", "keploy: TestChildRawParB began while TestChildRawParA was still open",
+		"start parallel tests with keploytest.Parallel and subtests with keploytest.Run (keploy mock codemod go writes them)")
+	wantCalls(t, a, "begin TestChildRawParA", "begin TestChildRawParB", "end TestChildRawParA passed")
+	if c.code != 1 {
+		t.Errorf("exit %d, want 1", c.code)
+	}
 }
 
-// A keploytest line after t.Parallel() is refused: the test would join the
-// turns too late, while a parallel test may already have begun.
-func TestAKeploytestLineAfterTParallelIsRefused(t *testing.T) {
-	for i := 0; i < 5; i++ {
-		a := newFakeAgent(t)
-		c := runChild(t, a.active(), "", "^TestChild(LateT|LateTP|AfterLate)$")
-		c.want(t, "TestChildLateT", "FAIL", "keploy: TestChildLateT calls t.Parallel() before keploytest.T; make defer keploytest.TP(t)() its first statement and call keploytest.Parallel(t) in place of t.Parallel()")
-		c.want(t, "TestChildLateTP", "FAIL", "keploy: TestChildLateTP calls t.Parallel() before keploytest.TP; make defer keploytest.TP(t)() its first statement")
-		c.want(t, "TestChildAfterLate", "PASS", bodyRan)
-		wantCalls(t, a, "begin TestChildAfterLate", "end TestChildAfterLate passed")
+// A keploytest line after t.Parallel() is not the test's first statement:
+// the test reaches it whenever Go resumes it, outside the turns. A T line
+// reached while a parallel test is open is refused by keploy's agent, with
+// its words, and the test never runs past it; a TP line there makes a test
+// that never calls Parallel, which fails by name. The open parallel test is
+// untouched.
+func TestAKeploytestLineAfterTParallelBeginsOutsideTheTurns(t *testing.T) {
+	a := newFakeAgent(t)
+	c := runChild(t, a.active(), "", "^TestChildLate(T|TP|OpenTP)$")
+	c.want(t, "TestChildLateT", "FAIL", "keploy: TestChildLateT began while TestChildLateOpenTP was still open")
+	c.want(t, "TestChildLateTP", "FAIL", "keploy: TestChildLateTP starts with keploytest.TP but ended without calling keploytest.Parallel")
+	c.want(t, "TestChildLateOpenTP", "PASS", bodyRan)
+	wantCalls(t, a, "begin TestChildLateOpenTP", "begin TestChildLateT", "end TestChildLateOpenTP passed")
+}
+
+// A top-level test that another test's SkipNow ends makes Go end the
+// process: keploy hears it failed, as Go reports it, not passed.
+func TestATopLevelTestEndedThroughAnotherTestsTIsFailed(t *testing.T) {
+	a := newFakeAgent(t)
+	c := runChild(t, a.active(), "", "^TestChild(SaveT|OthersSkipNow)$")
+	if c.code == 0 || c.status("TestChildOthersSkipNow") != "FAIL" {
+		t.Errorf("exit %d, status %q; want Go to end the process with the test failed\n%s", c.code, c.status("TestChildOthersSkipNow"), c.out)
 	}
+	wantCalls(t, a, "begin TestChildOthersSkipNow", "end TestChildOthersSkipNow failed")
 }
 
 // A T test that calls t.Parallel() itself never runs at the same time as a
 // parallel test, whichever comes first: the parallel test's turn waits for
-// it to end, and it alone fails, by name. Run repeatedly: the outcome must
-// not depend on scheduling.
+// it to end. With no other T test to begin while it is paused, nothing is
+// refused, and both pass, each judged alone. Run repeatedly: the outcome
+// must not depend on scheduling.
 func TestARawParallelTTestNeverOverlapsAParallelTest(t *testing.T) {
 	for _, tc := range []struct {
 		run, raw, tp string
@@ -1416,9 +1732,9 @@ func TestARawParallelTTestNeverOverlapsAParallelTest(t *testing.T) {
 		for i := 0; i < 5; i++ {
 			a := newFakeAgent(t)
 			c := runChild(t, a.active(), "", tc.run)
-			c.want(t, tc.raw, "FAIL", "keploy: "+tc.raw+" calls t.Parallel() directly")
+			c.want(t, tc.raw, "PASS")
 			c.want(t, tc.tp, "PASS", bodyRan)
-			wantCalls(t, a, "begin "+tc.raw, "end "+tc.raw+" failed", "begin "+tc.tp, "end "+tc.tp+" passed")
+			wantCalls(t, a, "begin "+tc.raw, "end "+tc.raw+" passed", "begin "+tc.tp, "end "+tc.tp+" passed")
 		}
 	}
 }
@@ -1495,7 +1811,7 @@ func TestTheGuardsFailTheTestWithTheFix(t *testing.T) {
 		{"TestChildGuardTInSubtest", "keploy: keploytest.T is the first statement of a top-level test, and TestChildGuardTInSubtest/x is a subtest", nil},
 		{"TestChildGuardTwice", "keploy: TestChildGuardTwice calls keploytest.T or keploytest.TP twice", nil},
 		{"TestChildGuardRunInRawRun", "keploy: TestChildGuardRunInRawRun/x was started by t.Run; start it with keploytest.Run", nil},
-		{"TestChildGuardTPRawParallel", "keploy: TestChildGuardTPRawParallel calls t.Parallel() directly; call keploytest.Parallel(t) in place of t.Parallel()", nil},
+		{"TestChildGuardTPRawParallel", "keploy: TestChildGuardTPRawParallel starts with keploytest.TP but ended without calling keploytest.Parallel; call keploytest.Parallel(t), not t.Parallel()", nil},
 	} {
 		t.Run(tc.test, func(t *testing.T) {
 			a := newFakeAgent(t)

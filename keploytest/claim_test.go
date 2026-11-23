@@ -1,6 +1,7 @@
 package keploytest
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -168,6 +169,50 @@ func TestPackageKey(t *testing.T) {
 	}
 	if _, _, err := packageKey(filepath.Join(root, "elsewhere")); err == nil || !strings.Contains(err.Error(), "outside the keploy project") {
 		t.Fatalf("a package outside the project: %v", err)
+	}
+}
+
+// The claim exports the clock file its answer names as KEPLOY_TIME_FILE, in
+// the process's real environment (release1-cut §2.2 MUST 2). An answer
+// without one leaves the variable as the command had it: the run is not
+// frozen by the agent, and a value keploy gave the command stays.
+func TestClaimForExportsTheRunsClock(t *testing.T) {
+	project := func(k string) string {
+		if k == envProject {
+			return "/"
+		}
+		return ""
+	}
+	for _, tc := range []struct{ name, timeFile, had, want string }{
+		{"frozen", "/var/run/keploy/clock/t", "/from/the/command", "/var/run/keploy/clock/t"},
+		{"frozen, none before", "/var/run/keploy/clock/t", "", "/var/run/keploy/clock/t"},
+		{"not frozen", "", "/from/the/command", "/from/the/command"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(envTimeFile, tc.had)
+			body, _ := json.Marshal(map[string]any{"v": 1, "instance": "run", "timeFile": tc.timeFile})
+			a := &answering{status: 200, body: string(body)}
+			if err := claimFor(joining{mode: active, url: a.serve(t).url}, project); err != nil {
+				t.Fatal(err)
+			}
+			if a.path != pathInstance {
+				t.Fatalf("called %q, want the claim", a.path)
+			}
+			if got := os.Getenv(envTimeFile); got != tc.want {
+				t.Fatalf("%s=%q, want %q", envTimeFile, got, tc.want)
+			}
+		})
+	}
+	// A clock file the environment cannot hold fails the claim, and leaves
+	// the variable as it was.
+	t.Setenv(envTimeFile, "/from/the/command")
+	a := &answering{status: 200, body: `{"v":1,"instance":"run","timeFile":"/var/run/keploy/clock/t\u0000x"}`}
+	err := claimFor(joining{mode: active, url: a.serve(t).url}, project)
+	if err == nil || !strings.Contains(err.Error(), "cannot be exported as "+envTimeFile) {
+		t.Fatalf("got %v, want the clock file refused", err)
+	}
+	if got := os.Getenv(envTimeFile); got != "/from/the/command" {
+		t.Fatalf("%s=%q after a failed export", envTimeFile, got)
 	}
 }
 
