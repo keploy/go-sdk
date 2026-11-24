@@ -48,3 +48,25 @@ jobs:
 
     - name: Test keploytest
       run: go test -race -count=1 ./keploytest/
+
+  # cover decodes the coverage data each Go release's runtime writes, and its
+  # build stage compiles in the app's module, so it is tested on the module's
+  # oldest Go and on the latest too.
+  cover:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go: [ "1.21", "stable" ]
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ matrix.go }}
+
+    - name: Vet cover
+      run: go vet ./cover/ ./keploy/
+
+    - name: Test cover
+      run: go test -race -count=1 ./cover/

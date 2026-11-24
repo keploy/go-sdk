@@ -1,4 +1,4 @@
-package keploy
+package cover
 
 import (
 	"bufio"
@@ -115,9 +115,11 @@ func startTestServer(t *testing.T) string {
 	path := filepath.Join(shortTempDir(t), "c.sock")
 	// One P: a bind left on a goroutine would not have run by the dial below.
 	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(1))
-	if err := startControlServer(path); err != nil {
+	ln, err := startControlServer(path)
+	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = ln.Close() })
 	c, err := net.Dial("unix", path)
 	if err != nil {
 		t.Fatalf("startControlServer returned before the socket was bound: %v", err)
@@ -151,7 +153,9 @@ func send(t *testing.T, path, command string) string {
 // publishErr each END's publish; it returns the ids published.
 func stubCoverage(t *testing.T, clearErrs []error, publishErr error) *[]string {
 	t.Helper()
-	oldClear, oldPublish := clearCounters, publishCoverage
+	oldPrepare, oldClear, oldPublish, oldSaid, oldMeta := prepareMeta, clearCounters, publishCoverage, saidWhy, meta
+	saidWhy = map[string]bool{}
+	prepareMeta = func() error { return nil }
 	var published []string
 	clearCounters = func() error {
 		if len(clearErrs) == 0 {
@@ -168,7 +172,7 @@ func stubCoverage(t *testing.T, clearErrs []error, publishErr error) *[]string {
 		return publishErr
 	}
 	t.Cleanup(func() {
-		clearCounters, publishCoverage = oldClear, oldPublish
+		prepareMeta, clearCounters, publishCoverage, saidWhy, meta = oldPrepare, oldClear, oldPublish, oldSaid, oldMeta
 		currentTestID = ""
 	})
 	currentTestID = ""
@@ -257,5 +261,63 @@ func TestTheAnswersCarryProto2(t *testing.T) {
 	}
 	if !strings.HasPrefix(replyTaken, "ACK ") || !strings.HasPrefix(replyIgnored, "IGNORED ") {
 		t.Fatalf("answers %q, %q: want ACK and IGNORED first, as Keploy reads them", replyTaken, replyIgnored)
+	}
+}
+
+// TestAStartWhoseMetaDataCannotBeReadIsIgnored pins that START reads the
+// app's coverage meta-data first: one it cannot read (not a -cover build, a
+// format this SDK does not read) is not taken, and resets no counter.
+func TestAStartWhoseMetaDataCannotBeReadIsIgnored(t *testing.T) {
+	stubCoverage(t, nil, nil)
+	cleared := 0
+	clearCounters = func() error { cleared++; return nil }
+	prepareMeta = func() error { return errors.New("coverage meta-data is format version 2") }
+	path := startTestServer(t)
+	if got := send(t, path, "START set-0/test-1"); got != replyIgnored {
+		t.Fatalf("START: answer %q, want %q", got, replyIgnored)
+	}
+	if got := send(t, path, "END set-0/test-1"); got != replyIgnored {
+		t.Fatalf("END: answer %q, want %q", got, replyIgnored)
+	}
+	if cleared != 0 {
+		t.Fatalf("the counters were reset %d times", cleared)
+	}
+}
+
+// TestACommandClosedWithNoNewlineIsAnswered pins the reads the agent's
+// commands may take: one closed by EOF with no newline is run and answered,
+// and a connection closed with no command runs nothing.
+func TestACommandClosedWithNoNewlineIsAnswered(t *testing.T) {
+	published := stubCoverage(t, nil, nil)
+	path := startTestServer(t)
+	exchange := func(command string) string {
+		c, err := net.Dial("unix", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = c.Close() }()
+		if command != "" {
+			if _, err := c.Write([]byte(command)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := c.(*net.UnixConn).CloseWrite(); err != nil {
+			t.Fatal(err)
+		}
+		_ = c.SetReadDeadline(time.Now().Add(10 * time.Second))
+		line, _ := bufio.NewReader(c).ReadString('\n')
+		return line
+	}
+	if got := exchange(""); got != "" || currentTestID != "" {
+		t.Fatalf("a connection with no command: answer %q, test %q", got, currentTestID)
+	}
+	if got := exchange("START set-0/test-1"); got != replyTaken {
+		t.Fatalf("START with no newline: answer %q, want %q", got, replyTaken)
+	}
+	if got := exchange("END set-0/test-1"); got != replyTaken {
+		t.Fatalf("END with no newline: answer %q, want %q", got, replyTaken)
+	}
+	if strings.Join(*published, ",") != "set-0/test-1" {
+		t.Fatalf("published %v", *published)
 	}
 }
