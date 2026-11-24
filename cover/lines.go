@@ -2,6 +2,7 @@ package cover
 
 import (
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"reflect"
 	"runtime/coverage"
@@ -109,6 +110,16 @@ func loadMeta() (*metaFile, error) {
 	}
 	meta = m
 	return meta, nil
+}
+
+// goBuildID is the app's Go build id as Keploy names it: "go1-" and the hex
+// of its coverage meta-data hash (enterprise codecoverage.GoBuildID).
+func goBuildID() (string, error) {
+	m, err := loadMeta()
+	if err != nil {
+		return "", err
+	}
+	return "go1-" + hex.EncodeToString(m.hash[:]), nil
 }
 
 // executedLines snapshots the app's counters and returns, per source file,

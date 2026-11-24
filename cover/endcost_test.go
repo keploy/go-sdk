@@ -60,13 +60,17 @@ func TestEndCost(t *testing.T) {
 		}
 		a := start(t, bin)
 		for _, path := range []string{"/one", "/all"} {
-			var ends []time.Duration
+			var ends, starts []time.Duration
 			lines := 0
 			for i := 0; i < 21; i++ {
 				id := fmt.Sprintf("set-0/test-%d", i)
-				if got := send(t, k.sock, "START "+id); got != replyTaken {
+				// A START after an END reads the gap between them: as much
+				// work as an END over the app's counters.
+				sBegan := time.Now()
+				if got := send(t, k.sock, "START "+id); got != replyStartUnasked {
 					t.Fatalf("START: %q\n%s", got, a.log())
 				}
+				starts = append(starts, time.Since(sBegan))
 				get(t, a, path)
 				began := time.Now()
 				if got := send(t, k.sock, "END "+id); got != replyTaken {
@@ -88,8 +92,10 @@ func TestEndCost(t *testing.T) {
 			first := ends[0]
 			rest := append([]time.Duration(nil), ends[1:]...)
 			sort.Slice(rest, func(i, j int) bool { return rest[i] < rest[j] })
-			t.Logf("ENDCOST counters=%d funcs=%d path=%s lines=%d first=%v p50=%v p95=%v",
-				funcs*21, funcs, path, lines, first, rest[len(rest)/2], rest[len(rest)*95/100])
+			srest := append([]time.Duration(nil), starts[1:]...)
+			sort.Slice(srest, func(i, j int) bool { return srest[i] < srest[j] })
+			t.Logf("ENDCOST counters=%d funcs=%d path=%s lines=%d first=%v p50=%v p95=%v start_p50=%v start_p95=%v",
+				funcs*21, funcs, path, lines, first, rest[len(rest)/2], rest[len(rest)*95/100], srest[len(srest)/2], srest[len(srest)*95/100])
 		}
 	}
 }

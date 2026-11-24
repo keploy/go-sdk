@@ -293,8 +293,8 @@ func get(t *testing.T, a app, path string) {
 // measure runs one test as Keploy does and returns the record END sent.
 func measure(t *testing.T, k *keploySide, a app, id, path string) map[string]any {
 	t.Helper()
-	if got := send(t, k.sock, "START "+id); got != replyTaken {
-		t.Fatalf("START %s: answer %q, want %q\napp log:\n%s", id, got, replyTaken, a.log())
+	if got := send(t, k.sock, "START "+id); got != replyStartUnasked {
+		t.Fatalf("START %s: answer %q, want %q\napp log:\n%s", id, got, replyStartUnasked, a.log())
 	}
 	get(t, a, path)
 	if got := send(t, k.sock, "END "+id); got != replyTaken {
@@ -429,7 +429,7 @@ func TestTheRecordKeepsTheSDKsShape(t *testing.T) {
 		{map[string][]int{"a/b.go": {3, 4}}, `{"executedLinesByFile":{"a/b.go":[3,4]},"id":"set-0/test-1"}`},
 		{map[string][]int{}, `{"executedLinesByFile":{},"id":"set-0/test-1"}`},
 	} {
-		b, err := encodeRecord("set-0/test-1", row.lines)
+		b, err := encodeRecord("set-0/test-1", row.lines, nil)
 		if err != nil || string(b) != row.want {
 			t.Fatalf("record %s (%v), want %s", b, err, row.want)
 		}
