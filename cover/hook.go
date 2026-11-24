@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"runtime/coverage"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,13 @@ var dataSocketPath = "/tmp/coverage_data.sock"
 const (
 	replyTaken   = "ACK proto=2\n"
 	replyIgnored = "IGNORED proto=2\n"
+	// A START taken is answered with whose BACKGROUND ask this process
+	// holds: "bg=-" until Keploy's agent asks, then "bg=<the ask's token>",
+	// so an agent asks when the token is not its own (a new run, a restarted
+	// agent, a restarted app). An SDK not to be asked at a START says no bg:
+	// an older Go SDK, which sends no BACKGROUND record, and the Java SDK,
+	// which is asked after its INDEX.
+	bgUnasked = "-"
 )
 
 var (
@@ -44,12 +52,41 @@ var (
 	// come yet, or "".
 	currentTestID string
 
+	// prevTestID is the test whose END was taken last and whose counters
+	// were cleared after it: the window from then to the next START is a gap
+	// between tests, and prevTestID opened it. "" when there is no such gap
+	// to trust (no END yet, a command not taken, a reset that failed).
+	prevTestID string
+	// bgAsked says Keploy's agent asked for BACKGROUND records (the
+	// BACKGROUND command), bgToken is the token its ask named (its receiver;
+	// "" for an ask that named none), and bgLost counts the gap records
+	// since that ask that could not be read or sent.
+	bgAsked bool
+	bgToken string
+	bgLost  int
+	// bgShown is the lost count the last record sent to that receiver
+	// carried, and lastTest the last test whose START was taken: once asked,
+	// a START after a test with no gap to send (its END not taken, its reset
+	// failed) counts a lost gap.
+	bgShown  int
+	lastTest string
+	// everGap is every line any gap window ran, of any test set, since the
+	// app started: a test whose lines meet it may hold the app's
+	// between-tests work (partialBy).
+	everGap = map[string]map[int]struct{}{}
+
 	// prepareMeta reads the app's coverage meta-data at a START, once;
 	// clearCounters and publishCoverage reset the counters at a START and
 	// send a test's coverage at an END. Variables for tests.
 	prepareMeta     = func() error { _, err := loadMeta(); return err }
 	clearCounters   = coverage.ClearCounters
 	publishCoverage = reportCoverage
+	// snapshotLines reads the lines run since the counters were last
+	// cleared, sendRecord sends one record to Keploy, and buildID names the
+	// app's build. Variables for tests.
+	snapshotLines = executedLines
+	sendRecord    = sendToSocket
+	buildID       = goBuildID
 
 	// saidWhy holds the reasons a START was not taken that were already
 	// logged, so an app that cannot be measured says why once, not per test.
@@ -125,21 +162,63 @@ func handleControlRequest(conn net.Conn) {
 		return
 	}
 	// A command closed by EOF with no newline is run and answered too.
-	reply := replyIgnored
-	if runCommand(strings.TrimSpace(command)) {
-		reply = replyTaken
-	}
+	reply := runCommand(strings.TrimSpace(command))
 	if _, err := conn.Write([]byte(reply)); err != nil {
 		log.Printf("[keploy coverage] error answering %q: %v", strings.TrimSpace(reply), err)
 	}
 }
 
-// runCommand runs one command and reports whether it took it.
-func runCommand(command string) bool {
+// backgroundAsk is the control command with which Keploy's agent asks for
+// BACKGROUND records: the lines the app ran between two tests.
+const backgroundAsk = "BACKGROUND"
+
+// startReply is a taken START's answer: whose BACKGROUND ask this process
+// holds. Called with controlMu held, in the START's own hold, so the answer
+// is the state the START left.
+func startReply() string {
+	token := bgUnasked
+	if bgAsked {
+		token = bgToken
+	}
+	return "ACK proto=2 bg=" + token + "\n"
+}
+
+// runCommand runs one command and returns its answer.
+func runCommand(command string) string {
+	if command == backgroundAsk || strings.HasPrefix(command, backgroundAsk+" ") {
+		token := strings.TrimSpace(strings.TrimPrefix(command, backgroundAsk))
+		controlMu.Lock()
+		defer controlMu.Unlock()
+		// An app that cannot be measured has no gap to tell of either.
+		if err := prepareMeta(); err != nil {
+			sayWhyNotMeasured(err)
+			return replyIgnored
+		}
+		// The records go to the receiver that asked: a new one (a new keploy
+		// run, an agent restarted: another token) counts their losses
+		// afresh. A gap open now is still read and sent at the next START;
+		// one whose "after" is an earlier run's test is no window of the
+		// new run's (keploy's ranNext), but its lines still mark the tests
+		// that meet them.
+		// lastTest stays: the ask comes after this receiver's first START,
+		// so lastTest is already its test.
+		if !bgAsked || token != bgToken {
+			bgLost, bgShown = 0, 0
+		}
+		bgAsked, bgToken = true, token
+		return replyTaken
+	}
+	return runTestCommand(command)
+}
+
+// runTestCommand runs a START or END and returns its answer: replyIgnored for
+// one not taken, startReply (made in the same hold of controlMu) for a START
+// taken, replyTaken for an END taken.
+func runTestCommand(command string) string {
 	action, id, ok := strings.Cut(command, " ")
 	if !ok || id == "" {
 		log.Printf("[keploy coverage] command %q names no test", command)
-		return false
+		return replyIgnored
 	}
 	controlMu.Lock()
 	defer controlMu.Unlock()
@@ -149,37 +228,192 @@ func runCommand(command string) bool {
 		// is no test's work, and an app whose coverage cannot be read says
 		// so at its first START, not at each END.
 		if err := prepareMeta(); err != nil {
-			currentTestID = ""
+			currentTestID, prevTestID = "", ""
 			sayWhyNotMeasured(err)
-			return false
+			return replyIgnored
 		}
+		// The counters hold the gap since the last test's END: what the app
+		// ran between the two tests, never this test's or that one's.
+		switch {
+		case prevTestID != "" && currentTestID == "":
+			noteGap(prevTestID, id)
+		case bgAsked && lastTest != "":
+			// The window since the last test holds more than a gap (a
+			// test whose END was not taken, a failed reset): keploy is
+			// told it lost one.
+			bgLost++
+		}
+		prevTestID = ""
 		// A START whose counters were not reset is not taken: the test's
 		// coverage would hold the lines of the tests before it.
 		if err := clearCounters(); err != nil {
 			currentTestID = ""
 			sayWhyNotMeasured(err)
-			return false
+			return replyIgnored
 		}
-		currentTestID = id
-		return true
+		currentTestID, lastTest = id, id
+		return startReply()
 	case "END":
 		if currentTestID != id {
 			// An app that cannot be measured already said why at its START.
 			if currentTestID != "" || len(saidWhy) == 0 {
 				log.Printf("[keploy coverage] END for %q while the test started is %q: its coverage is not sent", id, currentTestID)
 			}
-			return false
+			prevTestID = ""
+			return replyIgnored
 		}
 		currentTestID = ""
-		if err := publishCoverage(id); err != nil {
-			log.Printf("[keploy coverage] could not send the coverage of test %s: %v", id, err)
-			return false
+		if bgAsked && bgLost > bgShown {
+			sendLost(id)
 		}
-		return true
+		err := publishCoverage(id)
+		// The counters are reset after every END, so the window to the next
+		// START is a gap between tests alone. One whose reset failed holds
+		// this test's lines too, and is no gap to trust.
+		cerr := clearCounters()
+		if cerr == nil {
+			prevTestID = id
+		} else {
+			prevTestID = ""
+			log.Printf("[keploy coverage] could not reset the counters after test %s, so the window to the next test is not taken as a gap: %v", id, cerr)
+		}
+		if err != nil {
+			log.Printf("[keploy coverage] could not send the coverage of test %s: %v", id, err)
+			return replyIgnored
+		}
+		return replyTaken
 	default:
 		log.Printf("[keploy coverage] unknown command %q", action)
-		return false
+		return replyIgnored
 	}
+}
+
+// noteGap reads the window from after's END to before's START, a gap between
+// two tests, keeps its lines (everGap) and, once the agent asked, sends it as
+// a BACKGROUND record. Called with controlMu held.
+func noteGap(after, before string) {
+	lines, err := snapshotLines()
+	if err != nil {
+		if bgAsked {
+			bgLost++
+		}
+		log.Printf("[keploy coverage] could not read what the app ran between tests %s and %s: %v", after, before, err)
+		return
+	}
+	for file, ls := range lines {
+		ever := everGap[file]
+		if ever == nil {
+			ever = map[int]struct{}{}
+			everGap[file] = ever
+		}
+		for _, l := range ls {
+			ever[l] = struct{}{}
+		}
+	}
+	if !bgAsked || len(lines) == 0 {
+		return
+	}
+	if err := sendBackground(after, before, lines); err != nil {
+		log.Printf("[keploy coverage] could not send what the app ran between tests %s and %s: %v", after, before, err)
+	}
+}
+
+// sendLost tells keploy, ahead of test's own record, of the gaps lost since
+// the last record sent: a BACKGROUND record of test's set with no lines and
+// no "after" (so it is no window), only the lost count, so the set the loss
+// is of is never taken as complete. Called with controlMu held.
+func sendLost(test string) {
+	if err := sendBackground("", test, map[string][]int{}); err != nil {
+		log.Printf("[keploy coverage] could not tell keploy of the gaps between tests it lost before test %s: %v", test, err)
+	}
+}
+
+// sendBackground sends one BACKGROUND record, carrying bgLost; one not sent
+// counts as lost too. Called with controlMu held.
+func sendBackground(after, before string, lines map[string][]int) error {
+	data, err := encodeBackground(after, before, lines)
+	if err == nil {
+		err = sendRecord(data)
+	}
+	if err != nil {
+		bgLost++
+		return err
+	}
+	bgShown = bgLost
+	return nil
+}
+
+// backgroundRecordV is the version of the BACKGROUND records this package
+// sends.
+const backgroundRecordV = 1
+
+// encodeBackground is a BACKGROUND record: the lines the app ran between
+// tests after and before. "kind" and "before" come first, so an agent that
+// reads only a record's head still knows its test set.
+func encodeBackground(after, before string, lines map[string][]int) ([]byte, error) {
+	build, err := buildID()
+	if err != nil {
+		return nil, err
+	}
+	head, err := json.Marshal(struct {
+		Kind   string `json:"kind"`
+		Before string `json:"before"`
+		After  string `json:"after"`
+		V      int    `json:"v"`
+		Build  string `json:"build"`
+		Lost   int    `json:"lost"`
+	}{"background", before, after, backgroundRecordV, build, bgLost})
+	if err != nil {
+		return nil, fmt.Errorf("encode what the app ran between tests: %w", err)
+	}
+	body, err := json.Marshal(lines)
+	if err != nil {
+		return nil, fmt.Errorf("encode what the app ran between tests: %w", err)
+	}
+	// head without its closing brace, then the lines.
+	out := append(head[:len(head)-1:len(head)-1], `,"executedLinesByFile":`...)
+	out = append(out, body...)
+	return append(out, '}'), nil
+}
+
+// maxPartialNames bounds how many files a coverage-partial record names.
+const maxPartialNames = 8
+
+// partialBy names the files of lines (a test's) that some gap between tests
+// ran too, before this test's END, in this process. A record that names any is
+// coverage-partial: its lines may hold the app's own between-tests work, so
+// keploy neither drops the test nor drops another as its duplicate. That
+// holds even where keploy will leave such lines out of the test's key (its
+// set's BackgroundOf): keploy does not yet confirm, per test, that it did, and
+// where it leaves none out (a record lost, a set incomplete, a run it could
+// not read) such a test's key would hold the work. Called with controlMu held.
+func partialBy(lines map[string][]int) []string {
+	var files []string
+	for file, ls := range lines {
+		ever := everGap[file]
+		if ever == nil {
+			continue
+		}
+		for _, l := range ls {
+			if _, seen := ever[l]; seen {
+				files = append(files, file)
+				break
+			}
+		}
+	}
+	if len(files) == 0 {
+		return nil
+	}
+	sort.Strings(files)
+	names := make([]string, 0, maxPartialNames+1)
+	for i, f := range files {
+		if i == maxPartialNames {
+			names = append(names, fmt.Sprintf("+%d", len(files)-maxPartialNames))
+			break
+		}
+		names = append(names, "between-tests:"+f)
+	}
+	return names
 }
 
 // sayWhyNotMeasured logs, once per reason, why a START was not taken. Called
@@ -200,29 +434,36 @@ func sayWhyNotMeasured(err error) {
 }
 
 // reportCoverage sends the test's coverage to Keploy: the lines it ran, per
-// source file. Called with controlMu held.
+// source file, and, where some of them ran between tests too, which files
+// (partialBy). Called with controlMu held.
 func reportCoverage(testID string) error {
-	lines, err := executedLines()
+	lines, err := snapshotLines()
 	if err != nil {
 		return err
 	}
 	if len(lines) == 0 {
 		log.Printf("[keploy coverage] test %s ran no measured line", testID)
 	}
-	data, err := encodeRecord(testID, lines)
+	data, err := encodeRecord(testID, lines, partialBy(lines))
 	if err != nil {
 		return err
 	}
-	return sendToSocket(data)
+	return sendRecord(data)
 }
 
 // encodeRecord is a test's coverage record: a map, as the SDK always sent,
-// so its keys are written sorted ("executedLinesByFile", then "id").
-func encodeRecord(testID string, lines map[string][]int) ([]byte, error) {
-	data, err := json.Marshal(map[string]interface{}{
+// so its keys are written sorted ("contaminated", when partial names a file,
+// then "executedLinesByFile", then "id"). contaminated is the agent's field
+// for a record whose lines may hold work that is not the test's.
+func encodeRecord(testID string, lines map[string][]int, partial []string) ([]byte, error) {
+	rec := map[string]interface{}{
 		"id":                  testID,
 		"executedLinesByFile": lines,
-	})
+	}
+	if len(partial) > 0 {
+		rec["contaminated"] = partial
+	}
+	data, err := json.Marshal(rec)
 	if err != nil {
 		return nil, fmt.Errorf("encode the coverage: %w", err)
 	}

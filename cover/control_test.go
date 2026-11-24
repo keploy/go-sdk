@@ -149,8 +149,9 @@ func send(t *testing.T, path, command string) string {
 }
 
 // stubCoverage replaces the coverage calls for one test: clearErrs are what
-// the STARTs' resets return in turn, the last one again for any after it, and
-// publishErr each END's publish; it returns the ids published.
+// the resets return in turn (each START's, and each taken END's after its
+// publish), the last one again for any after it, and publishErr each END's
+// publish; it returns the ids published.
 func stubCoverage(t *testing.T, clearErrs []error, publishErr error) *[]string {
 	t.Helper()
 	oldPrepare, oldClear, oldPublish, oldSaid, oldMeta := prepareMeta, clearCounters, publishCoverage, saidWhy, meta
@@ -176,7 +177,33 @@ func stubCoverage(t *testing.T, clearErrs []error, publishErr error) *[]string {
 		currentTestID = ""
 	})
 	currentTestID = ""
+	resetGaps(t)
 	return &published
+}
+
+// A taken START's answers: before any BACKGROUND ask, and after an ask that
+// named token.
+const replyStartUnasked = "ACK proto=2 bg=-\n"
+
+func replyStartAskedBy(token string) string { return "ACK proto=2 bg=" + token + "\n" }
+
+// resetGaps clears the between-tests state and stubs the reads and sends a
+// gap makes, for one test: snapshotLines answers {} unless the test sets it.
+func resetGaps(t *testing.T) {
+	t.Helper()
+	oldSnap, oldSend, oldBuild := snapshotLines, sendRecord, buildID
+	snapshotLines = func() (map[string][]int, error) { return map[string][]int{}, nil }
+	sendRecord = func([]byte) error { return nil }
+	buildID = func() (string, error) { return "go1-00112233445566778899aabbccddeeff", nil }
+	clear := func() {
+		prevTestID, bgAsked, bgToken, bgLost, bgShown, lastTest = "", false, "", 0, 0, ""
+		everGap = map[string]map[int]struct{}{}
+	}
+	clear()
+	t.Cleanup(func() {
+		snapshotLines, sendRecord, buildID = oldSnap, oldSend, oldBuild
+		clear()
+	})
 }
 
 // TestEveryCommandIsAnswered pins the SDK's side of the control socket: every
@@ -194,18 +221,18 @@ func TestEveryCommandIsAnswered(t *testing.T) {
 		published  []string
 	}{
 		{name: "a START and its END are taken", steps: []step{
-			{"START set-0/test-1", replyTaken},
+			{"START set-0/test-1", replyStartUnasked},
 			{"END set-0/test-1", replyTaken},
 		}, published: []string{"set-0/test-1"}},
 		{name: "an END with no START is ignored", steps: []step{
 			{"END set-0/test-1", replyIgnored},
 		}},
 		{name: "an END for another test is ignored and publishes nothing", steps: []step{
-			{"START set-0/test-1", replyTaken},
+			{"START set-0/test-1", replyStartUnasked},
 			{"END set-0/test-2", replyIgnored},
 		}},
 		{name: "a second END for a test is ignored", steps: []step{
-			{"START set-0/test-1", replyTaken},
+			{"START set-0/test-1", replyStartUnasked},
 			{"END set-0/test-1", replyTaken},
 			{"END set-0/test-1", replyIgnored},
 		}, published: []string{"set-0/test-1"}},
@@ -214,16 +241,16 @@ func TestEveryCommandIsAnswered(t *testing.T) {
 			{"END set-0/test-1", replyIgnored},
 		}},
 		{name: "a START whose reset failed ends the test before it", clearErrs: []error{nil, failed}, steps: []step{
-			{"START set-0/test-1", replyTaken},
+			{"START set-0/test-1", replyStartUnasked},
 			{"START set-0/test-1", replyIgnored},
 			{"END set-0/test-1", replyIgnored},
 		}},
 		{name: "an END whose publish failed is ignored", publishErr: failed, steps: []step{
-			{"START set-0/test-1", replyTaken},
+			{"START set-0/test-1", replyStartUnasked},
 			{"END set-0/test-1", replyIgnored},
 		}, published: []string{"set-0/test-1"}},
 		{name: "an END whose publish failed still ends the test", publishErr: failed, steps: []step{
-			{"START set-0/test-1", replyTaken},
+			{"START set-0/test-1", replyStartUnasked},
 			{"END set-0/test-1", replyIgnored},
 			{"END set-0/test-1", replyIgnored},
 		}, published: []string{"set-0/test-1"}},
@@ -253,11 +280,23 @@ func TestEveryCommandIsAnswered(t *testing.T) {
 // TestTheAnswersCarryProto2 pins the field Keploy tells an SDK that answers
 // every command by: an older SDK closed some connections with no answer.
 func TestTheAnswersCarryProto2(t *testing.T) {
-	for _, reply := range []string{replyTaken, replyIgnored} {
+	for reply, bg := range map[string]string{replyTaken: "", replyIgnored: "", replyStartUnasked: "bg=-", replyStartAskedBy("r7"): "bg=r7"} {
 		fields := strings.Fields(reply)
-		if len(fields) != 2 || fields[1] != "proto=2" || !strings.HasSuffix(reply, "\n") {
-			t.Fatalf("answer %q: want one line, a word then proto=2", reply)
+		want := 2
+		if bg != "" {
+			want = 3
 		}
+		if len(fields) != want || fields[1] != "proto=2" || !strings.HasSuffix(reply, "\n") || (bg != "" && fields[2] != bg) {
+			t.Fatalf("answer %q: want one line, a word, proto=2 and then %q", reply, bg)
+		}
+	}
+	stubCoverage(t, nil, nil)
+	if got := startReply(); got != replyStartUnasked {
+		t.Fatalf("START before any ask answers %q, want %q", got, replyStartUnasked)
+	}
+	bgAsked, bgToken = true, "r7"
+	if got := startReply(); got != replyStartAskedBy("r7") {
+		t.Fatalf("START after an ask answers %q, want %q", got, replyStartAskedBy("r7"))
 	}
 	if !strings.HasPrefix(replyTaken, "ACK ") || !strings.HasPrefix(replyIgnored, "IGNORED ") {
 		t.Fatalf("answers %q, %q: want ACK and IGNORED first, as Keploy reads them", replyTaken, replyIgnored)
@@ -311,8 +350,8 @@ func TestACommandClosedWithNoNewlineIsAnswered(t *testing.T) {
 	if got := exchange(""); got != "" || currentTestID != "" {
 		t.Fatalf("a connection with no command: answer %q, test %q", got, currentTestID)
 	}
-	if got := exchange("START set-0/test-1"); got != replyTaken {
-		t.Fatalf("START with no newline: answer %q, want %q", got, replyTaken)
+	if got := exchange("START set-0/test-1"); got != replyStartUnasked {
+		t.Fatalf("START with no newline: answer %q, want %q", got, replyStartUnasked)
 	}
 	if got := exchange("END set-0/test-1"); got != replyTaken {
 		t.Fatalf("END with no newline: answer %q, want %q", got, replyTaken)
