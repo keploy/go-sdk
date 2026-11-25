@@ -429,7 +429,7 @@ func TestTheRecordKeepsTheSDKsShape(t *testing.T) {
 		{map[string][]int{"a/b.go": {3, 4}}, `{"executedLinesByFile":{"a/b.go":[3,4]},"id":"set-0/test-1"}`},
 		{map[string][]int{}, `{"executedLinesByFile":{},"id":"set-0/test-1"}`},
 	} {
-		b, err := encodeRecord("set-0/test-1", row.lines, nil)
+		b, err := encodeRecord("set-0/test-1", row.lines, nil, nil)
 		if err != nil || string(b) != row.want {
 			t.Fatalf("record %s (%v), want %s", b, err, row.want)
 		}

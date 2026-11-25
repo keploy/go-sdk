@@ -72,7 +72,7 @@ var (
 	lastTest string
 	// everGap is every line any gap window ran, of any test set, since the
 	// app started: a test whose lines meet it may hold the app's
-	// between-tests work (partialBy).
+	// between-tests work (overlapBy).
 	everGap = map[string]map[int]struct{}{}
 
 	// prepareMeta reads the app's coverage meta-data at a START, once;
@@ -379,30 +379,46 @@ func encodeBackground(after, before string, lines map[string][]int) ([]byte, err
 // maxPartialNames bounds how many files a coverage-partial record names.
 const maxPartialNames = 8
 
-// partialBy names the files of lines (a test's) that some gap between tests
-// ran too, before this test's END, in this process. A record that names any is
-// coverage-partial: its lines may hold the app's own between-tests work, so
-// keploy neither drops the test nor drops another as its duplicate. That
-// holds even where keploy will leave such lines out of the test's key (its
-// set's BackgroundOf): keploy does not yet confirm, per test, that it did, and
-// where it leaves none out (a record lost, a set incomplete, a run it could
-// not read) such a test's key would hold the work. Called with controlMu held.
-func partialBy(lines map[string][]int) []string {
+// overlapBy returns the coverage-partial marks ("between-tests:<file>", at
+// most maxPartialNames then "+N") and the exact overlapping lines per file
+// for lines (a test's) that some gap between tests ran too, before this test's
+// END, in this process.
+//
+// A record that names any is coverage-partial ("contaminated") so an older
+// agent or an incomplete background still fails closed and neither drops the
+// test nor drops another as its duplicate. Sending the complete overlap lines
+// alongside lets a Keploy that holds the set's complete between-tests
+// background confirm that every overlapping line is subtracted from the set's
+// dedup keys and trust the test. Called with controlMu held.
+func overlapBy(lines map[string][]int) ([]string, map[string][]int) {
 	var files []string
+	var overlap map[string][]int
 	for file, ls := range lines {
 		ever := everGap[file]
 		if ever == nil {
 			continue
 		}
+		var hit []int
 		for _, l := range ls {
 			if _, seen := ever[l]; seen {
-				files = append(files, file)
-				break
+				hit = append(hit, l)
 			}
 		}
+		if len(hit) == 0 {
+			continue
+		}
+		// linesOf already returns sorted unique lines, but defensively sort
+		// and deduplicate so synthetic/test snapshotLines cannot emit dupes.
+		sort.Ints(hit)
+		hit = compactSortedInts(hit)
+		if overlap == nil {
+			overlap = make(map[string][]int)
+		}
+		overlap[file] = hit
+		files = append(files, file)
 	}
 	if len(files) == 0 {
-		return nil
+		return nil, nil
 	}
 	sort.Strings(files)
 	names := make([]string, 0, maxPartialNames+1)
@@ -413,7 +429,22 @@ func partialBy(lines map[string][]int) []string {
 		}
 		names = append(names, "between-tests:"+f)
 	}
-	return names
+	return names, overlap
+}
+
+// compactSortedInts deduplicates an already-sorted slice in place.
+func compactSortedInts(s []int) []int {
+	if len(s) < 2 {
+		return s
+	}
+	w := 1
+	for i := 1; i < len(s); i++ {
+		if s[i] != s[w-1] {
+			s[w] = s[i]
+			w++
+		}
+	}
+	return s[:w]
 }
 
 // sayWhyNotMeasured logs, once per reason, why a START was not taken. Called
@@ -434,8 +465,8 @@ func sayWhyNotMeasured(err error) {
 }
 
 // reportCoverage sends the test's coverage to Keploy: the lines it ran, per
-// source file, and, where some of them ran between tests too, which files
-// (partialBy). Called with controlMu held.
+// source file, and, where some of them ran between tests too, which files and
+// exact lines overlapped (overlapBy). Called with controlMu held.
 func reportCoverage(testID string) error {
 	lines, err := snapshotLines()
 	if err != nil {
@@ -444,7 +475,8 @@ func reportCoverage(testID string) error {
 	if len(lines) == 0 {
 		log.Printf("[keploy coverage] test %s ran no measured line", testID)
 	}
-	data, err := encodeRecord(testID, lines, partialBy(lines))
+	partial, overlap := overlapBy(lines)
+	data, err := encodeRecord(testID, lines, partial, overlap)
 	if err != nil {
 		return err
 	}
@@ -453,15 +485,21 @@ func reportCoverage(testID string) error {
 
 // encodeRecord is a test's coverage record: a map, as the SDK always sent,
 // so its keys are written sorted ("contaminated", when partial names a file,
-// then "executedLinesByFile", then "id"). contaminated is the agent's field
-// for a record whose lines may hold work that is not the test's.
-func encodeRecord(testID string, lines map[string][]int, partial []string) ([]byte, error) {
+// "executedLinesByFile", "id", then "overlapLinesByFile" when overlap holds
+// lines). contaminated is the agent's field for a record whose lines may hold
+// work that is not the test's; overlapLinesByFile lists the exact lines shared
+// with between-tests gaps so Keploy can confirm them against a complete
+// background.
+func encodeRecord(testID string, lines map[string][]int, partial []string, overlap map[string][]int) ([]byte, error) {
 	rec := map[string]interface{}{
 		"id":                  testID,
 		"executedLinesByFile": lines,
 	}
 	if len(partial) > 0 {
 		rec["contaminated"] = partial
+	}
+	if len(overlap) > 0 {
+		rec["overlapLinesByFile"] = overlap
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {

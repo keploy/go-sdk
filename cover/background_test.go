@@ -156,7 +156,8 @@ func TestNoBackgroundRecordBeforeTheAsk(t *testing.T) {
 // TestATestMeetingAGapLineIsPartialEvenOnceKeployCouldLeaveItOut: asked,
 // nothing lost, and gaps of two different tests ran the line, so keploy's
 // BackgroundOf leaves it out of the set's keys; the test is still sent
-// coverage-partial, since keploy does not confirm per test that it did.
+// coverage-partial so older agents and incomplete backgrounds fail closed,
+// while newer agents confirm it through overlapLinesByFile.
 func TestATestMeetingAGapLineIsPartialEvenOnceKeployCouldLeaveItOut(t *testing.T) {
 	for _, ask := range []bool{true, false} {
 		h := newGapHarness(t,
@@ -266,18 +267,98 @@ func TestBackgroundIsIgnoredByAnAppThatCannotBeMeasured(t *testing.T) {
 	}
 }
 
-// TestAPartialRecordNamesAtMostEightFiles.
+// TestAPartialRecordNamesAtMostEightFiles checks that contaminated caps file
+// names at 8 + "+N" while overlapLinesByFile still carries every overlapping
+// file and only the lines shared with gaps.
 func TestAPartialRecordNamesAtMostEightFiles(t *testing.T) {
 	resetGaps(t)
 	test := map[string][]int{}
 	for i := 0; i < 11; i++ {
 		f := "example.com/app/w" + string(rune('a'+i)) + ".go"
-		everGap[f] = map[int]struct{}{1: {}}
-		test[f] = []int{1}
+		everGap[f] = map[int]struct{}{1: {}, 5: {}}
+		test[f] = []int{5, 2, 1, 5, 9}
 	}
-	got := partialBy(test)
+	got, overlap := overlapBy(test)
 	if len(got) != maxPartialNames+1 || got[maxPartialNames] != "+3" || !strings.HasPrefix(got[0], "between-tests:") {
 		t.Fatalf("partial %v, want 8 names then +3", got)
+	}
+	if len(overlap) != 11 {
+		t.Fatalf("overlap has %d files, want all 11: %v", len(overlap), overlap)
+	}
+	for i := 0; i < 11; i++ {
+		f := "example.com/app/w" + string(rune('a'+i)) + ".go"
+		if !reflect.DeepEqual(overlap[f], []int{1, 5}) {
+			t.Fatalf("overlap[%s] = %v, want [1 5]", f, overlap[f])
+		}
+	}
+}
+
+// TestOverlapLinesByFileSentWithExactOverlap verifies that a marked test
+// carries overlapLinesByFile containing all and only the lines shared with
+// everGap (multiple lines per file), while an unmarked test — including one
+// touching the same file as a gap on disjoint lines — omits both contaminated
+// and overlapLinesByFile with zero allocations on the hot path.
+func TestOverlapLinesByFileSentWithExactOverlap(t *testing.T) {
+	h := newGapHarness(t,
+		lines(appFile, 3),
+		map[string][]int{workerFile: {7, 8}, appFile: {10, 11}},
+		map[string][]int{appFile: {3, 10, 11, 12}, workerFile: {7, 8, 99}},
+		none(),
+		lines(appFile, 3), // same file as everGap[appFile], but disjoint lines
+	)
+	h.ask("r1")
+	h.run("set-0/test-1")
+	h.run("set-0/test-2")
+	h.run("set-0/test-3")
+	if _, has := h.test("set-0/test-1")["overlapLinesByFile"]; has {
+		t.Fatalf("unmarked test-1 carried overlapLinesByFile: %v", h.test("set-0/test-1"))
+	}
+	wantOverlap := map[string]interface{}{
+		appFile:    []interface{}{float64(10), float64(11)},
+		workerFile: []interface{}{float64(7), float64(8)},
+	}
+	if got := h.test("set-0/test-2")["overlapLinesByFile"]; !reflect.DeepEqual(got, wantOverlap) {
+		t.Fatalf("test-2 overlapLinesByFile = %v, want %v", got, wantOverlap)
+	}
+	test3 := h.test("set-0/test-3")
+	if _, has := test3["contaminated"]; has {
+		t.Fatalf("disjoint-lines test-3 carried contaminated: %v", test3)
+	}
+	if _, has := test3["overlapLinesByFile"]; has {
+		t.Fatalf("disjoint-lines test-3 carried overlapLinesByFile: %v", test3)
+	}
+
+	// Pin zero heap allocations when a test touches a file in everGap on disjoint lines.
+	disjoint := map[string][]int{appFile: {3, 4, 5}, workerFile: {99}}
+	if allocs := testing.AllocsPerRun(100, func() {
+		p, ov := overlapBy(disjoint)
+		if p != nil || ov != nil {
+			t.Errorf("disjoint lines returned (%v, %v), want (nil, nil)", p, ov)
+		}
+	}); allocs != 0 {
+		t.Fatalf("overlapBy on disjoint lines allocated %v times, want 0", allocs)
+	}
+}
+
+// TestTheOverlapRecordBytes pins the bytes of a marked test record carrying
+// overlapLinesByFile: enterprise's
+// TestDedupJavaBackground_GoSDKOverlapBytesAndFailClosedGuards feeds these
+// exact bytes through intake and confirmBetweenTests.
+func TestTheOverlapRecordBytes(t *testing.T) {
+	resetGaps(t)
+	everGap["example.com/app/worker.go"] = map[int]struct{}{7: {}, 8: {}}
+	testLines := map[string][]int{
+		"example.com/app/handler.go": {3, 4},
+		"example.com/app/worker.go":  {7, 12},
+	}
+	partial, overlap := overlapBy(testLines)
+	b, err := encodeRecord("test-set-0/test-2", testLines, partial, overlap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"contaminated":["between-tests:example.com/app/worker.go"],"executedLinesByFile":{"example.com/app/handler.go":[3,4],"example.com/app/worker.go":[7,12]},"id":"test-set-0/test-2","overlapLinesByFile":{"example.com/app/worker.go":[7]}}`
+	if string(b) != want {
+		t.Fatalf("overlap record\n%s\nwant\n%s", b, want)
 	}
 }
 
