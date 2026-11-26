@@ -112,6 +112,30 @@ func loadMeta() (*metaFile, error) {
 	return meta, nil
 }
 
+// loadTable returns the app's canonical Go build table, building and caching
+// it on the loaded meta-data the first time. Called with controlMu held.
+func loadTable() (*goTable, error) {
+	m, err := loadMeta()
+	if err != nil {
+		return nil, err
+	}
+	if m.table != nil {
+		return m.table, nil
+	}
+	t, err := buildGoTable(m)
+	if err != nil {
+		return nil, err
+	}
+	m.table = t
+	return t, nil
+}
+
+// formatGoBuildID formats a 16-byte coverage meta-data hash as Keploy's Go
+// build ID ("go1-" + 32 lowercase hex digits).
+func formatGoBuildID(hash [16]byte) string {
+	return "go1-" + hex.EncodeToString(hash[:])
+}
+
 // goBuildID is the app's Go build id as Keploy names it: "go1-" and the hex
 // of its coverage meta-data hash (enterprise codecoverage.GoBuildID).
 func goBuildID() (string, error) {
@@ -119,7 +143,7 @@ func goBuildID() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return "go1-" + hex.EncodeToString(m.hash[:]), nil
+	return formatGoBuildID(m.hash), nil
 }
 
 // executedLines snapshots the app's counters and returns, per source file,
@@ -139,9 +163,36 @@ func executedLines() (map[string][]int, error) {
 	return linesOf(m, buf.Bytes())
 }
 
+// executedLinesAndBlocks snapshots the app's counters once and returns both
+// executedLinesByFile and unit-relative executedBlocksByFile.
+func executedLinesAndBlocks() (map[string][]int, map[string][]int, error) {
+	m, err := loadMeta()
+	if err != nil {
+		return nil, nil, err
+	}
+	tbl, err := loadTable()
+	if err != nil {
+		return nil, nil, err
+	}
+	var buf bytes.Buffer
+	if err := writeCounters(&buf); err != nil {
+		return nil, nil, fmt.Errorf("could not read the app's coverage counters: %w", err)
+	}
+	return linesAndBlocksOf(m, tbl, buf.Bytes())
+}
+
 // linesOf is executedLines over counter-data already written.
 func linesOf(m *metaFile, counterData []byte) (map[string][]int, error) {
+	lines, _, err := linesAndBlocksOf(m, nil, counterData)
+	return lines, err
+}
+
+// linesAndBlocksOf decodes counterData in a single pass, returning sorted
+// unique executed lines per file (matching linesOf) and, when tbl is non-nil,
+// sorted unique unit-relative leaf ordinals per canonical unitPath.
+func linesAndBlocksOf(m *metaFile, tbl *goTable, counterData []byte) (map[string][]int, map[string][]int, error) {
 	hit := make(map[string]map[int]struct{})
+	var hitBlocks map[string][]int
 	err := visitCounters(counterData, m.hash, func(pkgIdx, funcIdx uint32, counters []uint32) error {
 		if uint64(pkgIdx) >= uint64(len(m.pkgs)) {
 			return fmt.Errorf("coverage counter-data names package %d of %d", pkgIdx, len(m.pkgs))
@@ -154,6 +205,7 @@ func linesOf(m *metaFile, counterData []byte) (map[string][]int, error) {
 			return fmt.Errorf("coverage counter-data names function %d of %d in %s", funcIdx, len(pkg.funcs), pkg.path)
 		}
 		fn := &pkg.funcs[funcIdx]
+		fm, unitPath := tbl.funcBlockLookup(int(pkgIdx), int(funcIdx))
 		for i, u := range fn.units {
 			var count uint32
 			switch m.granularity {
@@ -169,6 +221,14 @@ func linesOf(m *metaFile, counterData []byte) (map[string][]int, error) {
 			}
 			if count == 0 {
 				continue
+			}
+			if fm != nil && i < len(fm.leafOrds) {
+				if ord := fm.leafOrds[i]; ord >= 0 {
+					if hitBlocks == nil {
+						hitBlocks = make(map[string][]int)
+					}
+					hitBlocks[unitPath] = append(hitBlocks[unitPath], int(ord))
+				}
 			}
 			lines := hit[fn.file]
 			// A block can end before its start, where a //line directive
@@ -192,7 +252,7 @@ func linesOf(m *metaFile, counterData []byte) (map[string][]int, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	out := make(map[string][]int, len(hit))
 	for file, lines := range hit {
@@ -203,5 +263,12 @@ func linesOf(m *metaFile, counterData []byte) (map[string][]int, error) {
 		sort.Ints(sorted)
 		out[file] = sorted
 	}
-	return out, nil
+	if len(hitBlocks) == 0 {
+		return out, nil, nil
+	}
+	for file, ords := range hitBlocks {
+		sort.Ints(ords)
+		hitBlocks[file] = compactSortedInts(ords)
+	}
+	return out, hitBlocks, nil
 }

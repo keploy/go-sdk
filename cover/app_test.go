@@ -185,10 +185,13 @@ func buildByHand(t *testing.T, hook, mod string, buildArgs ...string) string {
 }
 
 // keploySide is the agent's side: the data socket's listener and the records
-// it got.
+// it got (test & background records on records, INDEX records on indexes, and
+// KTB1 table frames via onFrame when set).
 type keploySide struct {
 	sock, data string
 	records    chan map[string]any
+	indexes    chan map[string]any
+	onFrame    func(conn net.Conn, raw []byte)
 }
 
 func newKeploySide(t *testing.T) *keploySide {
@@ -198,6 +201,7 @@ func newKeploySide(t *testing.T) *keploySide {
 		sock:    filepath.Join(dir, "c.sock"),
 		data:    filepath.Join(dir, "d.sock"),
 		records: make(chan map[string]any, 16),
+		indexes: make(chan map[string]any, 16),
 	}
 	ln, err := net.Listen("unix", k.data)
 	if err != nil {
@@ -211,10 +215,26 @@ func newKeploySide(t *testing.T) *keploySide {
 				return
 			}
 			b, _ := io.ReadAll(c)
+			if bytes.HasPrefix(b, []byte(tableFrameMagic)) {
+				if k.onFrame != nil {
+					k.onFrame(c, b)
+				} else {
+					_, _ = c.Write([]byte("OK\n"))
+				}
+				_ = c.Close()
+				continue
+			}
 			_ = c.Close()
 			var rec map[string]any
 			if err := json.Unmarshal(b, &rec); err != nil {
 				rec = map[string]any{"undecodable": string(b)}
+			}
+			if rec["kind"] == "index" {
+				select {
+				case k.indexes <- rec:
+				default:
+				}
+				continue
 			}
 			k.records <- rec
 		}

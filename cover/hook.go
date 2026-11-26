@@ -82,11 +82,28 @@ var (
 	clearCounters   = coverage.ClearCounters
 	publishCoverage = reportCoverage
 	// snapshotLines reads the lines run since the counters were last
-	// cleared, sendRecord sends one record to Keploy, and buildID names the
-	// app's build. Variables for tests.
-	snapshotLines = executedLines
-	sendRecord    = sendToSocket
-	buildID       = goBuildID
+	// cleared (used for between-tests gaps), snapshotCoverage reads both
+	// lines and unit-relative blocks in one counter snapshot (used on END),
+	// sendRecord sends one record to Keploy, and buildID names the app's
+	// build. Variables for tests.
+	snapshotLines    = executedLines
+	snapshotCoverage = executedLinesAndBlocks
+	sendRecord       = sendToSocket
+	buildID          = goBuildID
+
+	// INDEX delivery state, guarded by controlMu: sent once per data socket
+	// file (sameSocketFile) and re-sent whenever a new receiver appears or the
+	// BACKGROUND token changes.
+	indexSent     bool
+	indexSockInfo os.FileInfo
+	indexBgToken  string
+
+	// TABLE streaming state, guarded by tableStreamMu so concurrent TABLE asks
+	// coalesce cleanly and never interleave KTB1 frames on the data socket.
+	tableStreamMu  sync.Mutex
+	tableStreaming bool
+	tableRequeue   bool
+	streamTableFn  = streamTable
 
 	// saidWhy holds the reasons a START was not taken that were already
 	// logged, so an app that cannot be measured says why once, not per test.
@@ -97,7 +114,9 @@ var (
 // before the app can say it is ready: bound on a goroutine, the bind could
 // come after the app's port, and the first test's START then found no one
 // listening and its coverage was lost. It then serves Keploy's commands on a
-// goroutine.
+// goroutine. Go's coverage runtime is only initialized in package main's init
+// (which runs after this package's init), so coverage metadata and INDEX are
+// read and sent lazily on the first START rather than from init.
 func init() {
 	if _, err := startControlServer(controlSocketPath); err != nil {
 		log.Printf("[keploy coverage] could not listen for Keploy's coverage commands on %s, so no test of this run is measured: %v", controlSocketPath, err)
@@ -172,6 +191,131 @@ func handleControlRequest(conn net.Conn) {
 // BACKGROUND records: the lines the app ran between two tests.
 const backgroundAsk = "BACKGROUND"
 
+// tableAsk is the control command with which Keploy's agent asks for the
+// build's coverage table as KTB1 frames on the data socket.
+const tableAsk = "TABLE"
+
+// replyIgnoredWith returns a single-line IGNORED proto=2 reply carrying reason.
+func replyIgnoredWith(reason string) string {
+	reason = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(reason, "\r", " "), "\n", " "))
+	if reason == "" {
+		return replyIgnored
+	}
+	return "IGNORED proto=2 " + reason + "\n"
+}
+
+// sameSocketFile reports whether a and b describe the same Unix socket file
+// instance. Checking ModTime alongside os.SameFile catches Linux tmpfs/ext4
+// inode reuse when an agent unlinks and immediately re-binds the data socket.
+func sameSocketFile(a, b os.FileInfo) bool {
+	return a != nil && b != nil && os.SameFile(a, b) && a.ModTime().Equal(b.ModTime()) && a.Mode() == b.Mode() && a.Size() == b.Size()
+}
+
+// maybeSendIndexLocked sends the Go INDEX record on START when it has not yet
+// been delivered to the current receiver (or the receiver's socket file or
+// BACKGROUND token changed). Best-effort: never fails START. Called with
+// controlMu held.
+func maybeSendIndexLocked() {
+	if meta == nil {
+		return
+	}
+	fi, statErr := os.Stat(dataSocketPath)
+	if statErr != nil {
+		if indexSent && indexSockInfo != nil {
+			// The old data socket disappeared; re-send when a new one appears.
+			indexSent = false
+			indexSockInfo = nil
+		}
+		return
+	}
+	tbl, err := loadTable()
+	if err != nil || tbl == nil {
+		return
+	}
+	need := !indexSent || (bgAsked && bgToken != indexBgToken) || !sameSocketFile(indexSockInfo, fi)
+	if !need {
+		return
+	}
+	payload, err := tbl.indexBytes()
+	if err != nil {
+		return
+	}
+	if err := sendRecord(payload); err != nil {
+		return
+	}
+	indexSent = true
+	indexSockInfo = fi
+	indexBgToken = bgToken
+}
+
+// handleTableCommand handles the TABLE control command: lazily builds the
+// cached Go build table, replies IGNORED proto=2 <reason> when unavailable or
+// empty, otherwise replies ACK proto=2 immediately and streams KTB1 frames
+// asynchronously, coalescing concurrent TABLE asks so two streams never
+// interleave.
+func handleTableCommand() string {
+	controlMu.Lock()
+	if err := prepareMeta(); err != nil {
+		sayWhyNotMeasured(err)
+		controlMu.Unlock()
+		return replyIgnoredWith(err.Error())
+	}
+	tbl, err := loadTable()
+	if err != nil {
+		controlMu.Unlock()
+		return replyIgnoredWith(err.Error())
+	}
+	if tbl == nil || tbl.unitCount() == 0 {
+		controlMu.Unlock()
+		return replyIgnoredWith("no first-party Go source files in coverage metadata")
+	}
+	controlMu.Unlock()
+
+	tableStreamMu.Lock()
+	if tableStreaming {
+		tableRequeue = true
+		tableStreamMu.Unlock()
+		return replyTaken
+	}
+	tableStreaming = true
+	tableRequeue = false
+	streamFn := streamTableFn
+	tableStreamMu.Unlock()
+
+	go runTableStream(tbl, streamFn)
+	return replyTaken
+}
+
+// runTableStream streams tbl's KTB1 frames on a single goroutine, coalescing
+// concurrent TABLE asks cleanly.
+func runTableStream(tbl *goTable, streamFn func(*goTable) error) {
+	for {
+		startFI, _ := os.Stat(dataSocketPath)
+		err := streamFn(tbl)
+		if err != nil {
+			log.Printf("[keploy coverage] build table stream stopped: %v", err)
+		}
+		tableStreamMu.Lock()
+		again := tableRequeue
+		tableRequeue = false
+		if again && err == nil {
+			curFI, curErr := os.Stat(dataSocketPath)
+			sameTarget := (startFI != nil && curErr == nil && sameSocketFile(startFI, curFI)) ||
+				(startFI == nil && curErr != nil)
+			if sameTarget {
+				again = false
+			}
+		}
+		if !again {
+			tableStreaming = false
+			tableStreamMu.Unlock()
+			return
+		}
+		streamFn = streamTableFn
+		tableStreamMu.Unlock()
+	}
+}
+
 // startReply is a taken START's answer: whose BACKGROUND ask this process
 // holds. Called with controlMu held, in the START's own hold, so the answer
 // is the state the START left.
@@ -185,6 +329,9 @@ func startReply() string {
 
 // runCommand runs one command and returns its answer.
 func runCommand(command string) string {
+	if command == tableAsk {
+		return handleTableCommand()
+	}
 	if command == backgroundAsk || strings.HasPrefix(command, backgroundAsk+" ") {
 		token := strings.TrimSpace(strings.TrimPrefix(command, backgroundAsk))
 		controlMu.Lock()
@@ -244,6 +391,9 @@ func runTestCommand(command string) string {
 			bgLost++
 		}
 		prevTestID = ""
+		// Lazily deliver INDEX before resetting counters so any work done to
+		// send it never leaks into this test's counter window.
+		maybeSendIndexLocked()
 		// A START whose counters were not reset is not taken: the test's
 		// coverage would hold the lines of the tests before it.
 		if err := clearCounters(); err != nil {
@@ -465,10 +615,11 @@ func sayWhyNotMeasured(err error) {
 }
 
 // reportCoverage sends the test's coverage to Keploy: the lines it ran, per
-// source file, and, where some of them ran between tests too, which files and
-// exact lines overlapped (overlapBy). Called with controlMu held.
+// source file, unit-relative executed blocks when available, and, where some
+// lines ran between tests too, which files and exact lines overlapped
+// (overlapBy). Called with controlMu held.
 func reportCoverage(testID string) error {
-	lines, err := snapshotLines()
+	lines, blocks, err := snapshotCoverage()
 	if err != nil {
 		return err
 	}
@@ -476,24 +627,28 @@ func reportCoverage(testID string) error {
 		log.Printf("[keploy coverage] test %s ran no measured line", testID)
 	}
 	partial, overlap := overlapBy(lines)
-	data, err := encodeRecord(testID, lines, partial, overlap)
+	data, err := encodeRecordWithBlocks(testID, lines, blocks, partial, overlap)
 	if err != nil {
 		return err
 	}
 	return sendRecord(data)
 }
 
-// encodeRecord is a test's coverage record: a map, as the SDK always sent,
-// so its keys are written sorted ("contaminated", when partial names a file,
+// encodeRecordWithBlocks is a test's coverage record: a map, as the SDK always
+// sent, so its keys are written sorted ("contaminated", when partial names a
+// file, "executedBlocksByFile" when blocks holds unit-relative block ordinals,
 // "executedLinesByFile", "id", then "overlapLinesByFile" when overlap holds
 // lines). contaminated is the agent's field for a record whose lines may hold
 // work that is not the test's; overlapLinesByFile lists the exact lines shared
 // with between-tests gaps so Keploy can confirm them against a complete
 // background.
-func encodeRecord(testID string, lines map[string][]int, partial []string, overlap map[string][]int) ([]byte, error) {
+func encodeRecordWithBlocks(testID string, lines, blocks map[string][]int, partial []string, overlap map[string][]int) ([]byte, error) {
 	rec := map[string]interface{}{
 		"id":                  testID,
 		"executedLinesByFile": lines,
+	}
+	if len(blocks) > 0 {
+		rec["executedBlocksByFile"] = blocks
 	}
 	if len(partial) > 0 {
 		rec["contaminated"] = partial
