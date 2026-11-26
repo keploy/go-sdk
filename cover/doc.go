@@ -41,12 +41,17 @@
 // "executedLinesByFile": ...}, and keploy dedup leaves the lines gaps of at
 // least two different tests of a set ran out of that set's dedup keys. A test
 // whose lines include any line a gap ran before its END, in this process, is
-// sent coverage-partial ("contaminated": ["between-tests:<file>", ...]):
-// keploy never drops it as a duplicate, and never drops another as its
-// duplicate. A gap lost (not read or sent, or not taken as a gap: after an END
-// not taken or a failed reset) is told to the set of the test after it by a
-// lines-free BACKGROUND record ahead of that test's own, so keploy never takes
-// the set as complete. Not marked: a test before the gap that shows a worker
+// sent coverage-partial ("contaminated": ["between-tests:<file>", ...], capped
+// at 8 files plus "+N") alongside "overlapLinesByFile": {"<file>": [lines]}
+// (every overlapping file with its sorted, unique overlapping lines, uncapped).
+// An agent that ignores overlapLinesByFile, or whose set's background is
+// incomplete, still fails closed (keploy never drops the test as a duplicate,
+// and never drops another as its duplicate); an agent with a complete set
+// background that removes every overlapping line from the set's keys may
+// confirm and trust the test. A gap lost (not read or sent, or not taken as a
+// gap: after an END not taken or a failed reset) is told to the set of the
+// test after it by a lines-free BACKGROUND record ahead of that test's own, so
+// keploy never takes the set as complete. Not marked: a test before the gap that shows a worker
 // and any test after the app restarts (it starts with no gap seen), though
 // keploy's set-wide background still leaves the worker's lines out of their
 // keys; and a worker that never runs between tests, only inside them, which
