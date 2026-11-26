@@ -93,6 +93,8 @@ type metaFile struct {
 	mode        uint8
 	granularity uint8
 	pkgs        []metaPkg
+	// table is the lazily built canonical Go build table for this meta-data.
+	table *goTable
 }
 
 // reader reads little-endian values and ULEB128 numbers from a byte slice,

@@ -31,6 +31,7 @@ const socketPathEnv = "KEPLOY_GO_SDK_TEST_CONTROL_SOCKET"
 var testSocketDir = func() string {
 	if p := os.Getenv(socketPathEnv); p != "" {
 		controlSocketPath = p
+		dataSocketPath = p + ".data"
 		return ""
 	}
 	dir, err := os.MkdirTemp("", "kc")
@@ -38,6 +39,7 @@ var testSocketDir = func() string {
 		panic(err)
 	}
 	controlSocketPath = filepath.Join(dir, "c.sock")
+	dataSocketPath = filepath.Join(dir, "d.sock")
 	return dir
 }()
 
@@ -187,21 +189,31 @@ const replyStartUnasked = "ACK proto=2 bg=-\n"
 
 func replyStartAskedBy(token string) string { return "ACK proto=2 bg=" + token + "\n" }
 
+// encodeRecord is a test helper for records without executedBlocksByFile.
+func encodeRecord(testID string, lines map[string][]int, partial []string, overlap map[string][]int) ([]byte, error) {
+	return encodeRecordWithBlocks(testID, lines, nil, partial, overlap)
+}
+
 // resetGaps clears the between-tests state and stubs the reads and sends a
 // gap makes, for one test: snapshotLines answers {} unless the test sets it.
 func resetGaps(t *testing.T) {
 	t.Helper()
-	oldSnap, oldSend, oldBuild := snapshotLines, sendRecord, buildID
+	oldSnap, oldCov, oldSend, oldBuild := snapshotLines, snapshotCoverage, sendRecord, buildID
 	snapshotLines = func() (map[string][]int, error) { return map[string][]int{}, nil }
+	snapshotCoverage = func() (map[string][]int, map[string][]int, error) {
+		l, err := snapshotLines()
+		return l, nil, err
+	}
 	sendRecord = func([]byte) error { return nil }
 	buildID = func() (string, error) { return "go1-00112233445566778899aabbccddeeff", nil }
 	clear := func() {
 		prevTestID, bgAsked, bgToken, bgLost, bgShown, lastTest = "", false, "", 0, 0, ""
 		everGap = map[string]map[int]struct{}{}
+		indexSent, indexSockInfo, indexBgToken = false, nil, ""
 	}
 	clear()
 	t.Cleanup(func() {
-		snapshotLines, sendRecord, buildID = oldSnap, oldSend, oldBuild
+		snapshotLines, snapshotCoverage, sendRecord, buildID = oldSnap, oldCov, oldSend, oldBuild
 		clear()
 	})
 }

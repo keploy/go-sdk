@@ -19,14 +19,43 @@
 //     packages, and removes both again.
 //
 // Once linked, the package listens before main runs on
-// /tmp/coverage_control.sock for Keploy's START and END of each test: START
-// resets the counters, END reads them in this process (no Go toolchain is
-// needed where the app runs, so a distroless image, or a scratch image given
-// a writable /tmp, works) and sends the lines each source file ran to
-// /tmp/coverage_data.sock as one JSON record, {"executedLinesByFile": {"<import path>/<file>": [lines]}, "id":
-// "<set>/<test>"}. An app built without -cover, or without
-// -covermode=atomic, answers each START IGNORED and logs why once, so Keploy
-// reports its tests as not measured rather than guessing.
+// /tmp/coverage_control.sock for Keploy's commands (START, END, BACKGROUND,
+// TABLE): START resets the counters, END reads them in this process (no Go
+// toolchain is needed where the app runs, so a distroless image, or a scratch
+// image given a writable /tmp, works) and sends each test's coverage to
+// /tmp/coverage_data.sock as one JSON record:
+//
+//	{"executedBlocksByFile":{"<pkg>/<file>":[0,2]},"executedLinesByFile":{"<file>":[lines]},"id":"<set>/<test>"}
+//
+// executedBlocksByFile holds sorted unique unit-relative leaf ordinals
+// (0..len(unitLeaves)-1 in canonical build-table order, so ordinals remain
+// stable if another unit is demoted) keyed by canonical "<pkg>/<base>"
+// ("command-line-arguments/<base>" for command-line builds, whereas
+// executedLinesByFile keeps the raw file path recorded by the compiler for
+// backward compatibility); executedBlocksByFile is omitted when empty. An app
+// built without -cover, or without -covermode=atomic, answers each START
+// IGNORED and logs why once, so Keploy reports its tests as not measured
+// rather than guessing.
+//
+// Build table and INDEX. Once coverage meta-data is available, the package
+// sends an INDEX JSON record on /tmp/coverage_data.sock:
+//
+//	{"kind":"index","v":1,"language":"go","build":"go1-<meta hash>","producer":"go","producerVersion":"<runtime.Version()>","precision":"block"|"func","files":N,"leaves":M}
+//
+// It sends INDEX lazily on START (before resetting counters, after package
+// main's init has initialized Go's coverage runtime) and again whenever START
+// observes a new data socket file (receiver restart) or a changed BACKGROUND
+// token.
+// On the TABLE control command, it lazily builds and caches the canonical
+// schema-1 Go build table (first-party packages only): if coverage meta-data
+// is unavailable or holds no first-party files it answers
+// "IGNORED proto=2 <reason>\n"; otherwise it answers "ACK proto=2\n"
+// immediately and streams KTB1 frames asynchronously on a single goroutine
+// (coalescing concurrent TABLE requests so frames never interleave). Each KTB1
+// frame carries "KTB1", a 4-byte big-endian body length (total frame at most
+// 1 MiB), a JSON header line and payload chunk, streaming part "table" (NDJSON
+// unit records, with record count and SHA-256 on last:true) followed by an
+// empty part "probes" (records:0), and requires an "OK\n" reply per frame.
 //
 // Between tests. The counters are reset at each START and again after each
 // END, so every window is either one test's or a gap between two. A gap's
