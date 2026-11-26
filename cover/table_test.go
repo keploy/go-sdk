@@ -778,8 +778,8 @@ func TestTableCommand_KTB1FramingMultiFrameAndErrors(t *testing.T) {
 		prepareMeta = func() error { return errors.New("not built with -cover") }
 		path := startTestServer(t)
 		got := send(t, path, "TABLE")
-		if !strings.HasPrefix(got, "IGNORED proto=2 ") || !strings.Contains(got, "not built with -cover") || !strings.HasSuffix(got, "\n") {
-			t.Fatalf("TABLE reply = %q, want IGNORED proto=2 <reason>", got)
+		if !strings.HasPrefix(got, "IGNORED proto=3 ") || !strings.Contains(got, "not built with -cover") || !strings.HasSuffix(got, "\n") {
+			t.Fatalf("TABLE reply = %q, want IGNORED proto=3 <reason>", got)
 		}
 	})
 
@@ -793,8 +793,8 @@ func TestTableCommand_KTB1FramingMultiFrameAndErrors(t *testing.T) {
 		}
 		path := startTestServer(t)
 		got := send(t, path, "TABLE")
-		if !strings.HasPrefix(got, "IGNORED proto=2 ") || !strings.Contains(got, "no first-party") {
-			t.Fatalf("TABLE reply = %q, want IGNORED proto=2 no first-party...", got)
+		if !strings.HasPrefix(got, "IGNORED proto=3 ") || !strings.Contains(got, "no first-party") {
+			t.Fatalf("TABLE reply = %q, want IGNORED proto=3 no first-party...", got)
 		}
 	})
 

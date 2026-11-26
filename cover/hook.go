@@ -30,12 +30,11 @@ var dataSocketPath = "/tmp/coverage_data.sock"
 // The answers on the control socket: one line for every command read, written
 // before the connection is closed. ACK says the command was taken: the
 // counters were reset for a START, or the test's coverage was sent for an
-// END. IGNORED says it was read and not taken. proto=2 says this SDK answers
-// every command it reads, so Keploy reads a close with no answer as a
-// command not taken.
+// END. IGNORED says it was read and not taken. proto=3 says this SDK answers
+// every command it reads (compatible with proto>=2 parsers) and advertises
+// live honesty capabilities in caps=<k=v,...>.
 const (
-	replyTaken   = "ACK proto=2\n"
-	replyIgnored = "IGNORED proto=2\n"
+	replyIgnored = "IGNORED proto=3\n"
 	// A START taken is answered with whose BACKGROUND ask this process
 	// holds: "bg=-" until Keploy's agent asks, then "bg=<the ask's token>",
 	// so an agent asks when the token is not its own (a new run, a restarted
@@ -44,6 +43,26 @@ const (
 	// which is asked after its INDEX.
 	bgUnasked = "-"
 )
+
+// capsString formats the v3 honesty capability token (no spaces) from live
+// runtime state. Called with controlMu held (or after verifying coverage).
+func capsString(coverageActive bool) string {
+	blockCov := meta == nil || meta.granularity == ctrGranularityPerBlk
+	tracking := goroutineTrackingEnabled()
+	windowCut := coverageActive && tracking && blockCov
+	contaminated := coverageActive
+	background := coverageActive
+	asyncExecutors := coverageActive && tracking && blockCov
+	return fmt.Sprintf(
+		"windowCut=%t,contaminated=%t,classMismatch=false,background=%t,asyncExecutors=%t,listenerContamination=false",
+		windowCut, contaminated, background, asyncExecutors,
+	)
+}
+
+// ackReply formats a taken non-START command's v3 ACK line with live caps.
+func ackReply() string {
+	return "ACK proto=3 caps=" + capsString(true) + "\n"
+}
 
 var (
 	// controlMu makes each command atomic: one START or END at a time.
@@ -195,13 +214,13 @@ const backgroundAsk = "BACKGROUND"
 // build's coverage table as KTB1 frames on the data socket.
 const tableAsk = "TABLE"
 
-// replyIgnoredWith returns a single-line IGNORED proto=2 reply carrying reason.
+// replyIgnoredWith returns a single-line IGNORED proto=3 reply carrying reason.
 func replyIgnoredWith(reason string) string {
 	reason = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(reason, "\r", " "), "\n", " "))
 	if reason == "" {
 		return replyIgnored
 	}
-	return "IGNORED proto=2 " + reason + "\n"
+	return "IGNORED proto=3 " + reason + "\n"
 }
 
 // sameSocketFile reports whether a and b describe the same Unix socket file
@@ -249,9 +268,9 @@ func maybeSendIndexLocked() {
 }
 
 // handleTableCommand handles the TABLE control command: lazily builds the
-// cached Go build table, replies IGNORED proto=2 <reason> when unavailable or
-// empty, otherwise replies ACK proto=2 immediately and streams KTB1 frames
-// asynchronously, coalescing concurrent TABLE asks so two streams never
+// cached Go build table, replies IGNORED proto=3 <reason> when unavailable or
+// empty, otherwise replies ACK proto=3 caps=... immediately and streams KTB1
+// frames asynchronously, coalescing concurrent TABLE asks so two streams never
 // interleave.
 func handleTableCommand() string {
 	controlMu.Lock()
@@ -269,13 +288,14 @@ func handleTableCommand() string {
 		controlMu.Unlock()
 		return replyIgnoredWith("no first-party Go source files in coverage metadata")
 	}
+	reply := ackReply()
 	controlMu.Unlock()
 
 	tableStreamMu.Lock()
 	if tableStreaming {
 		tableRequeue = true
 		tableStreamMu.Unlock()
-		return replyTaken
+		return reply
 	}
 	tableStreaming = true
 	tableRequeue = false
@@ -283,7 +303,7 @@ func handleTableCommand() string {
 	tableStreamMu.Unlock()
 
 	go runTableStream(tbl, streamFn)
-	return replyTaken
+	return reply
 }
 
 // runTableStream streams tbl's KTB1 frames on a single goroutine, coalescing
@@ -317,14 +337,14 @@ func runTableStream(tbl *goTable, streamFn func(*goTable) error) {
 }
 
 // startReply is a taken START's answer: whose BACKGROUND ask this process
-// holds. Called with controlMu held, in the START's own hold, so the answer
-// is the state the START left.
+// holds, plus the live v3 honesty capabilities. Called with controlMu held, in
+// the START's own hold, so the answer is the state the START left.
 func startReply() string {
 	token := bgUnasked
 	if bgAsked {
 		token = bgToken
 	}
-	return "ACK proto=2 bg=" + token + "\n"
+	return "ACK proto=3 bg=" + token + " caps=" + capsString(true) + "\n"
 }
 
 // runCommand runs one command and returns its answer.
@@ -353,14 +373,14 @@ func runCommand(command string) string {
 			bgLost, bgShown = 0, 0
 		}
 		bgAsked, bgToken = true, token
-		return replyTaken
+		return ackReply()
 	}
 	return runTestCommand(command)
 }
 
 // runTestCommand runs a START or END and returns its answer: replyIgnored for
 // one not taken, startReply (made in the same hold of controlMu) for a START
-// taken, replyTaken for an END taken.
+// taken, ackReply for an END taken.
 func runTestCommand(command string) string {
 	action, id, ok := strings.Cut(command, " ")
 	if !ok || id == "" {
@@ -376,14 +396,39 @@ func runTestCommand(command string) string {
 		// so at its first START, not at each END.
 		if err := prepareMeta(); err != nil {
 			currentTestID, prevTestID = "", ""
+			activeTracking, startGids, activeContaminated = false, nil, nil
 			sayWhyNotMeasured(err)
 			return replyIgnored
 		}
+		tracking := goroutineTrackingEnabled()
+		var curSnap goroutineSnapshot
+		haveSnap := false
+		if tracking || len(lingeringTails) > 0 {
+			curSnap = snapshotGoroutines()
+			haveSnap = true
+		}
+		unclosedID := currentTestID
+		if unclosedID != "" && activeTracking && haveSnap && startGids != nil {
+			covered := coveredPackageSet()
+			if curSnap.truncated {
+				// Fail closed on stack truncation during unclosed window.
+				prevWindowCutTestID = unclosedID
+			} else if alive := findNewAppGoroutines(curSnap, startGids, covered); len(alive) > 0 {
+				gids := make([]uint64, len(alive))
+				for i, g := range alive {
+					gids[i] = g.id
+				}
+				addLingeringTail(unclosedID, gids, summarizeGoroutineNames(alive, covered))
+			}
+		}
+		// Compute whether the gap since prevTestID followed a cut window or ran
+		// while lingering goroutines were still tracked BEFORE pruning them.
+		afterCut := prevWindowCutTestID != "" || len(lingeringTails) > 0
 		// The counters hold the gap since the last test's END: what the app
 		// ran between the two tests, never this test's or that one's.
 		switch {
 		case prevTestID != "" && currentTestID == "":
-			noteGap(prevTestID, id)
+			noteGap(prevTestID, id, afterCut)
 		case bgAsked && lastTest != "":
 			// The window since the last test holds more than a gap (a
 			// test whose END was not taken, a failed reset): keploy is
@@ -398,8 +443,17 @@ func runTestCommand(command string) string {
 		// coverage would hold the lines of the tests before it.
 		if err := clearCounters(); err != nil {
 			currentTestID = ""
+			activeTracking, startGids, activeContaminated = false, nil, nil
 			sayWhyNotMeasured(err)
 			return replyIgnored
+		}
+		activeContaminated = collectStartContamination(unclosedID, curSnap, haveSnap)
+		if tracking {
+			activeTracking = true
+			startGids = gidSetOf(curSnap)
+		} else {
+			activeTracking = false
+			startGids = nil
 		}
 		currentTestID, lastTest = id, id
 		return startReply()
@@ -413,10 +467,66 @@ func runTestCommand(command string) string {
 			return replyIgnored
 		}
 		currentTestID = ""
+		testTracking := activeTracking
+		testStartGids := startGids
+		testContaminated := activeContaminated
+		activeTracking, startGids, activeContaminated = false, nil, nil
+
+		windowCut := false
+		var lingeringNames []string
+		if testTracking {
+			covered := coveredPackageSet()
+			waitDur := endWaitDuration()
+			snap := snapshotGoroutines()
+			newAlive := findNewAppGoroutines(snap, testStartGids, covered)
+			if (len(newAlive) > 0 || snap.truncated) && waitDur > 0 {
+				deadline := time.Now().Add(waitDur)
+				for len(newAlive) > 0 || snap.truncated {
+					rem := time.Until(deadline)
+					if rem <= 0 {
+						break
+					}
+					sleep := endWaitPollEvery
+					if rem < sleep {
+						sleep = rem
+					}
+					time.Sleep(sleep)
+					snap = snapshotGoroutines()
+					newAlive = findNewAppGoroutines(snap, testStartGids, covered)
+				}
+			}
+			// Prune previously lingering goroutines that have already exited
+			// before this END completes so subsequent gaps/tests are clean.
+			if !snap.truncated {
+				pruneLingeringTails(snap)
+			}
+			if snap.truncated {
+				windowCut = true
+				lingeringNames = []string{"stack-truncated"}
+				prevWindowCutTestID = id
+			} else if len(newAlive) > 0 {
+				windowCut = true
+				gids := make([]uint64, len(newAlive))
+				for i, g := range newAlive {
+					gids[i] = g.id
+				}
+				lingeringNames = summarizeGoroutineNames(newAlive, covered)
+				addLingeringTail(id, gids, lingeringNames)
+				prevWindowCutTestID = id
+			}
+		}
+
 		if bgAsked && bgLost > bgShown {
 			sendLost(id)
 		}
+		pendingEndWindowCut = windowCut
+		pendingEndLingering = lingeringNames
+		pendingEndContaminated = testContaminated
 		err := publishCoverage(id)
+		pendingEndWindowCut = false
+		pendingEndLingering = nil
+		pendingEndContaminated = nil
+
 		// The counters are reset after every END, so the window to the next
 		// START is a gap between tests alone. One whose reset failed holds
 		// this test's lines too, and is no gap to trust.
@@ -431,7 +541,7 @@ func runTestCommand(command string) string {
 			log.Printf("[keploy coverage] could not send the coverage of test %s: %v", id, err)
 			return replyIgnored
 		}
-		return replyTaken
+		return ackReply()
 	default:
 		log.Printf("[keploy coverage] unknown command %q", action)
 		return replyIgnored
@@ -439,9 +549,11 @@ func runTestCommand(command string) string {
 }
 
 // noteGap reads the window from after's END to before's START, a gap between
-// two tests, keeps its lines (everGap) and, once the agent asked, sends it as
-// a BACKGROUND record. Called with controlMu held.
-func noteGap(after, before string) {
+// two tests, keeps its lines (everGap, unless afterCut is true so async tails
+// from cut windows never pollute between-tests tracking) and, once the agent
+// asked, sends it as a BACKGROUND record (tagged afterCut=true when afterCut).
+// Called with controlMu held.
+func noteGap(after, before string, afterCut bool) {
 	lines, err := snapshotLines()
 	if err != nil {
 		if bgAsked {
@@ -450,20 +562,22 @@ func noteGap(after, before string) {
 		log.Printf("[keploy coverage] could not read what the app ran between tests %s and %s: %v", after, before, err)
 		return
 	}
-	for file, ls := range lines {
-		ever := everGap[file]
-		if ever == nil {
-			ever = map[int]struct{}{}
-			everGap[file] = ever
-		}
-		for _, l := range ls {
-			ever[l] = struct{}{}
+	if !afterCut {
+		for file, ls := range lines {
+			ever := everGap[file]
+			if ever == nil {
+				ever = map[int]struct{}{}
+				everGap[file] = ever
+			}
+			for _, l := range ls {
+				ever[l] = struct{}{}
+			}
 		}
 	}
 	if !bgAsked || len(lines) == 0 {
 		return
 	}
-	if err := sendBackground(after, before, lines); err != nil {
+	if err := sendBackgroundWithMeta(after, before, lines, afterCut); err != nil {
 		log.Printf("[keploy coverage] could not send what the app ran between tests %s and %s: %v", after, before, err)
 	}
 }
@@ -473,15 +587,15 @@ func noteGap(after, before string) {
 // no "after" (so it is no window), only the lost count, so the set the loss
 // is of is never taken as complete. Called with controlMu held.
 func sendLost(test string) {
-	if err := sendBackground("", test, map[string][]int{}); err != nil {
+	if err := sendBackgroundWithMeta("", test, map[string][]int{}, false); err != nil {
 		log.Printf("[keploy coverage] could not tell keploy of the gaps between tests it lost before test %s: %v", test, err)
 	}
 }
 
-// sendBackground sends one BACKGROUND record, carrying bgLost; one not sent
-// counts as lost too. Called with controlMu held.
-func sendBackground(after, before string, lines map[string][]int) error {
-	data, err := encodeBackground(after, before, lines)
+// sendBackgroundWithMeta sends one BACKGROUND record, carrying bgLost and
+// optional afterCut; one not sent counts as lost too. Called with controlMu held.
+func sendBackgroundWithMeta(after, before string, lines map[string][]int, afterCut bool) error {
+	data, err := encodeBackgroundWithMeta(after, before, lines, afterCut)
 	if err == nil {
 		err = sendRecord(data)
 	}
@@ -497,22 +611,31 @@ func sendBackground(after, before string, lines map[string][]int) error {
 // sends.
 const backgroundRecordV = 1
 
-// encodeBackground is a BACKGROUND record: the lines the app ran between
-// tests after and before. "kind" and "before" come first, so an agent that
-// reads only a record's head still knows its test set.
+// encodeBackground encodes a clean BACKGROUND record (afterCut=false).
 func encodeBackground(after, before string, lines map[string][]int) ([]byte, error) {
+	return encodeBackgroundWithMeta(after, before, lines, false)
+}
+
+// encodeBackgroundWithMeta is a BACKGROUND record: the lines the app ran
+// between tests after and before. "kind" and "before" come first, so an agent
+// that reads only a record's head still knows its test set. When afterCut is
+// true (the gap followed a windowCut test or had active lingering goroutines),
+// "afterCut":true is set so collectors never absorb an async tail into stable
+// background.
+func encodeBackgroundWithMeta(after, before string, lines map[string][]int, afterCut bool) ([]byte, error) {
 	build, err := buildID()
 	if err != nil {
 		return nil, err
 	}
 	head, err := json.Marshal(struct {
-		Kind   string `json:"kind"`
-		Before string `json:"before"`
-		After  string `json:"after"`
-		V      int    `json:"v"`
-		Build  string `json:"build"`
-		Lost   int    `json:"lost"`
-	}{"background", before, after, backgroundRecordV, build, bgLost})
+		Kind     string `json:"kind"`
+		Before   string `json:"before"`
+		After    string `json:"after"`
+		V        int    `json:"v"`
+		Build    string `json:"build"`
+		Lost     int    `json:"lost"`
+		AfterCut bool   `json:"afterCut,omitempty"`
+	}{"background", before, after, backgroundRecordV, build, bgLost, afterCut})
 	if err != nil {
 		return nil, fmt.Errorf("encode what the app ran between tests: %w", err)
 	}
@@ -615,9 +738,10 @@ func sayWhyNotMeasured(err error) {
 }
 
 // reportCoverage sends the test's coverage to Keploy: the lines it ran, per
-// source file, unit-relative executed blocks when available, and, where some
-// lines ran between tests too, which files and exact lines overlapped
-// (overlapBy). Called with controlMu held.
+// source file, unit-relative executed blocks when available, goroutine-tail
+// windowCut / lingeringGoroutines metadata, and contamination marks (from
+// unclosed windows, lingering async tails, or between-tests overlap). Called
+// with controlMu held.
 func reportCoverage(testID string) error {
 	lines, blocks, err := snapshotCoverage()
 	if err != nil {
@@ -626,23 +750,28 @@ func reportCoverage(testID string) error {
 	if len(lines) == 0 {
 		log.Printf("[keploy coverage] test %s ran no measured line", testID)
 	}
-	partial, overlap := overlapBy(lines)
-	data, err := encodeRecordWithBlocks(testID, lines, blocks, partial, overlap)
+	gapPartial, overlap := overlapBy(lines)
+	partial := mergeContaminated(pendingEndContaminated, gapPartial)
+	data, err := encodeRecordWithMeta(testID, lines, blocks, partial, overlap, pendingEndWindowCut, pendingEndLingering)
 	if err != nil {
 		return err
 	}
 	return sendRecord(data)
 }
 
-// encodeRecordWithBlocks is a test's coverage record: a map, as the SDK always
-// sent, so its keys are written sorted ("contaminated", when partial names a
-// file, "executedBlocksByFile" when blocks holds unit-relative block ordinals,
-// "executedLinesByFile", "id", then "overlapLinesByFile" when overlap holds
-// lines). contaminated is the agent's field for a record whose lines may hold
-// work that is not the test's; overlapLinesByFile lists the exact lines shared
-// with between-tests gaps so Keploy can confirm them against a complete
-// background.
+// encodeRecordWithBlocks encodes a test's coverage record without windowCut or
+// lingeringGoroutines metadata.
 func encodeRecordWithBlocks(testID string, lines, blocks map[string][]int, partial []string, overlap map[string][]int) ([]byte, error) {
+	return encodeRecordWithMeta(testID, lines, blocks, partial, overlap, false, nil)
+}
+
+// encodeRecordWithMeta is a test's coverage record: a map, as the SDK always
+// sent, so its keys are written sorted ("contaminated", when partial names a
+// reason, "executedBlocksByFile" when blocks holds unit-relative block
+// ordinals, "executedLinesByFile", "id", "lingeringGoroutines" when lingering
+// is non-empty, "overlapLinesByFile" when overlap holds lines, and "windowCut"
+// when windowCut is true).
+func encodeRecordWithMeta(testID string, lines, blocks map[string][]int, partial []string, overlap map[string][]int, windowCut bool, lingering []string) ([]byte, error) {
 	rec := map[string]interface{}{
 		"id":                  testID,
 		"executedLinesByFile": lines,
@@ -655,6 +784,12 @@ func encodeRecordWithBlocks(testID string, lines, blocks map[string][]int, parti
 	}
 	if len(overlap) > 0 {
 		rec["overlapLinesByFile"] = overlap
+	}
+	if windowCut {
+		rec["windowCut"] = true
+	}
+	if len(lingering) > 0 {
+		rec["lingeringGoroutines"] = lingering
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {

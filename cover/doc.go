@@ -49,7 +49,7 @@
 // On the TABLE control command, it lazily builds and caches the canonical
 // schema-1 Go build table (first-party packages only): if coverage meta-data
 // is unavailable or holds no first-party files it answers
-// "IGNORED proto=2 <reason>\n"; otherwise it answers "ACK proto=2\n"
+// "IGNORED proto=3 <reason>\n"; otherwise it answers "ACK proto=3 caps=...\n"
 // immediately and streams KTB1 frames asynchronously on a single goroutine
 // (coalescing concurrent TABLE requests so frames never interleave). Each KTB1
 // frame carries "KTB1", a 4-byte big-endian body length (total frame at most
@@ -57,13 +57,31 @@
 // unit records, with record count and SHA-256 on last:true) followed by an
 // empty part "probes" (records:0), and requires an "OK\n" reply per frame.
 //
+// Protocol v3 capabilities and honest goroutine-tail tracking. Every taken
+// control command replies with "ACK proto=3 [bg=<token>] caps=..." declaring
+// live runtime honesty capabilities (windowCut, contaminated, classMismatch,
+// background, asyncExecutors, listenerContamination), compatible with proto>=2
+// collectors. At each START, the hook snapshots live goroutine IDs via
+// runtime.Stack (zero overhead when unarmed or when
+// KEPLOY_GO_GOROUTINE_TRACKING=off). At END, it checks for newly-spawned
+// app-relevant goroutines (excluding go-sdk's own goroutines and idle stdlib
+// keep-alive/housekeeping goroutines), polling up to KEPLOY_GO_END_WAIT_MS
+// (default 200ms, max 2000ms; 0 checks immediately) for them to drain. If any
+// remain alive when the wait expires, the test record carries "windowCut":true
+// and "lingeringGoroutines", subsequent tests while those goroutines remain
+// alive (plus the immediate next test) carry "contaminated":["tail:<test>"],
+// and any BACKGROUND record emitted for a gap after a cut window carries
+// "afterCut":true (and does not pollute everGap) so recurring async tails can
+// never be absorbed into calibrated stable background. A START arriving without
+// a preceding END marks the new test with "contaminated":["unclosed:<test>"].
+//
 // Between tests. The counters are reset at each START and again after each
 // END, so every window is either one test's or a gap between two. A gap's
 // lines are the app's own work while no test ran (timers, workers, pollers).
-// A taken START answers "ACK proto=2 bg=-" until Keploy's agent asks for them
-// (the BACKGROUND command, "BACKGROUND <token>") and "ACK proto=2 bg=<token>"
-// after, so an agent whose token it is not (a new run, a restarted agent or
-// app) asks; once asked, each gap
+// A taken START answers "ACK proto=3 bg=- caps=..." until Keploy's agent asks
+// for them (the BACKGROUND command, "BACKGROUND <token>") and
+// "ACK proto=3 bg=<token> caps=..." after, so an agent whose token it is not
+// (a new run, a restarted agent or app) asks; once asked, each gap
 // goes to the agent at the next START as a BACKGROUND record, {"kind":
 // "background", "before": <next test>, "after": <previous test>, "v": 1,
 // "build": "go1-<meta hash>", "lost": <gaps lost since the ask>,
