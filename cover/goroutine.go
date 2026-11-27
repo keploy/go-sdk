@@ -1060,17 +1060,13 @@ func snapshotStartBaseline(snap goroutineSnapshot, covered map[string]bool, igno
 		} else if prevQ, ok := lastQuiescentSigs[id]; ok {
 			// Pre-existing goroutine was unparked (e.g. runnable) at START,
 			// with a prior quiescent baseline from an earlier complete START.
-			// When it is runnable at the EXACT same stack frames as its
-			// recorded idle (e.g. woken from netpoll or channel close right at
-			// START without having started work), do not mark it drifted — keep
-			// prevQ as its baseline so END still catches any work it enters.
-			// Otherwise mark drifted=true so END fails closed even if the gap
-			// job finishes and returns to prevQ (or exits) during this window.
-			if prevQ.active && sig.appFrameCount == prevQ.appFrameCount && sig.frameHash == prevQ.frameHash {
-				idle[id] = startBaseline{idle: prevQ}
-			} else {
-				idle[id] = startBaseline{idle: prevQ, drifted: true, startName: describeAppGoroutine(g, covered)}
-			}
+			// Becoming runnable means its wake event (channel send/close,
+			// socket data, or timer) already fired in the gap, so fail closed
+			// (drifted=true) even if the job finishes and returns to prevQ or
+			// exits before END. Idle wrapped HTTP keep-alive connections
+			// waking on peer close/IdleTimeout are handled above via
+			// isIdleWrappedHTTPKeepAlive and do not enter this branch.
+			idle[id] = startBaseline{idle: prevQ, drifted: true, startName: describeAppGoroutine(g, covered)}
 		} else {
 			// Pre-existing goroutine was unparked at START with no prior
 			// quiescent baseline: record its app-frame depth with status == ""
