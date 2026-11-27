@@ -103,7 +103,8 @@
 // or a lazily dialed third-party client over a wrapped net.Conn), move onto a
 // one-time resume watch (bounded at 512 active watches) once stably parked at
 // the same quiescent signature across consecutive windows (START -> END ->
-// START, after birth test T1 was cut and T2 was tainted tail:T1). Subsequent
+// START, after the spawning test was cut and the next test was tainted
+// "tail:<test>"). Subsequent
 // tests run clean while the watched goroutine stays parked, and the gap or
 // test in which any snapshot (including intermediate END_WAIT polls) observes
 // it awake, exiting, or spawning a child is marked with afterCut /
@@ -126,7 +127,7 @@
 // channel/select timer or time.Sleep (for example select{case <-time.After(d):}
 // or for{time.Sleep(d); ...}), or a pre-existing worker stably parked mid-job
 // in a non-HTTP downstream call, settles onto a resume watch after two windows
-// (T1 cut, T2 tail:T1), so a later tick or wakeup that runs and re-parks at
+// (the spawning test cut, the next test "tail:<test>"), so a later tick or wakeup that runs and re-parks at
 // the exact same signature strictly between two snapshots is not observed;
 // snapshots also cannot observe a child goroutine or watched wakeup that starts
 // and returns/exits strictly between two snapshots (nor a grandchild orphaned

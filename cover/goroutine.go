@@ -70,8 +70,8 @@ type goroutineSnapshot struct {
 type goroutineSig struct {
 	active        bool
 	status        string
-	appFrameCount int // count of app-package frames only (ignores stdlib wrappers)
-	hash          uint64
+	appFrameCount int    // count of app-package frames only (ignores stdlib wrappers)
+	frameHash     uint64 // FNV-1a hash of frames, app frame lines, and topLine (status-independent)
 }
 
 // startBaseline records a pre-existing goroutine's START baseline. Normally
@@ -141,8 +141,9 @@ type resumeWatch struct {
 	// markOnly watches guard a drifted goroutine that ended back at its
 	// recorded idle signature (in case that recorded idle was a first-START
 	// mid-job capture): on first departure they mark the gap afterCut and the
-	// next test tail:<testID>, delete themselves, and NEVER re-attach or
-	// overwrite lastQuiescentSigs.
+	// next test tail:<testID>, delete themselves, adopt any newly-spawned
+	// app-relevant child into lingeringTails, and NEVER re-attach the parent
+	// or overwrite lastQuiescentSigs.
 	markOnly bool
 }
 
@@ -722,14 +723,30 @@ func isIdleHTTPReadLoopFrame(fn string) bool {
 }
 
 // isIdleWrappedHTTPKeepAlive reports whether g is a stdlib/x/net HTTP
-// keep-alive goroutine parked in netpoll [IO wait] whose ONLY app frames are
-// callees of an idle HTTP read-loop frame (for example an app net.Conn.Read
+// keep-alive goroutine in its idle socket read loop (parked in netpoll
+// [IO wait] or transiently runnable/running/in-syscall while waking on EOF or
+// closing the idle conn) whose ONLY app frames are callees of an idle HTTP
+// read-loop or connection-close frame (for example an app net.Conn.Read/Close
 // wrapper called by net/http.(*conn).serve -> bufio.(*Reader).Peek,
-// net/http.(*conn).readRequest, or net/http.(*persistConn).readLoop). Any
-// active request handler (ServeHTTP), outbound RoundTrip, or non-[IO wait]
-// wait returns false so real handlers and slow reads remain strictly tracked.
+// net/http.(*conn).readRequest, net/http.(*persistConn).readLoop, or deferred
+// net/http.(*conn).close). Any active request handler (ServeHTTP), outbound
+// RoundTrip, or blocking app wait (chan/select/sleep/mutex) returns false so
+// real handlers and slow reads remain strictly tracked.
 func isIdleWrappedHTTPKeepAlive(g *goroutineInfo, covered map[string]bool) bool {
-	if g.baseStatus != "IO wait" || len(g.frames) == 0 || g.frames[0] != "internal/poll.runtime_pollWait" {
+	if len(g.frames) == 0 {
+		return false
+	}
+	switch g.baseStatus {
+	case "IO wait":
+		if g.frames[0] != "internal/poll.runtime_pollWait" {
+			return false
+		}
+	case "runnable", "running", "preempted", "syscall":
+		// A keep-alive connection woken by peer close / IdleTimeout /
+		// CloseIdleConnections may briefly be runnable, running, or in syscall
+		// at its idle read-loop (or deferred conn.close) frames without ever
+		// entering a request handler.
+	default:
 		return false
 	}
 	if g.createdByPkg != "net/http" && g.createdByPkg != "golang.org/x/net/http2" {
@@ -744,6 +761,13 @@ func isIdleWrappedHTTPKeepAlive(g *goroutineInfo, covered map[string]bool) bool 
 		// Between keep-alive requests, net/http.(*conn).serve calls
 		// c.bufr.Peek(4) directly before entering readRequest.
 		if fn == "net/http.(*conn).serve" && i > 0 && g.frames[i-1] == "bufio.(*Reader).Peek" {
+			idleIdx = i
+			break
+		}
+		// When an idle keep-alive connection exits after EOF, deferred
+		// conn.close / persistConn.closeLocked may call a wrapped
+		// net.Conn.Close without ever entering ServeHTTP/RoundTrip.
+		if g.baseStatus != "IO wait" && (fn == "net/http.(*conn).close" || fn == "net/http.(*persistConn).closeLocked") {
 			idleIdx = i
 			break
 		}
@@ -833,7 +857,7 @@ func goroutineStateSig(g *goroutineInfo, selfID uint64, covered map[string]bool,
 		return goroutineSig{}
 	}
 	const offset64 = 14695981039346656037
-	h := fnv64aStr(offset64, g.baseStatus)
+	h := uint64(offset64)
 	appFrames := 0
 	for i, fn := range g.frames {
 		h = fnv64aStr(h, fn)
@@ -849,7 +873,7 @@ func goroutineStateSig(g *goroutineInfo, selfID uint64, covered map[string]bool,
 		active:        true,
 		status:        g.baseStatus,
 		appFrameCount: appFrames,
-		hash:          h,
+		frameHash:     h,
 	}
 }
 
@@ -876,10 +900,10 @@ func checkResumeWatches(snap goroutineSnapshot, activeIdle map[uint64]startBasel
 	if len(resumeWatches) == 0 {
 		return nil, nil, nil
 	}
-	// Pre-index whether any watched gid currently has a new app-relevant child
+	// Pre-index newly-spawned app-relevant children of any watched gid
 	// (excluding pre-existing children and goroutines already tracked in lingeringTails).
 	alreadyLingering := lingeringGidSet()
-	hasNewChild := map[uint64]bool{}
+	newChildren := map[uint64][]lingeringTarget{}
 	for id, g := range snap.all {
 		if g.createdByGoid == 0 {
 			continue
@@ -895,24 +919,47 @@ func checkResumeWatches(snap goroutineSnapshot, activeIdle map[uint64]startBasel
 			continue
 		}
 		if isAppRelevantGoroutineWithIgnore(g, snap.selfID, covered, ignore) {
-			hasNewChild[g.createdByGoid] = true
+			newChildren[g.createdByGoid] = append(newChildren[g.createdByGoid], lingeringTarget{
+				gid:      id,
+				mustExit: isAppPkg(g.createdByPkg, covered),
+				idleSig:  goroutineSig{},
+			})
 		}
 	}
 
 	var triggered []string
 	var firedOrigIdle map[uint64]goroutineSig
 	var reattached map[uint64]struct{}
+	adoptDirectChildren := func(testID string, children []lingeringTarget) {
+		if len(children) > 1 {
+			sort.Slice(children, func(i, j int) bool { return children[i].gid < children[j].gid })
+		}
+		addLingeringTail(testID, children, nil)
+		for _, c := range children {
+			if reattached == nil {
+				reattached = make(map[uint64]struct{})
+			}
+			reattached[c.gid] = struct{}{}
+			if cg := snap.all[c.gid]; cg != nil {
+				logLingeringOnce(testID, []string{describeAppGoroutine(cg, covered)})
+			}
+		}
+	}
 	for gid, rw := range resumeWatches {
 		g, alive := snap.all[gid]
 		if !alive {
 			triggered = append(triggered, rw.testID)
 			delete(resumeWatches, gid)
-			if !rw.markOnly && hasNewChild[gid] {
-				addLingeringTail(rw.testID, []lingeringTarget{rw.target}, rw.preExistingChildren)
-				if reattached == nil {
-					reattached = make(map[uint64]struct{})
+			if children := newChildren[gid]; len(children) > 0 {
+				if rw.markOnly {
+					adoptDirectChildren(rw.testID, children)
+				} else {
+					addLingeringTail(rw.testID, []lingeringTarget{rw.target}, rw.preExistingChildren)
+					if reattached == nil {
+						reattached = make(map[uint64]struct{})
+					}
+					reattached[gid] = struct{}{}
 				}
-				reattached[gid] = struct{}{}
 			}
 			continue
 		}
@@ -921,11 +968,15 @@ func checkResumeWatches(snap goroutineSnapshot, activeIdle map[uint64]startBasel
 			continue
 		}
 		curSig := goroutineStateSig(g, snap.selfID, covered, ignore)
-		spawnedChild := hasNewChild[gid]
+		children := newChildren[gid]
+		spawnedChild := len(children) > 0
 		if curSig != rw.watchSig || spawnedChild {
 			triggered = append(triggered, rw.testID)
 			delete(resumeWatches, gid)
 			if rw.markOnly {
+				if spawnedChild {
+					adoptDirectChildren(rw.testID, children)
+				}
 				continue
 			}
 			if !rw.target.mustExit {
@@ -1009,9 +1060,17 @@ func snapshotStartBaseline(snap goroutineSnapshot, covered map[string]bool, igno
 		} else if prevQ, ok := lastQuiescentSigs[id]; ok {
 			// Pre-existing goroutine was unparked (e.g. runnable) at START,
 			// with a prior quiescent baseline from an earlier complete START.
-			// Mark drifted=true so END fails closed even if the gap job
-			// finishes and returns to prevQ (or exits) during this window.
-			idle[id] = startBaseline{idle: prevQ, drifted: true, startName: describeAppGoroutine(g, covered)}
+			// When it is runnable at the EXACT same stack frames as its
+			// recorded idle (e.g. woken from netpoll or channel close right at
+			// START without having started work), do not mark it drifted — keep
+			// prevQ as its baseline so END still catches any work it enters.
+			// Otherwise mark drifted=true so END fails closed even if the gap
+			// job finishes and returns to prevQ (or exits) during this window.
+			if prevQ.active && sig.appFrameCount == prevQ.appFrameCount && sig.frameHash == prevQ.frameHash {
+				idle[id] = startBaseline{idle: prevQ}
+			} else {
+				idle[id] = startBaseline{idle: prevQ, drifted: true, startName: describeAppGoroutine(g, covered)}
+			}
 		} else {
 			// Pre-existing goroutine was unparked at START with no prior
 			// quiescent baseline: record its app-frame depth with status == ""
@@ -1022,7 +1081,7 @@ func snapshotStartBaseline(snap goroutineSnapshot, covered map[string]bool, igno
 					active:        true,
 					status:        "",
 					appFrameCount: sig.appFrameCount,
-					hash:          0,
+					frameHash:     0,
 				},
 			}
 		}

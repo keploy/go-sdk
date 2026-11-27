@@ -482,8 +482,9 @@ func blocksOfRecord(t *testing.T, rec map[string]any) map[string][]int {
 	return out
 }
 
-// TestRealGoApp_P6FraudAlertGoroutineTailAcrossCleanGap reproduces Ruling #5 /
-// P6 deterministically on a real -cover -covermode=atomic Go binary:
+// TestRealGoApp_FraudAlertGoroutineTailAcrossCleanGap verifies deterministically
+// on a real -cover -covermode=atomic Go binary that an async goroutine tail
+// spanning a clean gap is caught:
 //   - T5 calls /orders?id=5&fraud=1&gate=p6, spawning go fraudAlert() blocked on gate.
 //   - END T5 waits KEPLOY_GO_END_WAIT_MS=30ms -> fraudAlert is still blocked ->
 //     T5 emits windowCut:true + lingeringGoroutines naming fraudAlert.
@@ -493,7 +494,7 @@ func blocksOfRecord(t *testing.T, rec map[string]any) map[string][]int {
 //   - Assert: T5 has windowCut:true and did NOT hit fraudHits.Add(1), T6 DID
 //     hit fraudHits.Add(1) AND has contaminated:["tail:set-0/T5"] (even though
 //     gap T5->T6 was clean!), and T7 (after fraudAlert exited) is clean!
-func TestRealGoApp_P6FraudAlertGoroutineTailAcrossCleanGap(t *testing.T) {
+func TestRealGoApp_FraudAlertGoroutineTailAcrossCleanGap(t *testing.T) {
 	k := newKeploySide(t)
 	bin := buildAsyncApp(t, k)
 	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=30")
@@ -518,7 +519,7 @@ func TestRealGoApp_P6FraudAlertGoroutineTailAcrossCleanGap(t *testing.T) {
 		t.Fatalf("rec5 id = %v, want set-0/T5", rec5["id"])
 	}
 	if rec5["windowCut"] != true {
-		t.Fatalf("P6 failed: T5 windowCut = %v, want true (rec=%v)", rec5["windowCut"], rec5)
+		t.Fatalf("T5 windowCut = %v, want true (rec=%v)", rec5["windowCut"], rec5)
 	}
 	lingering5, _ := rec5["lingeringGoroutines"].([]any)
 	if len(lingering5) == 0 || !strings.Contains(fmt.Sprint(lingering5), "fraudAlert") {
@@ -547,13 +548,13 @@ func TestRealGoApp_P6FraudAlertGoroutineTailAcrossCleanGap(t *testing.T) {
 		t.Fatalf("expected clean gap T5->T6 and rec6 next, got %v", rec6)
 	}
 	if !reflect.DeepEqual(rec6["contaminated"], []any{"tail:set-0/T5"}) {
-		t.Fatalf("P6 failed: T6 contaminated = %v, want [tail:set-0/T5] (rec=%v)", rec6["contaminated"], rec6)
+		t.Fatalf("T6 contaminated = %v, want [tail:set-0/T5] (rec=%v)", rec6["contaminated"], rec6)
 	}
 	if _, hasCut := rec6["windowCut"]; hasCut {
 		t.Fatalf("T6 did not spawn a lingering goroutine but got windowCut: %v", rec6)
 	}
 	if !containsInt(linesOfRecord(t, rec6)[asyncFile], fraudHitLine) {
-		t.Fatalf("P6 setup check: fraudHits.Add(1) line %d did not spill into T6: %v", fraudHitLine, linesOfRecord(t, rec6)[asyncFile])
+		t.Fatalf("setup check: fraudHits.Add(1) line %d did not spill into T6: %v", fraudHitLine, linesOfRecord(t, rec6)[asyncFile])
 	}
 
 	// T7: after fraudAlert exited inside T6, T7 MUST be 100% clean!
@@ -730,11 +731,11 @@ func TestRealGoApp_MultiWindowLingeringGoroutine(t *testing.T) {
 	}
 }
 
-// TestRealGoApp_B1ChildSpawnedInGapStaysTracked verifies that if T1's lingering
+// TestRealGoApp_ChildSpawnedInGapStaysTracked verifies that if T1's lingering
 // goroutine spawns a child goroutine in gap T2->T3 and exits, T3 STILL gets
 // contaminated:["tail:set-0/T1"] via Go 1.21+ parent-goid child adoption, and
 // T4 is clean once the child exits!
-func TestRealGoApp_B1ChildSpawnedInGapStaysTracked(t *testing.T) {
+func TestRealGoApp_ChildSpawnedInGapStaysTracked(t *testing.T) {
 	k := newKeploySide(t)
 	bin := buildAsyncApp(t, k)
 	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=20")
@@ -787,7 +788,7 @@ func TestRealGoApp_B1ChildSpawnedInGapStaysTracked(t *testing.T) {
 		r := readNextRecord(t, k, a)
 		if r["kind"] == "background" {
 			if r["afterCut"] != true {
-				t.Fatalf("B1 gap background missing afterCut:true: %v", r)
+				t.Fatalf("gap background missing afterCut:true: %v", r)
 			}
 			continue
 		}
@@ -795,7 +796,7 @@ func TestRealGoApp_B1ChildSpawnedInGapStaysTracked(t *testing.T) {
 		break
 	}
 	if !reflect.DeepEqual(rec3["contaminated"], []any{"tail:set-0/T1"}) {
-		t.Fatalf("B1 failed: T3 contaminated = %v, want [tail:set-0/T1] (adopted child)", rec3["contaminated"])
+		t.Fatalf("T3 contaminated = %v, want [tail:set-0/T1] (adopted child)", rec3["contaminated"])
 	}
 
 	// T4 is clean once child exited!
@@ -815,11 +816,11 @@ func TestRealGoApp_B1ChildSpawnedInGapStaysTracked(t *testing.T) {
 	}
 }
 
-// TestRealGoApp_B2PreExistingWorkerPoolTailDetected verifies that a job
+// TestRealGoApp_PreExistingWorkerPoolTailDetected verifies that a job
 // dispatched over a channel to a pre-existing init()-started worker goroutine
 // is detected when it lingers past END, contaminates T2 while busy, and clears
 // cleanly on T3 once the worker returns to idle <-poolJobs!
-func TestRealGoApp_B2PreExistingWorkerPoolTailDetected(t *testing.T) {
+func TestRealGoApp_PreExistingWorkerPoolTailDetected(t *testing.T) {
 	k := newKeploySide(t)
 	bin := buildAsyncApp(t, k)
 	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=30")
@@ -833,7 +834,7 @@ func TestRealGoApp_B2PreExistingWorkerPoolTailDetected(t *testing.T) {
 	// T1: sends job to pre-existing poolWorker blocked on gate "pool1".
 	rec1 := measure(t, k, a, "set-0/T1", "/pool-job?gate=pool1")
 	if rec1["windowCut"] != true {
-		t.Fatalf("B2 failed: T1 windowCut = %v, want true for busy pre-existing poolWorker (rec=%v)", rec1["windowCut"], rec1)
+		t.Fatalf("T1 windowCut = %v, want true for busy pre-existing poolWorker (rec=%v)", rec1["windowCut"], rec1)
 	}
 	ling1, _ := rec1["lingeringGoroutines"].([]any)
 	if len(ling1) == 0 || !strings.Contains(fmt.Sprint(ling1), "poolProcess") {
@@ -851,7 +852,7 @@ func TestRealGoApp_B2PreExistingWorkerPoolTailDetected(t *testing.T) {
 	}
 	rec2 := readNextRecord(t, k, a)
 	if !reflect.DeepEqual(rec2["contaminated"], []any{"tail:set-0/T1"}) {
-		t.Fatalf("B2 failed: T2 contaminated = %v, want [tail:set-0/T1]", rec2["contaminated"])
+		t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", rec2["contaminated"])
 	}
 	poolLine := asyncLineOf(t, "poolHits.Add(1)")
 	if !containsInt(linesOfRecord(t, rec2)[appModule+"/async.go"], poolLine) {
@@ -868,7 +869,7 @@ func TestRealGoApp_B2PreExistingWorkerPoolTailDetected(t *testing.T) {
 	}
 }
 
-// TestRealGoApp_P7RecurringAsyncTailsNeverPolluteBackground reproduces P7
+// TestRealGoApp_RecurringAsyncTailsNeverPolluteBackground verifies
 // deterministically: T1 and T2 both spawn recurring go notifyAsync() tails that
 // linger past END and execute inside gaps T1->T2 and T2->T3. Asserts:
 //   - T1 windowCut:true, T2 windowCut:true + contaminated:["tail:set-0/T1"],
@@ -878,7 +879,7 @@ func TestRealGoApp_B2PreExistingWorkerPoolTailDetected(t *testing.T) {
 //     collectors!),
 //   - T4 running /notify-sync is completely clean (afterCut gaps did NOT
 //     pollute everGap!).
-func TestRealGoApp_P7RecurringAsyncTailsNeverPolluteBackground(t *testing.T) {
+func TestRealGoApp_RecurringAsyncTailsNeverPolluteBackground(t *testing.T) {
 	k := newKeploySide(t)
 	bin := buildAsyncApp(t, k)
 	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=20")
@@ -954,14 +955,14 @@ func TestRealGoApp_P7RecurringAsyncTailsNeverPolluteBackground(t *testing.T) {
 
 	// Verify BOTH gap BACKGROUND records carried afterCut:true AND empty executedLinesByFile!
 	if len(bgRecords) < 2 {
-		t.Fatalf("expected >=2 afterCut BACKGROUND records from P7 gaps, got %d: %v", len(bgRecords), bgRecords)
+		t.Fatalf("expected >=2 afterCut BACKGROUND records from recurring tail gaps, got %d: %v", len(bgRecords), bgRecords)
 	}
 	for i, bg := range bgRecords {
 		if bg["afterCut"] != true {
-			t.Fatalf("P7 failed: BACKGROUND[%d] missing afterCut:true: %v", i, bg)
+			t.Fatalf("BACKGROUND[%d] missing afterCut:true: %v", i, bg)
 		}
 		if ls := linesOfRecord(t, bg); len(ls) != 0 {
-			t.Fatalf("P7 failed: afterCut BACKGROUND[%d] carried non-empty executedLinesByFile %v (unsafe for v2 collectors)", i, ls)
+			t.Fatalf("afterCut BACKGROUND[%d] carried non-empty executedLinesByFile %v (unsafe for v2 collectors)", i, ls)
 		}
 	}
 
@@ -978,7 +979,7 @@ func TestRealGoApp_P7RecurringAsyncTailsNeverPolluteBackground(t *testing.T) {
 		t.Fatalf("T4 unexpectedly windowCut: %v", rec4)
 	}
 	if _, hasCont := rec4["contaminated"]; hasCont {
-		t.Fatalf("P7 failed: T4 falsely contaminated by afterCut tail gap: %v", rec4)
+		t.Fatalf("T4 falsely contaminated by afterCut tail gap: %v", rec4)
 	}
 }
 
@@ -999,8 +1000,13 @@ func TestRealGoApp_UnclosedWindowContaminatesNextTest(t *testing.T) {
 		t.Fatalf("END U2: %q", got)
 	}
 	rec2 := readNextRecord(t, k, a)
-	if !reflect.DeepEqual(rec2["contaminated"], []any{"unclosed:set-0/U1"}) {
-		t.Fatalf("U2 contaminated = %v, want [unclosed:set-0/U1]", rec2["contaminated"])
+	// Because U1 never had an END (and thus no END_WAIT), U1's /twin handler
+	// goroutine may still be returning from ServeHTTP at START U2, legitimately
+	// adding tail:set-0/U1 alongside unclosed:set-0/U1.
+	cont, _ := rec2["contaminated"].([]any)
+	if len(cont) == 0 || cont[0] != "unclosed:set-0/U1" ||
+		(len(cont) == 2 && cont[1] != "tail:set-0/U1") || len(cont) > 2 {
+		t.Fatalf("U2 contaminated = %v, want [unclosed:set-0/U1] (or with tail:set-0/U1)", rec2["contaminated"])
 	}
 }
 
@@ -1056,12 +1062,12 @@ func getOK(t *testing.T, a app, path string) {
 	}
 }
 
-// TestRealGoApp_N2NewKeepAliveSlowFlushClearsWhenHandlerReturns verifies end-to-end
+// TestRealGoApp_NewKeepAliveSlowFlushClearsWhenHandlerReturns verifies end-to-end
 // on a real -cover binary that a slow-flushing handler on a BRAND NEW HTTP/1
 // keep-alive connection triggers windowCut+contaminated:["window-cut"] on T1,
 // marks T2 tail:T1, and clears on T3 once the handler returns even though the
 // same keep-alive connection stays open and reused!
-func TestRealGoApp_N2NewKeepAliveSlowFlushClearsWhenHandlerReturns(t *testing.T) {
+func TestRealGoApp_NewKeepAliveSlowFlushClearsWhenHandlerReturns(t *testing.T) {
 	k := newKeploySide(t)
 	bin := buildAsyncApp(t, k)
 	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=30")
@@ -1086,10 +1092,10 @@ func TestRealGoApp_N2NewKeepAliveSlowFlushClearsWhenHandlerReturns(t *testing.T)
 	}
 	rec1 := readNextRecord(t, k, a)
 	if rec1["windowCut"] != true {
-		t.Fatalf("N2 e2e: T1 windowCut = %v, want true (rec=%v)", rec1["windowCut"], rec1)
+		t.Fatalf("T1 windowCut = %v, want true (rec=%v)", rec1["windowCut"], rec1)
 	}
 	if !reflect.DeepEqual(rec1["contaminated"], []any{"window-cut"}) {
-		t.Fatalf("N4 e2e: T1 contaminated = %v, want [window-cut]", rec1["contaminated"])
+		t.Fatalf("T1 contaminated = %v, want [window-cut]", rec1["contaminated"])
 	}
 
 	// Release slowFlushHandler so conn.serve returns to idle keep-alive while
@@ -1138,19 +1144,19 @@ func TestRealGoApp_N2NewKeepAliveSlowFlushClearsWhenHandlerReturns(t *testing.T)
 	}
 	rec3 := readNextRecord(t, k, a)
 	if _, hasCut := rec3["windowCut"]; hasCut {
-		t.Fatalf("N2 e2e failed: T3 got windowCut on idle keep-alive conn: %v", rec3)
+		t.Fatalf("T3 got windowCut on idle keep-alive conn: %v", rec3)
 	}
 	if _, hasCont := rec3["contaminated"]; hasCont {
-		t.Fatalf("N2 e2e failed: T3 falsely contaminated on idle keep-alive conn: %v", rec3)
+		t.Fatalf("T3 falsely contaminated on idle keep-alive conn: %v", rec3)
 	}
 }
 
-// TestRealGoApp_N3BackoffConsumerRebaselinesAndResumeWatchCatchesWakeup verifies
+// TestRealGoApp_BackoffConsumerRebaselinesAndResumeWatchCatchesWakeup verifies
 // end-to-end on a real -cover binary that a pre-existing consumer transitioning
 // from startup [select] backoff to steady-state <-consumerMsgs settles cleanly
 // onto a one-time resume watch (T3 clean while parked) and catches an in-window
 // wakeup (T4 contaminated tail:T1).
-func TestRealGoApp_N3BackoffConsumerRebaselinesAndResumeWatchCatchesWakeup(t *testing.T) {
+func TestRealGoApp_BackoffConsumerRebaselinesAndResumeWatchCatchesWakeup(t *testing.T) {
 	k := newKeploySide(t)
 	bin := buildAsyncApp(t, k)
 	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=30", "ENABLE_BACKOFF_CONSUMER=1")
@@ -1189,7 +1195,7 @@ func TestRealGoApp_N3BackoffConsumerRebaselinesAndResumeWatchCatchesWakeup(t *te
 	// T4: message wakes consumer off <-consumerMsgs -> resume watch MUST fire on T4!
 	rec4 := measure(t, k, a, "set-0/T4", "/consumer-send?gate=cmsg1")
 	if !reflect.DeepEqual(rec4["contaminated"], []any{"tail:set-0/T1"}) {
-		t.Fatalf("N3 resume watch e2e failed: T4 contaminated = %v, want [tail:set-0/T1] (rec=%v)", rec4["contaminated"], rec4)
+		t.Fatalf("resume watch e2e failed: T4 contaminated = %v, want [tail:set-0/T1] (rec=%v)", rec4["contaminated"], rec4)
 	}
 	if rec4["windowCut"] != true {
 		t.Fatalf("T4 windowCut = %v, want true while consumer processes cmsg1", rec4["windowCut"])
@@ -1325,12 +1331,12 @@ func TestRealGoApp_CoTargetSupervisorAndReaderWatchStaysClean(t *testing.T) {
 			t.Fatalf("%s unexpectedly got windowCut: %v", id, rec)
 		}
 		if _, hasCont := rec["contaminated"]; hasCont {
-			t.Fatalf("R6 e2e failed: %s falsely contaminated by pre-existing child reader: %v", id, rec)
+			t.Fatalf("%s falsely contaminated by pre-existing child reader: %v", id, rec)
 		}
 	}
 }
 
-// TestRealGoApp_WrappedConnKeepAlive verifies SF2 end-to-end on a real -cover
+// TestRealGoApp_WrappedConnKeepAlive verifies end-to-end on a real -cover
 // binary whose net.Listener wraps net.Conn with an app-package Read method
 // (main.(*countingConn).Read):
 //   - T1..T4 on wrapped keep-alive conn #1 -> ALL 100% CLEAN (even T1!) with END < 150ms,
@@ -1403,10 +1409,10 @@ func TestRealGoApp_WrappedConnKeepAlive(t *testing.T) {
 			t.Fatalf("END %s took %v (false-positive wait on idle wrapped keep-alive conn?)", id, elapsed)
 		}
 		if _, hasCut := rec["windowCut"]; hasCut {
-			t.Fatalf("SF2 e2e failed: %s got false-positive windowCut: %v", id, rec)
+			t.Fatalf("%s got false-positive windowCut: %v", id, rec)
 		}
 		if _, hasCont := rec["contaminated"]; hasCont {
-			t.Fatalf("SF2 e2e failed: %s got false-positive contaminated: %v", id, rec)
+			t.Fatalf("%s got false-positive contaminated: %v", id, rec)
 		}
 	}
 
@@ -1419,16 +1425,16 @@ func TestRealGoApp_WrappedConnKeepAlive(t *testing.T) {
 		t.Fatalf("END T5 took %v (false-positive wait on new wrapped keep-alive conn #2?)", elapsed5)
 	}
 	if _, hasCut := rec5["windowCut"]; hasCut {
-		t.Fatalf("SF2 e2e failed: T5 got false-positive windowCut on conn #2: %v", rec5)
+		t.Fatalf("T5 got false-positive windowCut on conn #2: %v", rec5)
 	}
 	if _, hasCont := rec5["contaminated"]; hasCont {
-		t.Fatalf("SF2 e2e failed: T5 got false-positive contaminated on conn #2: %v", rec5)
+		t.Fatalf("T5 got false-positive contaminated on conn #2: %v", rec5)
 	}
 
 	// T6: active /slow-flush handler on conn #1 MUST be caught honestly as windowCut:true!
 	rec6, _, _ := runWrapped("set-0/T6", c1, "/slow-flush?gate=wrapflush")
 	if rec6["windowCut"] != true {
-		t.Fatalf("SF2 active handler check failed: T6 missed /slow-flush on wrapped conn #1: %v", rec6)
+		t.Fatalf("active handler check failed: T6 missed /slow-flush on wrapped conn #1: %v", rec6)
 	}
 
 	// T7 while /slow-flush is still blocked -> contaminated:["tail:set-0/T6"] (exact origin!).
@@ -1924,9 +1930,9 @@ func deltaLineOf(t *testing.T, needle string) int {
 	return 0
 }
 
-// TestRealGoApp_B1DeferredAsyncScopeLimitsPinAsyncExecutorsFalse builds a real
+// TestRealGoApp_DeferredAsyncScopeLimitsDeclareAsyncExecutorsFalse builds a real
 // -cover -covermode=atomic app with a vendored uncovered third-party async
-// writer and pins all four R1 scope limits:
+// writer and pins all four deferred-async scope limits:
 //   - (a) library-owned third-party async writer (kafka-go/sarama style)
 //   - (b) dormant time.AfterFunc timer firing after END
 //   - (c) pre-existing app batcher/debouncer re-parking at the same idle sig
@@ -1937,7 +1943,7 @@ func deltaLineOf(t *testing.T, needle string) int {
 // goroutine marks, AND every START/END reply honestly declares
 // asyncExecutors=false so Go removal eligibility relies on a collector-side
 // isolation check rather than SDK capabilities alone.
-func TestRealGoApp_B1DeferredAsyncScopeLimitsPinAsyncExecutorsFalse(t *testing.T) {
+func TestRealGoApp_DeferredAsyncScopeLimitsDeclareAsyncExecutorsFalse(t *testing.T) {
 	k := newKeploySide(t)
 	bin := buildDeltaProbeApp(t, k)
 	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=20")
@@ -1982,7 +1988,7 @@ func TestRealGoApp_B1DeferredAsyncScopeLimitsPinAsyncExecutorsFalse(t *testing.T
 			if inN || !inN1 {
 				t.Fatalf("%s: expected deferred line %d in N+1 only (inN=%v inN1=%v)", tc.name, line, inN, inN1)
 			}
-			// Pin documented R1 scope limit: stack snapshots cannot observe these
+			// Pin documented scope limit: stack snapshots cannot observe these
 			// three deferred hand-offs, which is why caps MUST declare asyncExecutors=false.
 			if _, cutN := recN["windowCut"]; cutN {
 				t.Fatalf("%s: unexpected windowCut on N: %v", tc.name, recN)
@@ -2027,14 +2033,14 @@ func TestRealGoApp_B1DeferredAsyncScopeLimitsPinAsyncExecutorsFalse(t *testing.T
 	})
 }
 
-// TestRealGoApp_SF1MidJobWorkerBaselineCatchesNAndNotInnocentN1 reproduces SF1
+// TestRealGoApp_MidJobWorkerBaselineCatchesCurrentAndNotNext verifies
 // on a real -cover binary: a pre-existing jobWorker is mid-job at START N (on
 // gap/background work), takes N's fraud job and parks at the exact same line
 // in processJob before END N, and finishes the fraud job during N+1. Asserts N
 // is honestly marked windowCut:true (using lastQuiescentSigs), N+1 carries
 // contaminated:["tail:set-0/N"] WITHOUT being falsely marked windowCut, and
 // N+2 is clean.
-func TestRealGoApp_SF1MidJobWorkerBaselineCatchesNAndNotInnocentN1(t *testing.T) {
+func TestRealGoApp_MidJobWorkerBaselineCatchesCurrentAndNotNext(t *testing.T) {
 	k := newKeploySide(t)
 	bin := buildDeltaProbeApp(t, k)
 	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=30")
@@ -2061,14 +2067,14 @@ func TestRealGoApp_SF1MidJobWorkerBaselineCatchesNAndNotInnocentN1(t *testing.T)
 	}
 	recN := readNextRecord(t, k, a)
 	if recN["windowCut"] != true {
-		t.Fatalf("SF1 failed: N missed mid-job worker (windowCut=%v, rec=%v)", recN["windowCut"], recN)
+		t.Fatalf("N missed mid-job worker (windowCut=%v, rec=%v)", recN["windowCut"], recN)
 	}
 	lingN, _ := recN["lingeringGoroutines"].([]any)
 	if len(lingN) == 0 || !strings.Contains(fmt.Sprint(lingN), "processJob") {
-		t.Fatalf("SF1: N lingeringGoroutines = %v, want entry naming processJob", lingN)
+		t.Fatalf("N lingeringGoroutines = %v, want entry naming processJob", lingN)
 	}
 	if containsInt(linesOfRecord(t, recN)[deltaFile], fraudLine) {
-		t.Fatalf("SF1 setup: fraud line %d should not have run in N", fraudLine)
+		t.Fatalf("setup: fraud line %d should not have run in N", fraudLine)
 	}
 
 	// Test N+1: opens g1 so fraud job runs inside N+1 and worker returns to idle.
@@ -2082,17 +2088,17 @@ func TestRealGoApp_SF1MidJobWorkerBaselineCatchesNAndNotInnocentN1(t *testing.T)
 	}
 	recN1 := readNextRecord(t, k, a)
 	if !containsInt(linesOfRecord(t, recN1)[deltaFile], fraudLine) {
-		t.Fatalf("SF1 setup: fraud line %d did not spill into N+1: %v", fraudLine, linesOfRecord(t, recN1))
+		t.Fatalf("setup: fraud line %d did not spill into N+1: %v", fraudLine, linesOfRecord(t, recN1))
 	}
 	assertTailOnlyOrBetweenTests(t, "N+1", recN1, "tail:set-0/N")
 
 	// Test N+2: worker is back at idle -> 100% CLEAN!
 	recN2 := measure(t, k, a, "set-0/N2", "/plain")
 	if _, hasCut := recN2["windowCut"]; hasCut {
-		t.Fatalf("SF1: N+2 unexpectedly got windowCut: %v", recN2)
+		t.Fatalf("N+2 unexpectedly got windowCut: %v", recN2)
 	}
 	if _, hasCont := recN2["contaminated"]; hasCont {
-		t.Fatalf("SF1: N+2 unexpectedly got contaminated: %v", recN2)
+		t.Fatalf("N+2 unexpectedly got contaminated: %v", recN2)
 	}
 }
 
@@ -2145,12 +2151,12 @@ func assertNonEmptyCleanBG(t *testing.T, label string, bgs []map[string]any, wan
 	return clean
 }
 
-// TestRealGoApp_SF2LazyOnceJanitorRebaselinesAfterT2 verifies on a real -cover
+// TestRealGoApp_LazyOnceJanitorRebaselinesAfterSecondTest verifies on a real -cover
 // binary that a permanent background goroutine lazily started via sync.Once in
 // T1 marks T1 windowCut:true and T2 contaminated:["tail:set-0/T1"], then
 // settles onto a one-time resumeWatch so T3..T10 are ALL 100% CLEAN AND
 // non-empty BACKGROUND records with afterCut=false resume after T3.
-func TestRealGoApp_SF2LazyOnceJanitorRebaselinesAfterT2(t *testing.T) {
+func TestRealGoApp_LazyOnceJanitorRebaselinesAfterSecondTest(t *testing.T) {
 	k := newKeploySide(t)
 	bin := buildDeltaProbeApp(t, k)
 	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=30")
@@ -2195,20 +2201,20 @@ func TestRealGoApp_SF2LazyOnceJanitorRebaselinesAfterT2(t *testing.T) {
 	// T1: lazily starts sync.Once janitor -> windowCut:true naming janitor.
 	rec1, _ := run("set-0/T1", "/lazy")
 	if rec1["windowCut"] != true {
-		t.Fatalf("SF2: T1 windowCut = %v, want true (rec=%v)", rec1["windowCut"], rec1)
+		t.Fatalf("T1 windowCut = %v, want true (rec=%v)", rec1["windowCut"], rec1)
 	}
 	ling1, _ := rec1["lingeringGoroutines"].([]any)
 	if len(ling1) == 0 || !strings.Contains(fmt.Sprint(ling1), "janitor") {
-		t.Fatalf("SF2: T1 lingeringGoroutines = %v, want entry naming janitor", ling1)
+		t.Fatalf("T1 lingeringGoroutines = %v, want entry naming janitor", ling1)
 	}
 
 	// T2: tainted tail:set-0/T1 (janitor streak 1 across START T2 -> END T2).
 	rec2, _ := run("set-0/T2", "/plain")
 	if !reflect.DeepEqual(rec2["contaminated"], []any{"tail:set-0/T1"}) {
-		t.Fatalf("SF2: T2 contaminated = %v, want [tail:set-0/T1]", rec2["contaminated"])
+		t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", rec2["contaminated"])
 	}
 	if _, hasCut := rec2["windowCut"]; hasCut {
-		t.Fatalf("SF2: T2 unexpectedly marked windowCut: %v", rec2)
+		t.Fatalf("T2 unexpectedly marked windowCut: %v", rec2)
 	}
 
 	// T3..T10: janitor moved onto resumeWatch at START T3 -> ALL 8 tests MUST
@@ -2222,10 +2228,10 @@ func TestRealGoApp_SF2LazyOnceJanitorRebaselinesAfterT2(t *testing.T) {
 		id := fmt.Sprintf("set-0/T%d", i)
 		rec, bgs := run(id, "/plain")
 		if _, hasCut := rec["windowCut"]; hasCut {
-			t.Fatalf("SF2 failed: %s got windowCut (lazy janitor not re-baselined): %v", id, rec)
+			t.Fatalf("%s got windowCut (lazy janitor not re-baselined): %v", id, rec)
 		}
 		if _, hasCont := rec["contaminated"]; hasCont {
-			t.Fatalf("SF2 failed: %s got contaminated (lazy janitor stuck forever): %v", id, rec)
+			t.Fatalf("%s got contaminated (lazy janitor stuck forever): %v", id, rec)
 		}
 		if i >= 4 {
 			cleanBGs += assertNonEmptyCleanBG(t, id, bgs, deltaFile, gapPingLine)
@@ -2555,13 +2561,13 @@ func TestRealGoApp_ShallowerMidJobWorkerBaselineAndNoPersistentTaint(t *testing.
 	})
 }
 
-// TestRealGoApp_LazyOnceSleepJanitorRebaselinesAfterT2 verifies on a real
+// TestRealGoApp_LazyOnceSleepJanitorRebaselinesAfterSecondTest verifies on a real
 // -cover binary that a permanent background goroutine lazily started via
 // sync.Once running `for { time.Sleep(time.Hour); ticks.Add(1) }` marks T1
 // windowCut:true and T2 contaminated:["tail:set-0/T1"], then settles onto a
 // resumeWatch so T3..T10 are ALL 100% CLEAN and normal BACKGROUND records
 // resume after T3.
-func TestRealGoApp_LazyOnceSleepJanitorRebaselinesAfterT2(t *testing.T) {
+func TestRealGoApp_LazyOnceSleepJanitorRebaselinesAfterSecondTest(t *testing.T) {
 	k := newKeploySide(t)
 	bin := buildDeltaProbeApp(t, k)
 	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=30")
