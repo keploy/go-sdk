@@ -408,6 +408,14 @@ func runTestCommand(command string) string {
 			curSnap = snapshotGoroutines()
 			haveSnap = true
 		}
+		// Check one-time resume watches BEFORE unclosed-window handling and
+		// BEFORE computing afterCut so a watched goroutine that woke up during
+		// the gap/unclosed window marks the gap afterCut=true and re-attaches
+		// cleanly without being duplicated into two tails.
+		var firedWatches []string
+		if haveSnap && !curSnap.truncated {
+			firedWatches = checkResumeWatches(curSnap, covered, ignore)
+		}
 		unclosedID := currentTestID
 		if unclosedID != "" && activeTracking && haveSnap {
 			if curSnap.truncated || activeTruncatedStart || startGids == nil {
@@ -425,20 +433,18 @@ func runTestCommand(command string) string {
 					pendingTruncatedCuts = pendingTruncatedCuts[len(pendingTruncatedCuts)-maxLingeringTails:]
 				}
 			} else if alive := findActiveTestGoroutines(curSnap, startGids, startIdleStates, covered, ignore); len(alive) > 0 {
-				targets := make([]lingeringTarget, len(alive))
-				for i, ag := range alive {
-					targets[i] = lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig}
+				alreadyTracked := lingeringGidSet()
+				var targets []lingeringTarget
+				for _, ag := range alive {
+					if _, dup := alreadyTracked[ag.info.id]; dup {
+						continue
+					}
+					targets = append(targets, lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig})
 				}
-				addLingeringTail(unclosedID, targets, capturePreExistingChildren(curSnap, targets))
+				if len(targets) > 0 {
+					addLingeringTail(unclosedID, targets, capturePreExistingChildren(curSnap, targets, startGids))
+				}
 			}
-		}
-		// Check one-time resume watches BEFORE computing afterCut so a watched
-		// goroutine that woke up during the gap marks the gap afterCut=true
-		// (never polluting everGap or emitting clean BACKGROUND) and re-attaches
-		// its target if still active.
-		var firedWatches []string
-		if haveSnap && !curSnap.truncated {
-			firedWatches = checkResumeWatches(curSnap, covered, ignore)
 		}
 		// Compute whether the gap since prevTestID followed a cut window, ran
 		// while lingering goroutines were still tracked, woke a resume watch,
@@ -602,7 +608,7 @@ func runTestCommand(command string) string {
 						for i, ag := range active {
 							targets[i] = lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig}
 						}
-						addLingeringTail(id, targets, capturePreExistingChildren(snap, targets))
+						addLingeringTail(id, targets, capturePreExistingChildren(snap, targets, testStartGids))
 					}
 					pendingTruncatedCuts = append(pendingTruncatedCuts, truncatedCutWindow{
 						testID:    id,
@@ -625,7 +631,7 @@ func runTestCommand(command string) string {
 					}
 					lingeringNames = summarizeActiveNames(active, covered)
 					if len(targets) > 0 {
-						addLingeringTail(id, targets, capturePreExistingChildren(snap, targets))
+						addLingeringTail(id, targets, capturePreExistingChildren(snap, targets, testStartGids))
 					}
 					prevWindowCutTestID = id
 					logLingeringOnce(id, lingeringNames)

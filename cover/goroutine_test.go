@@ -67,11 +67,15 @@ func TestParseGoroutineStacks(t *testing.T) {
 	}
 	wantFrames42 := []string{"time.Sleep", "example.com/svc/orders.(*Engine[net/http.Request]).CheckFraud.func1"}
 	wantPkgs42 := []string{"time", "example.com/svc/orders"}
+	wantLines42 := []string{"/usr/local/go/src/runtime/time.go:200", "/app/orders/fraud.go:55"}
 	if !reflect.DeepEqual(g42.frames, wantFrames42) {
 		t.Fatalf("g42 frames = %v, want %v", g42.frames, wantFrames42)
 	}
 	if !reflect.DeepEqual(g42.framePkgs, wantPkgs42) {
 		t.Fatalf("g42 framePkgs = %v, want %v", g42.framePkgs, wantPkgs42)
+	}
+	if !reflect.DeepEqual(g42.frameLines, wantLines42) {
+		t.Fatalf("g42 frameLines = %v, want %v", g42.frameLines, wantLines42)
 	}
 	if g42.createdByFn != "main.handleOrder" || g42.createdByPkg != "main" || g42.createdByGoid != 35 {
 		t.Fatalf("g42 createdBy = (%q, %q, %d), want (main.handleOrder, main, 35) [ancestor must not overwrite]",
@@ -968,6 +972,200 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 		got := mergeContaminated(nil, nine)
 		if len(got) != maxPartialNames+1 || got[maxPartialNames] != "+1" {
 			t.Fatalf("R5-C failed: mergeContaminated(nil, 9 items) = %v, want 8 items + +1", got)
+		}
+	})
+
+	t.Run("R6 co-target pre-existing parent and child moving onto watches stay clean", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		h := newGapHarness(t,
+			lines(appFile, 3), none(), // T1
+			lines(appFile, 4), none(), // T2
+			lines(appFile, 5), none(), // T3 (both on watches -> MUST be clean!)
+			lines(appFile, 6), // T4 (MUST stay clean, no spurious watch fire or mustExit adoption!)
+		)
+		mgrBackoff := &goroutineInfo{
+			id: 15, baseStatus: "select", topLine: "/app/mgr.go:10",
+			frames: []string{"main.mgrRun"}, framePkgs: []string{"main"}, frameLines: []string{"/app/mgr.go:10"},
+			createdByFn: "main.init", createdByPkg: "main",
+		}
+		rdrBackoff := &goroutineInfo{
+			id: 16, baseStatus: "select", topLine: "/app/mgr.go:30",
+			frames: []string{"main.readerRun"}, framePkgs: []string{"main"}, frameLines: []string{"/app/mgr.go:30"},
+			createdByFn: "main.mgrRun", createdByPkg: "main", createdByGoid: 15,
+		}
+		mgrSteady := &goroutineInfo{
+			id: 15, baseStatus: "chan receive", topLine: "/app/mgr.go:18",
+			frames: []string{"main.mgrRun"}, framePkgs: []string{"main"}, frameLines: []string{"/app/mgr.go:18"},
+			createdByFn: "main.init", createdByPkg: "main",
+		}
+		rdrSteady := &goroutineInfo{
+			id: 16, baseStatus: "chan receive", topLine: "/app/mgr.go:38",
+			frames: []string{"main.readerRun"}, framePkgs: []string{"main"}, frameLines: []string{"/app/mgr.go:38"},
+			createdByFn: "main.mgrRun", createdByPkg: "main", createdByGoid: 15,
+		}
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: mgrBackoff, 16: rdrBackoff}}
+		snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+		// T1: both move from backoff to steady -> cut with co-targets {15, 16}.
+		h.do("START set-0/T1", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: mgrSteady, 16: rdrSteady}}
+		h.do("END set-0/T1", replyTaken)
+		if h.test("set-0/T1")["windowCut"] != true {
+			t.Fatalf("T1 windowCut = %v, want true", h.test("set-0/T1")["windowCut"])
+		}
+
+		// T2: streak 1 -> tail:T1.
+		h.run("set-0/T2")
+		if !reflect.DeepEqual(h.test("set-0/T2")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T2")["contaminated"])
+		}
+
+		// T3: both reach streak 2 and move onto watches -> T3 MUST be clean!
+		h.run("set-0/T3")
+		if _, hasCont := h.test("set-0/T3")["contaminated"]; hasCont {
+			t.Fatalf("R6 blocker failed: co-target child triggered spurious watch fire on T3: %v", h.test("set-0/T3"))
+		}
+
+		// T4: MUST stay clean!
+		h.run("set-0/T4")
+		if _, hasCont := h.test("set-0/T4")["contaminated"]; hasCont {
+			t.Fatalf("R6 blocker failed: co-target child stuck permanently on T4: %v", h.test("set-0/T4"))
+		}
+	})
+
+	t.Run("R6 co-target child returning to idle before parent is not falsely adopted as mustExit", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		h := newGapHarness(t,
+			lines(appFile, 3), none(), // T1
+			lines(appFile, 4), none(), // T2 (child returns to idle first; parent still busy)
+			lines(appFile, 5), none(), // T3 (parent returns to idle)
+			lines(appFile, 6), // T4 (MUST be clean!)
+		)
+		coordIdle := &goroutineInfo{
+			id: 15, baseStatus: "chan receive", topLine: "/app/pool.go:10",
+			frames: []string{"main.coord"}, framePkgs: []string{"main"}, frameLines: []string{"/app/pool.go:10"},
+			createdByFn: "main.init", createdByPkg: "main",
+		}
+		workerIdle := &goroutineInfo{
+			id: 16, baseStatus: "chan receive", topLine: "/app/pool.go:30",
+			frames: []string{"main.worker"}, framePkgs: []string{"main"}, frameLines: []string{"/app/pool.go:30"},
+			createdByFn: "main.coord", createdByPkg: "main", createdByGoid: 15,
+		}
+		coordBusy := &goroutineInfo{
+			id: 15, baseStatus: "sleep", topLine: "/go/time.go:1",
+			frames: []string{"time.Sleep", "main.coordWait", "main.coord"}, framePkgs: []string{"time", "main", "main"}, frameLines: []string{"/go/time.go:1", "/app/pool.go:20", "/app/pool.go:12"},
+			createdByFn: "main.init", createdByPkg: "main",
+		}
+		workerBusy := &goroutineInfo{
+			id: 16, baseStatus: "sleep", topLine: "/go/time.go:1",
+			frames: []string{"time.Sleep", "main.workerJob", "main.worker"}, framePkgs: []string{"time", "main", "main"}, frameLines: []string{"/go/time.go:1", "/app/pool.go:40", "/app/pool.go:32"},
+			createdByFn: "main.coord", createdByPkg: "main", createdByGoid: 15,
+		}
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: coordIdle, 16: workerIdle}}
+		snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+		h.do("START set-0/T1", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: coordBusy, 16: workerBusy}}
+		h.do("END set-0/T1", replyTaken)
+
+		// Worker 16 returns to idle while coord 15 stays busy across T2.
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: coordBusy, 16: workerIdle}}
+		h.run("set-0/T2")
+		if !reflect.DeepEqual(h.test("set-0/T2")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T2")["contaminated"])
+		}
+
+		// Coord 15 returns to idle during T3.
+		h.do("START set-0/T3", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: coordIdle, 16: workerIdle}}
+		h.do("END set-0/T3", replyTaken)
+
+		// T4 MUST be clean (worker 16 was NOT falsely adopted as mustExit!).
+		h.run("set-0/T4")
+		if _, hasCont := h.test("set-0/T4")["contaminated"]; hasCont {
+			t.Fatalf("R6 variant failed: co-target worker 16 was falsely adopted as mustExit on T4: %v", h.test("set-0/T4"))
+		}
+	})
+
+	t.Run("R6 app-frame lines distinguish two sleeps in the same app function", func(t *testing.T) {
+		covered := map[string]bool{"main": true}
+		g1 := &goroutineInfo{
+			id: 30, baseStatus: "sleep", topLine: "/go/src/runtime/time.go:200",
+			frames:     []string{"time.Sleep", "main.poller"},
+			framePkgs:  []string{"time", "main"},
+			frameLines: []string{"/go/src/runtime/time.go:200", "/app/poller.go:15"},
+		}
+		g2 := &goroutineInfo{
+			id: 30, baseStatus: "sleep", topLine: "/go/src/runtime/time.go:200",
+			frames:     []string{"time.Sleep", "main.poller"},
+			framePkgs:  []string{"time", "main"},
+			frameLines: []string{"/go/src/runtime/time.go:200", "/app/poller.go:42"},
+		}
+		s1 := goroutineStateSig(g1, 0, covered, nil)
+		s2 := goroutineStateSig(g2, 0, covered, nil)
+		if s1 == s2 {
+			t.Fatalf("two distinct app-frame sleep lines produced identical goroutineStateSig: %+v", s1)
+		}
+	})
+
+	t.Run("R6 clearCounters failure preserves all fired watches, END dedups gid, overflow honors cap", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		h := newGapHarness(t, lines(appFile, 3), none(), lines(appFile, 4))
+		// Arm two resume watches for T1 and T2.
+		g10 := &goroutineInfo{id: 10, baseStatus: "select", frames: []string{"main.a"}, framePkgs: []string{"main"}, frameLines: []string{"/app/a.go:1"}}
+		g11 := &goroutineInfo{id: 11, baseStatus: "select", frames: []string{"main.b"}, framePkgs: []string{"main"}, frameLines: []string{"/app/b.go:1"}}
+		resumeWatches[10] = resumeWatch{testID: "set-0/W1", target: lingeringTarget{gid: 10}, watchSig: goroutineStateSig(g10, 0, nil, nil)}
+		resumeWatches[11] = resumeWatch{testID: "set-0/W2", target: lingeringTarget{gid: 11}, watchSig: goroutineStateSig(g11, 0, nil, nil)}
+
+		// Both exit before START T3, AND clearCounters fails on first START T3!
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}}
+		snapshotGoroutines = func() goroutineSnapshot { return cur }
+		failNext := true
+		clearCounters = func() error {
+			if failNext {
+				failNext = false
+				return fmt.Errorf("reset failed")
+			}
+			return nil
+		}
+		h.do("START set-0/T3", replyIgnored)
+		// Next successful START T3 MUST carry BOTH tail:set-0/W1 and tail:set-0/W2!
+		h.run("set-0/T3")
+		if !reflect.DeepEqual(h.test("set-0/T3")["contaminated"], []interface{}{"tail:set-0/W1", "tail:set-0/W2"}) {
+			t.Fatalf("clearCounters failure lost fired watches: got %v, want [tail:set-0/W1 tail:set-0/W2]", h.test("set-0/T3")["contaminated"])
+		}
+
+		// END dedup: watch fires at END T4 for gid 20; gid 20 must appear in ONLY ONE lingering tail.
+		g20Park := &goroutineInfo{id: 20, baseStatus: "chan receive", frames: []string{"main.c"}, framePkgs: []string{"main"}, frameLines: []string{"/app/c.go:10"}}
+		g20Busy := &goroutineInfo{id: 20, baseStatus: "sleep", frames: []string{"time.Sleep", "main.cWork", "main.c"}, framePkgs: []string{"time", "main", "main"}, frameLines: []string{"/go/t.go:1", "/app/c.go:20", "/app/c.go:12"}}
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 20: g20Park}}
+		resumeWatches[20] = resumeWatch{testID: "set-0/W3", target: lingeringTarget{gid: 20, idleSig: goroutineSig{active: true, status: "select", appFrameCount: 1, hash: 123}}, watchSig: goroutineStateSig(g20Park, 0, nil, nil)}
+		h.do("START set-0/T4", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 20: g20Busy}}
+		h.do("END set-0/T4", replyTaken)
+		count20 := 0
+		for _, lt := range lingeringTails {
+			for _, tgt := range lt.targets {
+				if tgt.gid == 20 {
+					count20++
+				}
+			}
+		}
+		if count20 != 1 {
+			t.Fatalf("END dedup failed: gid 20 present in %d tails, want 1", count20)
+		}
+
+		// Overflow same-testID merge honors maxOverflowTailGids.
+		resetGoroutineState()
+		var batch1, batch2 []lingeringTarget
+		for i := 0; i < maxOverflowTailGids; i++ {
+			batch1 = append(batch1, lingeringTarget{gid: uint64(1000 + i), mustExit: true})
+			batch2 = append(batch2, lingeringTarget{gid: uint64(2000 + i), mustExit: true})
+		}
+		addLingeringTail("overflow", batch1, nil)
+		addLingeringTail("overflow", batch2, nil)
+		if len(lingeringTails) != 1 || len(lingeringTails[0].targets) != maxOverflowTailGids {
+			t.Fatalf("overflow same-testID merge exceeded cap: len=%d, want %d", len(lingeringTails[0].targets), maxOverflowTailGids)
 		}
 	})
 

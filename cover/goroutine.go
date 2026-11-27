@@ -697,7 +697,9 @@ func checkResumeWatches(snap goroutineSnapshot, covered map[string]bool, ignore 
 	if len(resumeWatches) == 0 {
 		return nil
 	}
-	// Pre-index whether any watched gid currently has a new app-relevant child.
+	// Pre-index whether any watched gid currently has a new app-relevant child
+	// (excluding pre-existing children and goroutines already tracked in lingeringTails).
+	alreadyLingering := lingeringGidSet()
 	hasNewChild := map[uint64]bool{}
 	for id, g := range snap.all {
 		if g.createdByGoid == 0 {
@@ -708,6 +710,9 @@ func checkResumeWatches(snap goroutineSnapshot, covered map[string]bool, ignore 
 			continue
 		}
 		if _, pre := rw.preExistingChildren[id]; pre {
+			continue
+		}
+		if _, tracked := alreadyLingering[id]; tracked {
 			continue
 		}
 		if isAppRelevantGoroutineWithIgnore(g, snap.selfID, covered, ignore) {
@@ -920,12 +925,13 @@ func logLingeringOnce(testID string, names []string) {
 		testID, fresh, envEndWaitMS, envIgnoreGoroutines, envGoroutineTracking)
 }
 
-// capturePreExistingChildren returns ONLY the non-SDK goroutine IDs already
-// alive in snap whose parent (createdByGoid) is one of targets (excluding
-// targets themselves). Keeping only direct pre-existing children instead of
-// all N live goroutines keeps per-tail memory O(children) while preventing
-// false adoption of pre-existing children on pre-existing parents.
-func capturePreExistingChildren(snap goroutineSnapshot, targets []lingeringTarget) map[uint64]struct{} {
+// capturePreExistingChildren returns the non-SDK goroutine IDs already alive
+// in snap whose parent (createdByGoid) is one of targets — INCLUDING co-targets
+// that were already alive at START (startSet). Including co-targets ensures
+// that if a pre-existing child returns to idle before its parent (or moves onto
+// a watch with its parent), it is never falsely re-adopted as a new mustExit
+// child (ownerByGid already prevents double adoption while both are targets).
+func capturePreExistingChildren(snap goroutineSnapshot, targets []lingeringTarget, startSet map[uint64]struct{}) map[uint64]struct{} {
 	if len(snap.all) == 0 || len(targets) == 0 {
 		return nil
 	}
@@ -938,8 +944,10 @@ func capturePreExistingChildren(snap goroutineSnapshot, targets []lingeringTarge
 		if g.createdByGoid == 0 || isSDKGoroutine(g, snap.selfID) {
 			continue
 		}
-		if _, isTarget := targetSet[id]; isTarget {
-			continue
+		if startSet != nil {
+			if _, existedAtStart := startSet[id]; !existedAtStart {
+				continue
+			}
 		}
 		if _, isChildOfTarget := targetSet[g.createdByGoid]; isChildOfTarget {
 			if children == nil {
@@ -985,7 +993,7 @@ func addLingeringTail(testID string, targets []lingeringTarget, preExisting map[
 				maxCap = maxOverflowTailGids
 			}
 			mergeTargets(lt, targets, maxCap)
-			mergePreExistingChildren(lt, preExisting, maxOverflowTailGids)
+			mergePreExistingChildren(lt, preExisting, maxCap)
 			return
 		}
 	}
@@ -1023,7 +1031,7 @@ func addLingeringTail(testID string, targets []lingeringTarget, preExisting map[
 		testID:  testID,
 		targets: copied,
 	}
-	mergePreExistingChildren(lt, preExisting, maxOverflowTailGids)
+	mergePreExistingChildren(lt, preExisting, 0)
 	lingeringTails = append(lingeringTails, lt)
 }
 
@@ -1087,7 +1095,7 @@ func resolveTruncatedCutWindows(snap goroutineSnapshot, covered map[string]bool,
 			names = append(names, describeAppGoroutine(g, covered))
 		}
 		if len(targets) > 0 {
-			addLingeringTail(tc.testID, targets, capturePreExistingChildren(snap, targets))
+			addLingeringTail(tc.testID, targets, capturePreExistingChildren(snap, targets, tc.startGids))
 			sort.Strings(names)
 			logLingeringOnce(tc.testID, names)
 		}
@@ -1196,9 +1204,12 @@ func pruneLingeringTails(snap goroutineSnapshot, covered map[string]bool, ignore
 						st = quiescentStreak{sig: curSig, count: 1}
 					}
 					if st.count >= rebaselineStreakLimit {
+						// Preserve every child of t.gid already alive at watch
+						// creation (anything alive now predates the watch) plus
+						// any prior preExistingChildren of t.gid.
 						var preserved map[uint64]struct{}
-						for cid := range lt.preExistingChildren {
-							if cg := snap.all[cid]; cg != nil && cg.createdByGoid == t.gid {
+						for cid, cg := range snap.all {
+							if cg.createdByGoid == t.gid && !isSDKGoroutine(cg, snap.selfID) {
 								if preserved == nil {
 									preserved = make(map[uint64]struct{})
 								}
@@ -1304,7 +1315,7 @@ func capContaminated(items []string) []string {
 // allocating on the common clean path, ensuring at most one trailing "+N"
 // summary entry.
 func mergeContaminated(startMarks, gapMarks []string) []string {
-	if len(startMarks) == 0 && len(gapMarks) <= maxPartialNames {
+	if len(startMarks) == 0 && (len(gapMarks) <= maxPartialNames || (len(gapMarks) == maxPartialNames+1 && strings.HasPrefix(gapMarks[maxPartialNames], "+"))) {
 		return gapMarks
 	}
 	if len(gapMarks) == 0 && len(startMarks) <= maxPartialNames {

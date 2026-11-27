@@ -77,13 +77,18 @@ var (
 	childHits  atomic.Int64
 	poolHits   atomic.Int64
 
-	gateMu        sync.Mutex
-	gates         = map[string]*asyncGate{}
-	poolJobs      = make(chan string, 8)
-	consumerMsgs  = make(chan string, 4)
-	connectCh     = make(chan struct{})
-	backoffReady  = make(chan struct{})
-	consumerHits  atomic.Int64
+	gateMu         sync.Mutex
+	gates          = map[string]*asyncGate{}
+	poolJobs       = make(chan string, 8)
+	consumerMsgs   = make(chan string, 4)
+	connectCh      = make(chan struct{})
+	backoffReady   = make(chan struct{})
+	supConnectCh   = make(chan struct{})
+	supReady       = make(chan struct{})
+	rdrReady       = make(chan struct{})
+	supSteadyCh    = make(chan struct{})
+	rdrSteadyCh    = make(chan struct{})
+	consumerHits   atomic.Int64
 )
 
 type asyncGate struct {
@@ -199,12 +204,32 @@ func slowFlushHandler(w http.ResponseWriter, r *http.Request) {
 	<-g.release
 }
 
-func waitForConsumerState(wantStatus string) bool {
+func supervisorReader() {
+	close(rdrReady)
+	select {
+	case <-supConnectCh:
+	case <-time.After(time.Hour):
+	}
+	<-rdrSteadyCh
+}
+
+func supervisorLoop() {
+	go supervisorReader()
+	<-rdrReady
+	close(supReady)
+	select {
+	case <-supConnectCh:
+	case <-time.After(time.Hour):
+	}
+	<-supSteadyCh
+}
+
+func waitForFuncState(fnPrefix, wantStatus string) bool {
 	buf := make([]byte, 128<<10)
 	for i := 0; i < 400; i++ {
 		n := runtime.Stack(buf, true)
 		s := string(buf[:n])
-		idx := strings.Index(s, "main.backoffConsumer(")
+		idx := strings.Index(s, fnPrefix)
 		if idx >= 0 {
 			hdr := strings.LastIndex(s[:idx], "goroutine ")
 			if hdr >= 0 && strings.Contains(s[hdr:idx], "["+wantStatus) {
@@ -221,11 +246,30 @@ func init() {
 	if os.Getenv("ENABLE_BACKOFF_CONSUMER") == "1" {
 		go backoffConsumer()
 	}
+	if os.Getenv("ENABLE_SUPERVISOR_PAIR") == "1" {
+		go supervisorLoop()
+	}
 
 	http.HandleFunc("/slow-flush", slowFlushHandler)
+	http.HandleFunc("/supervisor-wait-backoff", func(w http.ResponseWriter, r *http.Request) {
+		<-supReady
+		if !waitForFuncState("main.supervisorLoop(", "select") || !waitForFuncState("main.supervisorReader(", "select") {
+			http.Error(w, "timed out waiting for supervisor pair to park in select", http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprint(w, "parked")
+	})
+	http.HandleFunc("/supervisor-connect", func(w http.ResponseWriter, r *http.Request) {
+		close(supConnectCh)
+		if !waitForFuncState("main.supervisorLoop(", "chan receive") || !waitForFuncState("main.supervisorReader(", "chan receive") {
+			http.Error(w, "timed out waiting for supervisor pair to reach chan receive", http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprint(w, "connected")
+	})
 	http.HandleFunc("/consumer-wait-backoff", func(w http.ResponseWriter, r *http.Request) {
 		<-backoffReady
-		if !waitForConsumerState("select") {
+		if !waitForFuncState("main.backoffConsumer(", "select") {
 			http.Error(w, "timed out waiting for backoffConsumer to park in select", http.StatusInternalServerError)
 			return
 		}
@@ -233,11 +277,18 @@ func init() {
 	})
 	http.HandleFunc("/consumer-connect", func(w http.ResponseWriter, r *http.Request) {
 		close(connectCh)
-		if !waitForConsumerState("chan receive") {
+		if !waitForFuncState("main.backoffConsumer(", "chan receive") {
 			http.Error(w, "timed out waiting for backoffConsumer to reach chan receive", http.StatusInternalServerError)
 			return
 		}
 		fmt.Fprint(w, "connected")
+	})
+	http.HandleFunc("/consumer-wait-handle", func(w http.ResponseWriter, r *http.Request) {
+		if !waitForFuncState("main.handleConsumerMsg(", "chan receive") {
+			http.Error(w, "timed out waiting for handleConsumerMsg to block", http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprint(w, "handling")
 	})
 	http.HandleFunc("/consumer-send", func(w http.ResponseWriter, r *http.Request) {
 		name := r.URL.Query().Get("gate")
@@ -1057,9 +1108,8 @@ func TestRealGoApp_N2NewKeepAliveSlowFlushClearsWhenHandlerReturns(t *testing.T)
 // TestRealGoApp_N3BackoffConsumerRebaselinesAndResumeWatchCatchesWakeup verifies
 // end-to-end on a real -cover binary that a pre-existing consumer transitioning
 // from startup [select] backoff to steady-state <-consumerMsgs settles cleanly
-// onto a one-time resume watch (T3 clean while parked), catches an in-window
-// wakeup (T4 contaminated tail:T1), and also covers a gap wakeup (emitting
-// afterCut:true empty BACKGROUND and re-attaching while still blocked).
+// onto a one-time resume watch (T3 clean while parked) and catches an in-window
+// wakeup (T4 contaminated tail:T1).
 func TestRealGoApp_N3BackoffConsumerRebaselinesAndResumeWatchCatchesWakeup(t *testing.T) {
 	k := newKeploySide(t)
 	bin := buildAsyncApp(t, k)
@@ -1145,10 +1195,10 @@ func TestRealGoApp_ResumeWatchGapWakeAfterCutAndReattach(t *testing.T) {
 		_ = readNextRecord(t, k, a)
 	}
 
-	// Gap T3->T4: send a message to wake the watched consumer (runs in gap & blocks on gate)!
+	// Gap T3->T4: send a message to wake the watched consumer and deterministically
+	// confirm it entered handleConsumerMsg before START T4.
 	getOK(t, a, "/consumer-send?gate=gapmsg")
-	// Give backoffConsumer a moment to dequeue gapmsg and park on <-g.release.
-	time.Sleep(25 * time.Millisecond)
+	getOK(t, a, "/consumer-wait-handle")
 
 	// T4 starts: gap T3->T4 MUST emit afterCut:true empty BACKGROUND, and T4 gets tail:T1!
 	if got := send(t, k.sock, "START set-0/T4"); got != replyStartAskedBy("rwgap") {
@@ -1195,4 +1245,47 @@ func TestRealGoApp_ResumeWatchGapWakeAfterCutAndReattach(t *testing.T) {
 		t.Fatalf("T5 contaminated = %v, want [tail:set-0/T1] via re-attached watch target", rec5["contaminated"])
 	}
 	getOK(t, a, "/release?gate=gapmsg&wait=1")
+}
+
+// TestRealGoApp_CoTargetSupervisorAndReaderWatchStaysClean verifies end-to-end
+// on a real -cover binary that a pre-existing supervisor goroutine and its
+// pre-existing child reader goroutine (both moving from [select] backoff to
+// steady [chan receive] in T1) move cleanly onto resume watches at T3 without
+// the child triggering a spurious watch fire or permanent mustExit adoption!
+func TestRealGoApp_CoTargetSupervisorAndReaderWatchStaysClean(t *testing.T) {
+	k := newKeploySide(t)
+	bin := buildAsyncApp(t, k)
+	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=30", "ENABLE_SUPERVISOR_PAIR=1")
+
+	getOK(t, a, "/supervisor-wait-backoff")
+
+	// T1: both supervisorLoop and supervisorReader transition from [select] to [chan receive].
+	if got := send(t, k.sock, "START set-0/T1"); got != replyStartUnasked {
+		t.Fatalf("START T1: %q", got)
+	}
+	getOK(t, a, "/supervisor-connect")
+	if got := send(t, k.sock, "END set-0/T1"); got != replyTaken {
+		t.Fatalf("END T1: %q", got)
+	}
+	rec1 := readNextRecord(t, k, a)
+	if rec1["windowCut"] != true {
+		t.Fatalf("T1 windowCut = %v, want true", rec1["windowCut"])
+	}
+
+	// T2: streak 1 -> tail:T1.
+	rec2 := measure(t, k, a, "set-0/T2", "/twin?n=2")
+	if !reflect.DeepEqual(rec2["contaminated"], []any{"tail:set-0/T1"}) {
+		t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", rec2["contaminated"])
+	}
+
+	// T3 & T4: both moved onto watches -> MUST be 100% clean (no spurious watch fire)!
+	for _, id := range []string{"set-0/T3", "set-0/T4"} {
+		rec := measure(t, k, a, id, "/twin?n=3")
+		if _, hasCut := rec["windowCut"]; hasCut {
+			t.Fatalf("%s unexpectedly got windowCut: %v", id, rec)
+		}
+		if _, hasCont := rec["contaminated"]; hasCont {
+			t.Fatalf("R6 e2e failed: %s falsely contaminated by pre-existing child reader: %v", id, rec)
+		}
+	}
 }
