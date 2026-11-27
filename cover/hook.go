@@ -47,14 +47,14 @@ const (
 // capsString formats the v3 honesty capability token (no spaces) from live
 // runtime state. Called with controlMu held (or after verifying coverage).
 //
-// In R1, Go always declares asyncExecutors=false (staying soft-mark-only and
-// never removal-eligible) because runtime.Stack snapshots cannot observe work
-// handed off to library-owned third-party async writers/producers (e.g.
-// kafka-go / sarama), dormant time.AfterFunc timers not yet fired by END, or
-// pre-existing app batchers/debouncers that re-park at the same idle signature
-// before END. Go also declares windowCut=false on Go < 1.21 toolchains (which
-// lack "created by ... in goroutine N" parent-goid lines) or when
-// KEPLOY_GO_GOROUTINE_TRACKING=off.
+// In R1, Go always declares asyncExecutors=false because runtime.Stack
+// snapshots cannot observe work handed off to library-owned third-party async
+// writers/producers (e.g. kafka-go / sarama), dormant time.AfterFunc timers
+// not yet fired by END, or pre-existing app batchers/debouncers that re-park
+// at the same idle signature before END. Collectors gating removal eligibility
+// on asyncExecutors=true therefore keep Go soft-mark-only. Go also declares
+// windowCut=false on Go < 1.21 toolchains (which lack "created by ... in
+// goroutine N" parent-goid lines) or when KEPLOY_GO_GOROUTINE_TRACKING=off.
 func capsString(coverageActive bool) string {
 	tracking := goroutineTrackingActive()
 	windowCut := coverageActive && tracking && supportsGoroutineChildAdoption(runtimeGoVersion())
@@ -552,8 +552,12 @@ func runTestCommand(command string) string {
 				}
 			} else {
 				waitDur := endWaitDuration()
+				preEndLingering := lingeringGidSet()
 				snap := snapshotGoroutines()
-				active := findActiveTestGoroutines(snap, testStartGids, testStartIdle, covered, ignore)
+				active := findActiveTestGoroutinesWithLingering(snap, testStartGids, testStartIdle, preEndLingering, covered, ignore)
+				if !snap.truncated {
+					testContaminated = checkEndWatchesAndStreaks(snap, testContaminated, covered, ignore)
+				}
 				// Never burn END_WAIT repeating stop-the-world 16 MiB dumps when
 				// already truncated; only poll while !snap.truncated && len(active) > 0.
 				if !snap.truncated && len(active) > 0 && waitDur > 0 {
@@ -576,34 +580,17 @@ func runTestCommand(command string) string {
 							}
 						}
 						snap = snapshotGoroutines()
-						active = findActiveTestGoroutines(snap, testStartGids, testStartIdle, covered, ignore)
+						active = findActiveTestGoroutinesWithLingering(snap, testStartGids, testStartIdle, preEndLingering, covered, ignore)
+						if !snap.truncated {
+							testContaminated = checkEndWatchesAndStreaks(snap, testContaminated, covered, ignore)
+						}
 					}
 				}
-				// Check any one-time resume watches (so a re-baselined
-				// pre-existing goroutine that woke up during this test marks
-				// this test contaminated immediately), resolve any prior
-				// truncated cuts, and adopt/prune lingering goroutines before
-				// this END completes.
+				// Resolve any prior truncated cuts and adopt/prune lingering
+				// goroutines before this END completes (resumeWatches and
+				// broken streaks were already checked on every non-truncated
+				// END snapshot above).
 				if !snap.truncated {
-					if triggered := checkResumeWatches(snap, covered, ignore); len(triggered) > 0 {
-						seen := make(map[string]struct{}, len(testContaminated)+len(triggered))
-						for _, m := range testContaminated {
-							if !strings.HasPrefix(m, "+") {
-								seen[m] = struct{}{}
-							}
-						}
-						var addMarks []string
-						for _, tid := range triggered {
-							mark := "tail:" + tid
-							if _, dup := seen[mark]; !dup {
-								seen[mark] = struct{}{}
-								addMarks = append(addMarks, mark)
-							}
-						}
-						if len(addMarks) > 0 {
-							testContaminated = mergeContaminated(testContaminated, addMarks)
-						}
-					}
 					resolveTruncatedCutWindows(snap, covered, ignore)
 					pruneLingeringTails(snap, covered, ignore, false)
 					// Refresh lastCompleteGids with non-SDK gids from this complete END.
@@ -899,7 +886,7 @@ func reportCoverage(testID string) error {
 	}
 	if pendingEndWindowCut && len(startMarks) == 0 {
 		// Also mark contaminated:["window-cut"] when no start-time mark is
-		// already present so enterprise proto>=2 collectors that ignore
+		// already present so collectors that read contaminated before
 		// windowCut still fail closed on the cut test itself.
 		startMarks = []string{"window-cut"}
 	}

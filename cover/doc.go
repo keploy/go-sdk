@@ -61,9 +61,10 @@
 // command replies with "ACK proto=3 [bg=<token>] caps=..." declaring live
 // runtime honesty capabilities (windowCut, contaminated, classMismatch,
 // background, asyncExecutors, listenerContamination), compatible with proto>=2
-// collectors. Go ALWAYS declares asyncExecutors=false in R1 (keeping Go
-// soft-mark-only rather than removal-eligible) because runtime.Stack snapshots
-// cannot observe all deferred hand-offs (see Scope limits below). Go declares
+// control-socket parsers. Go ALWAYS declares asyncExecutors=false in R1
+// because runtime.Stack snapshots cannot observe all deferred hand-offs (see
+// Scope limits below); collectors that gate removal eligibility on
+// asyncExecutors=true therefore keep Go soft-mark-only. Go declares
 // windowCut=true when block-level coverage, goroutine-tail tracking, and a
 // Go 1.21+ toolchain (for parent-goid child adoption) are active, and
 // windowCut=false on Go < 1.21 toolchains, under per-func granularity, or when
@@ -81,31 +82,36 @@
 // KEPLOY_GO_IGNORE_GOROUTINES), polling adaptively up to KEPLOY_GO_END_WAIT_MS
 // (default 200ms, max 2000ms; 0 checks immediately) for them to drain. If any
 // remain active when the wait expires (or if runtime.Stack hits its 16 MiB
-// cap, marked "stack-truncated" with a one-time diagnostic log naming
-// KEPLOY_GO_IGNORE_GOROUTINES and KEPLOY_GO_GOROUTINE_TRACKING=off), the test
-// record carries "windowCut":true, "lingeringGoroutines", and
+// cap, marked "stack-truncated" with a one-time diagnostic log advising to
+// reduce live goroutines or set KEPLOY_GO_GOROUTINE_TRACKING=off, noting that
+// KEPLOY_GO_IGNORE_GOROUTINES filters parsed stacks only), the test record
+// carries "windowCut":true, "lingeringGoroutines", and
 // "contaminated":["window-cut"] (when no start-time contamination mark is
-// already present, so enterprise proto>=2 collectors that ignore windowCut
-// still fail closed; k8s-proxy requires R1 to decode windowCut/contaminated)
-// with overlapLinesByFile omitted. Subsequent tests while those goroutines (or
-// any newly-spawned app-relevant children adopted via Go 1.21+ "created by ...
-// in goroutine N") remain active (plus the immediate next test) carry
-// "contaminated":["tail:<test>"] with overlapLinesByFile omitted.
+// already present, so collectors reading contaminated still fail closed;
+// k8s-proxy requires R1 to decode windowCut/contaminated) with
+// overlapLinesByFile omitted. Subsequent tests carry
+// "contaminated":["tail:<test>"] (with overlapLinesByFile omitted) on the
+// immediate next test and while any lingering goroutine (or newly-spawned
+// app-relevant child adopted via Go 1.21+ "created by ... in goroutine N")
+// remains active without settling onto a resume watch.
 //
 // Pre-existing goroutines that transition to a different quiescent steady
 // state no deeper than their baseline app-frame depth, as well as lazily
-// started non-HTTP background goroutines (such as a sync.Once janitor or a
-// lazily dialed third-party client over a wrapped net.Conn), move onto a
-// one-time resume watch once stably parked at the same quiescent signature
-// across consecutive windows (clearing subsequent tests while parked, and
-// marking the gap or test in which a snapshot observes them awake, exiting, or
-// spawning a child with afterCut / "tail:<test>", re-attaching if still
-// active). Stuck HTTP handlers are never re-baselined. Any BACKGROUND record
-// emitted for a gap after a cut window carries "afterCut":true with an empty
-// executedLinesByFile (and does not pollute everGap) so collectors never
-// absorb recurring async tails into calibrated stable background. A START
-// arriving without a preceding END marks the new test with
-// "contaminated":["unclosed:<test>"].
+// started non-HTTP background goroutines parked in a non-sleep event wait
+// (such as a sync.Once janitor or a lazily dialed third-party client over a
+// wrapped net.Conn), move onto a one-time resume watch (bounded at 512 active
+// watches) once stably parked at the same quiescent signature across
+// consecutive windows (START -> END -> START, after birth test T1 was cut and
+// T2 was tainted tail:T1). Subsequent tests run clean while the watched
+// goroutine stays parked, and the gap or test in which any snapshot (including
+// intermediate END_WAIT polls) observes it awake, exiting, or spawning a child
+// is marked with afterCut / "tail:<test>" (re-attaching if still active).
+// Stuck HTTP handlers (net/http, x/net/http2, ServeHTTP, RoundTrip) are never
+// re-baselined. Any BACKGROUND record emitted for a gap after a cut window
+// carries "afterCut":true with an empty executedLinesByFile (and does not
+// pollute everGap) so collectors never absorb recurring async tails into
+// calibrated stable background. A START arriving without a preceding END marks
+// the new test with "contaminated":["unclosed:<test>"].
 //
 // Scope limits (why asyncExecutors=false in R1): runtime.Stack snapshots
 // cannot detect (a) work handed off to library-owned third-party async
@@ -114,13 +120,17 @@
 // until invoking an app callback later, (b) dormant time.AfterFunc timers that
 // have not yet fired by END (no goroutine exists yet), or (c) pre-existing app
 // batchers/debouncers that dequeue work and re-park at the exact same idle
-// signature before END. Snapshots likewise cannot observe a child goroutine or
-// watched wakeup that starts and returns/exits strictly between two snapshots
-// (nor a grandchild orphaned when its intermediate parent spawns and exits
-// between snapshots), nor work queued in a channel buffer for a busy
-// pre-existing worker until dequeued; parent-goid child adoption relies on
-// Go 1.21+ "created by ... in goroutine N" stack lines (windowCut=false on
-// Go < 1.21 toolchains).
+// signature before END. Likewise, a test-spawned periodic loop parked on a
+// channel/select timer (for example select{case <-time.After(d):}) settles
+// onto a resume watch after two windows (T1 cut, T2 tail:T1), so a later tick
+// that runs and re-parks at the same signature strictly between two snapshots
+// is not observed; snapshots also cannot observe a child goroutine or watched
+// wakeup that starts and returns/exits strictly between two snapshots (nor a
+// grandchild orphaned when its intermediate parent spawns and exits between
+// snapshots), nor work queued in a channel buffer for a busy pre-existing
+// worker until dequeued; parent-goid child adoption relies on Go 1.21+
+// "created by ... in goroutine N" stack lines (windowCut=false on Go < 1.21
+// toolchains).
 //
 // Between tests. The counters are reset at each START and again after each
 // END, so every window is either one test's or a gap between two. A gap's

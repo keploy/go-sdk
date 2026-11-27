@@ -1893,6 +1893,9 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 		if !strings.Contains(logged, envGoroutineTracking+"=off") {
 			t.Fatalf("SF2 truncation log missing %s=off: %q", envGoroutineTracking, logged)
 		}
+		if !strings.Contains(logged, "does not shrink runtime.Stack") {
+			t.Fatalf("SF2 truncation log should clarify %s does not shrink runtime.Stack: %q", envIgnoreGoroutines, logged)
+		}
 		if cnt := strings.Count(logged, "16 MiB"); cnt != 1 {
 			t.Fatalf("SF2 truncation diagnostic logged %d times, want once:\n%s", cnt, logged)
 		}
@@ -2005,4 +2008,354 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 			t.Fatalf("SF2 END streak reset failed: T3 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T3")["contaminated"])
 		}
 	})
+
+	t.Run("R10-SF1 resumeWatch direct return to original idle restores lastQuiescentSigs without false windowCut", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		for _, tc := range []struct {
+			name string
+			orig *goroutineInfo
+		}{
+			{
+				name: "same-depth original idle",
+				orig: &goroutineInfo{
+					id: 80, baseStatus: "select", topLine: "/app/c.go:10",
+					frames: []string{"main.consumer"}, framePkgs: []string{"main"}, frameLines: []string{"/app/c.go:10"},
+					createdByFn: "main.init", createdByPkg: "main",
+				},
+			},
+			{
+				name: "deeper original idle",
+				orig: &goroutineInfo{
+					id: 80, baseStatus: "select", topLine: "/app/c.go:15",
+					frames: []string{"main.backoffWait", "main.consumer"}, framePkgs: []string{"main", "main"}, frameLines: []string{"/app/c.go:15", "/app/c.go:10"},
+					createdByFn: "main.init", createdByPkg: "main",
+				},
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				h := newGapHarness(t,
+					lines(appFile, 1), none(), // T1: orig -> watchState
+					lines(appFile, 2), none(), // T2: streak 1
+					lines(appFile, 3), none(), // T3: moves onto watchState watch (clean)
+					lines(appFile, 4), none(), // T4: returned directly to orig in gap T3->T4 -> tail:T1, NO windowCut!
+					lines(appFile, 5), // T5: clean!
+				)
+				watchState := &goroutineInfo{
+					id: 80, baseStatus: "IO wait", topLine: "/app/c.go:30",
+					frames: []string{"internal/poll.runtime_pollWait", "main.consumer"}, framePkgs: []string{"internal/poll", "main"}, frameLines: []string{"/go/poll.go:1", "/app/c.go:30"},
+					createdByFn: "main.init", createdByPkg: "main",
+				}
+				cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 80: tc.orig}}
+				snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+				h.do("START set-0/T1", replyStartUnasked)
+				cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 80: watchState}}
+				h.do("END set-0/T1", replyTaken)
+				h.run("set-0/T2")
+				h.run("set-0/T3")
+				if _, armed := resumeWatches[80]; !armed {
+					t.Fatal("expected resumeWatch armed on gid 80 after T3")
+				}
+
+				// In gap T3->T4, gid 80 returns DIRECTLY to its original idle (tc.orig).
+				cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 80: tc.orig}}
+				h.run("set-0/T4")
+				rec4 := h.test("set-0/T4")
+				if !reflect.DeepEqual(rec4["contaminated"], []interface{}{"tail:set-0/T1"}) {
+					t.Fatalf("T4 contaminated = %v, want [tail:set-0/T1]", rec4["contaminated"])
+				}
+				if _, hasCut := rec4["windowCut"]; hasCut {
+					t.Fatalf("R10-SF1 failed: T4 got false windowCut after direct return to original idle: %v", rec4)
+				}
+
+				// T5 MUST be 100% clean (never stuck in tail:T4 forever!).
+				h.run("set-0/T5")
+				rec5 := h.test("set-0/T5")
+				if _, hasCut := rec5["windowCut"]; hasCut {
+					t.Fatalf("R10-SF1 failed: T5 got windowCut: %v", rec5)
+				}
+				if _, hasCont := rec5["contaminated"]; hasCont {
+					t.Fatalf("R10-SF1 failed: T5 got contaminated: %v", rec5)
+				}
+			})
+		}
+	})
+
+	t.Run("R10-SF2 END_WAIT intermediate poll catches transient watch wakeup and resets broken streak", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "100")
+		h := newGapHarness(t,
+			lines(appFile, 1), none(), // T1: spawns janitor (90) and worker (91)
+			lines(appFile, 2), none(), // T2: streak 1 for 90 and 91
+			lines(appFile, 3), none(), // T3: 90 moves onto watch; 91 stays lingering after END T2 transient wakeup!
+			lines(appFile, 4), // T4: 90 transiently wakes on END T4 poll #1 and re-parks on poll #2 -> T4 MUST still get tail:T1!
+		)
+		janitorPark := &goroutineInfo{
+			id: 90, baseStatus: "chan receive", topLine: "/app/j.go:10",
+			frames: []string{"main.janitor"}, framePkgs: []string{"main"}, frameLines: []string{"/app/j.go:10"},
+			createdByFn: "main.initLazy", createdByPkg: "main",
+		}
+		janitorAwake := &goroutineInfo{
+			id: 90, baseStatus: "runnable", topLine: "/app/j.go:15",
+			frames: []string{"main.janitorTick", "main.janitor"}, framePkgs: []string{"main", "main"}, frameLines: []string{"/app/j.go:15", "/app/j.go:11"},
+			createdByFn: "main.initLazy", createdByPkg: "main",
+		}
+		workerPark := &goroutineInfo{
+			id: 91, baseStatus: "chan receive", topLine: "/app/w.go:10",
+			frames: []string{"main.worker"}, framePkgs: []string{"main"}, frameLines: []string{"/app/w.go:10"},
+			createdByFn: "main.handle", createdByPkg: "main",
+		}
+		workerAwake := &goroutineInfo{
+			id: 91, baseStatus: "runnable", topLine: "/app/w.go:20",
+			frames: []string{"main.doWork", "main.worker"}, framePkgs: []string{"main", "main"}, frameLines: []string{"/app/w.go:20", "/app/w.go:12"},
+			createdByFn: "main.handle", createdByPkg: "main",
+		}
+		// Helper goroutine 92 forces END_WAIT to take 2 polls when present on poll #1.
+		fastChild := &goroutineInfo{
+			id: 92, baseStatus: "runnable", topLine: "/app/fast.go:5",
+			frames: []string{"main.fastHelper"}, framePkgs: []string{"main"}, frameLines: []string{"/app/fast.go:5"},
+			createdByFn: "main.handle", createdByPkg: "main",
+		}
+
+		var seq []goroutineSnapshot
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}}
+		snapshotGoroutines = func() goroutineSnapshot {
+			if len(seq) > 0 {
+				s := seq[0]
+				seq = seq[1:]
+				return s
+			}
+			return cur
+		}
+
+		// T1: spawns 90 and 91 (use END_WAIT=0 for T1 setup).
+		t.Setenv(envEndWaitMS, "0")
+		h.do("START set-0/T1", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 90: janitorPark, 91: workerPark}}
+		h.do("END set-0/T1", replyTaken)
+
+		// T2: START sees both parked (streak 1). During END T2 (END_WAIT=100ms),
+		// poll #1 sees 91 awake (and fastChild 92 triggers poll #2), poll #2 sees 91
+		// re-parked and 92 exited. Poll #1 MUST reset 91's streak!
+		t.Setenv(envEndWaitMS, "100")
+		h.do("START set-0/T2", replyStartUnasked)
+		seq = []goroutineSnapshot{
+			{all: map[uint64]*goroutineInfo{1: {id: 1}, 90: janitorPark, 91: workerAwake, 92: fastChild}},
+			{all: map[uint64]*goroutineInfo{1: {id: 1}, 90: janitorPark, 91: workerPark}},
+		}
+		h.do("END set-0/T2", replyTaken)
+
+		// T3: 90 reaches streak 2 and moves onto resumeWatch, while 91 (whose streak
+		// was reset on END T2 poll #1) stays in lingeringTails at streak 1 -> T3 gets tail:T1!
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 90: janitorPark, 91: workerPark}}
+		h.do("START set-0/T3", replyStartUnasked)
+		if _, armed := resumeWatches[90]; !armed {
+			t.Fatal("expected gid 90 to move onto resumeWatch at START T3")
+		}
+		if _, armed := resumeWatches[91]; armed {
+			t.Fatal("R10-SF2 failed: gid 91 moved onto resumeWatch despite waking on END T2 poll #1")
+		}
+		// 91 exits before END T3 so T4 tests 90's watch alone.
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 90: janitorPark}}
+		h.do("END set-0/T3", replyTaken)
+		if !reflect.DeepEqual(h.test("set-0/T3")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("T3 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T3")["contaminated"])
+		}
+
+		// T4: START T4 clean (90 parked on watch). At END T4, poll #1 sees 90
+		// awake (janitorAwake), and poll #2 sees 90 re-parked at janitorPark!
+		// Poll #1 MUST fire the resumeWatch so T4 gets tail:set-0/T1!
+		h.do("START set-0/T4", replyStartUnasked)
+		seq = []goroutineSnapshot{
+			{all: map[uint64]*goroutineInfo{1: {id: 1}, 90: janitorAwake}},
+			{all: map[uint64]*goroutineInfo{1: {id: 1}, 90: janitorPark}},
+		}
+		h.do("END set-0/T4", replyTaken)
+		rec4 := h.test("set-0/T4")
+		if !reflect.DeepEqual(rec4["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("R10-SF2 failed: transient watch wakeup on END poll #1 was lost (T4 contaminated=%v, want [tail:set-0/T1])", rec4["contaminated"])
+		}
+		if _, hasCut := rec4["windowCut"]; hasCut {
+			t.Fatalf("T4 drained within END_WAIT and should not be windowCut: %v", rec4)
+		}
+	})
+
+	t.Run("R10 NITs pre-existing mid-handler HTTP conn never rebaselines and resumeWatches caps at maxResumeWatches", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		h := newGapHarness(t, lines(appFile, 1), none(), lines(appFile, 2), none(), lines(appFile, 3))
+		handlerA := &goroutineInfo{
+			id: 95, baseStatus: "chan receive", topLine: "/app/h.go:10",
+			frames: []string{"main.stepA", "net/http.serverHandler.ServeHTTP", "net/http.(*conn).serve"}, framePkgs: []string{"main", "net/http", "net/http"}, frameLines: []string{"/app/h.go:10", "/go/s.go:1", "/go/s.go:2"},
+			createdByFn: "net/http.(*Server).Serve", createdByPkg: "net/http",
+		}
+		handlerB := &goroutineInfo{
+			id: 95, baseStatus: "chan receive", topLine: "/app/h.go:20",
+			frames: []string{"main.stepB", "net/http.serverHandler.ServeHTTP", "net/http.(*conn).serve"}, framePkgs: []string{"main", "net/http", "net/http"}, frameLines: []string{"/app/h.go:20", "/go/s.go:1", "/go/s.go:2"},
+			createdByFn: "net/http.(*Server).Serve", createdByPkg: "net/http",
+		}
+		// Pre-existing HTTP conn first seen mid-handler (active idleSig) transitions to handlerB (same depth).
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 95: handlerA}}
+		snapshotGoroutines = func() goroutineSnapshot { return cur }
+		h.do("START set-0/T1", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 95: handlerB}}
+		h.do("END set-0/T1", replyTaken)
+		h.run("set-0/T2")
+		h.run("set-0/T3")
+		if _, armed := resumeWatches[95]; armed {
+			t.Fatal("stuck pre-existing HTTP handler must never move onto resumeWatch")
+		}
+		if !reflect.DeepEqual(h.test("set-0/T3")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("T3 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T3")["contaminated"])
+		}
+
+		// Verify resumeWatches respects maxResumeWatches cap.
+		resetGoroutineState()
+		for i := 0; i < maxResumeWatches; i++ {
+			resumeWatches[uint64(1000+i)] = resumeWatch{testID: "set-0/pre"}
+		}
+		j := &goroutineInfo{
+			id: 9999, baseStatus: "chan receive", topLine: "/app/j.go:10",
+			frames: []string{"main.janitor"}, framePkgs: []string{"main"}, frameLines: []string{"/app/j.go:10"},
+			createdByFn: "main.init", createdByPkg: "main",
+		}
+		addLingeringTail("set-0/T1", []lingeringTarget{{gid: 9999, mustExit: true}}, nil)
+		snap := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 9999: j}}
+		pruneLingeringTails(snap, nil, nil, true)
+		pruneLingeringTails(snap, nil, nil, true)
+		if len(resumeWatches) != maxResumeWatches {
+			t.Fatalf("len(resumeWatches) = %d, want capped at %d", len(resumeWatches), maxResumeWatches)
+		}
+		if len(lingeringTails) != 1 {
+			t.Fatalf("target should remain fail-closed in lingeringTails when resumeWatches is full, got %d tails", len(lingeringTails))
+		}
+	})
+}
+
+// TestV3WireRepliesAndRecordsAgainstCollectorParsers pins the exact wire
+// format of go-sdk's v3 control-socket replies and JSON coverage/background
+// records against exact parser mirrors of enterprise and k8s-proxy, verifying:
+//   - ACK replies stay well under the 1024-byte control buffer cap and parse
+//     cleanly under both proto>=2 legacy parsers and v3 caps= parsers,
+//   - asyncExecutors is ALWAYS false across all Go versions/modes so a shared
+//     collector IsHonest gate requiring asyncExecutors=true keeps Go soft-mark-only,
+//   - windowCut/lingeringGoroutines/contaminated/afterCut JSON fields match
+//     enterprise DedupRecord/BackgroundRecord and k8s-proxy R1 dedupRecord.
+func TestV3WireRepliesAndRecordsAgainstCollectorParsers(t *testing.T) {
+	stubCoverage(t, nil, nil)
+	origGoVersion := runtimeGoVersion
+	t.Cleanup(func() { runtimeGoVersion = origGoVersion })
+
+	parseV3Ack := func(reply string) (cmd string, proto int, bg string, caps map[string]bool) {
+		t.Helper()
+		if len(reply) >= 1024 {
+			t.Fatalf("reply length %d >= 1024 byte collector cap: %q", len(reply), reply)
+		}
+		fields := strings.Fields(reply)
+		if len(fields) < 2 {
+			t.Fatalf("malformed reply %q", reply)
+		}
+		cmd = fields[0]
+		caps = map[string]bool{}
+		for _, f := range fields[1:] {
+			switch {
+			case strings.HasPrefix(f, "proto="):
+				proto, _ = strconv.Atoi(strings.TrimPrefix(f, "proto="))
+			case strings.HasPrefix(f, "bg="):
+				bg = strings.TrimPrefix(f, "bg=")
+			case strings.HasPrefix(f, "caps="):
+				for _, kv := range strings.Split(strings.TrimPrefix(f, "caps="), ",") {
+					k, v, ok := strings.Cut(kv, "=")
+					if !ok {
+						t.Fatalf("malformed cap %q in %q", kv, reply)
+					}
+					b, err := strconv.ParseBool(v)
+					if err != nil {
+						t.Fatalf("non-bool cap %q in %q: %v", kv, reply, err)
+					}
+					caps[k] = b
+				}
+			}
+		}
+		return cmd, proto, bg, caps
+	}
+
+	// Shared R1 honesty predicate requiring asyncExecutors=true for removal eligibility.
+	isRemovalEligible := func(proto int, caps map[string]bool) bool {
+		return proto >= 3 && caps["windowCut"] && caps["contaminated"] && caps["background"] && caps["asyncExecutors"]
+	}
+
+	for _, tc := range []struct {
+		ver           string
+		trackingEnv   string
+		wantWindowCut bool
+	}{
+		{"go1.20.14", "", false},
+		{"go1.21.0", "", true},
+		{"go1.27.3", "", true},
+		{"go1.27.3", "off", false},
+	} {
+		runtimeGoVersion = func() string { return tc.ver }
+		t.Setenv(envGoroutineTracking, tc.trackingEnv)
+		for _, reply := range []string{startReply(), ackReply()} {
+			cmd, proto, _, caps := parseV3Ack(reply)
+			if cmd != "ACK" || proto != 3 {
+				t.Fatalf("ver=%s env=%q reply=%q -> cmd=%q proto=%d", tc.ver, tc.trackingEnv, reply, cmd, proto)
+			}
+			if caps["windowCut"] != tc.wantWindowCut {
+				t.Fatalf("ver=%s env=%q caps[windowCut]=%v, want %v", tc.ver, tc.trackingEnv, caps["windowCut"], tc.wantWindowCut)
+			}
+			if caps["asyncExecutors"] {
+				t.Fatalf("B1 violated: ver=%s env=%q caps[asyncExecutors]=true, want false", tc.ver, tc.trackingEnv)
+			}
+			if isRemovalEligible(proto, caps) {
+				t.Fatalf("B1 violated: Go must not be removal-eligible under shared IsHonest gate (caps=%v)", caps)
+			}
+		}
+	}
+
+	// Verify cut test record and afterCut BACKGROUND record decode cleanly into
+	// collector struct shapes (mirroring enterprise DedupRecord/BackgroundRecord
+	// and k8s-proxy R1 dedupRecord).
+	recBytes, err := encodeRecordWithMeta("set-0/T1", map[string][]int{"app/a.go": {10}}, map[string][]int{"app/a.go": {0}}, []string{"window-cut"}, nil, true, []string{"main.fraudAlert"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decRec struct {
+		ID                   string           `json:"id"`
+		ExecutedLinesByFile  map[string][]int `json:"executedLinesByFile"`
+		ExecutedBlocksByFile map[string][]int `json:"executedBlocksByFile"`
+		Contaminated         []string         `json:"contaminated"`
+		OverlapLinesByFile   map[string][]int `json:"overlapLinesByFile"`
+		WindowCut            bool             `json:"windowCut"`
+		LingeringGoroutines  []string         `json:"lingeringGoroutines"`
+	}
+	if err := json.Unmarshal(recBytes, &decRec); err != nil {
+		t.Fatalf("decode test record: %v", err)
+	}
+	if decRec.ID != "set-0/T1" || !decRec.WindowCut || len(decRec.OverlapLinesByFile) != 0 ||
+		!reflect.DeepEqual(decRec.Contaminated, []string{"window-cut"}) ||
+		!reflect.DeepEqual(decRec.LingeringGoroutines, []string{"main.fraudAlert"}) {
+		t.Fatalf("decoded test record mismatch: %+v", decRec)
+	}
+
+	bgBytes, err := encodeBackgroundWithMeta("set-0/T1", "set-0/T2", map[string][]int{}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decBG struct {
+		Kind                string           `json:"kind"`
+		Before              string           `json:"before"`
+		After               string           `json:"after"`
+		V                   int              `json:"v"`
+		Build               string           `json:"build"`
+		Lost                int              `json:"lost"`
+		AfterCut            bool             `json:"afterCut"`
+		ExecutedLinesByFile map[string][]int `json:"executedLinesByFile"`
+	}
+	if err := json.Unmarshal(bgBytes, &decBG); err != nil {
+		t.Fatalf("decode background record: %v", err)
+	}
+	if decBG.Kind != "background" || decBG.Before != "set-0/T2" || decBG.After != "set-0/T1" ||
+		!decBG.AfterCut || len(decBG.ExecutedLinesByFile) != 0 {
+		t.Fatalf("decoded background record mismatch: %+v", decBG)
+	}
 }
