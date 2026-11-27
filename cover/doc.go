@@ -93,9 +93,10 @@
 // observe a child goroutine or watched wakeup that starts and returns/exits
 // strictly between two snapshots (nor a grandchild orphaned when its
 // intermediate parent spawns and exits between snapshots), nor a dormant
-// time.AfterFunc timer that has not yet fired by END; parent-goid child
-// adoption relies on Go 1.21+ "created by ... in goroutine N" stack lines and
-// is inactive on Go 1.20 toolchains.
+// time.AfterFunc timer that has not yet fired by END, nor work queued in a
+// channel buffer for a busy pre-existing worker until dequeued; parent-goid
+// child adoption relies on Go 1.21+ "created by ... in goroutine N" stack
+// lines and is inactive on Go 1.20 toolchains.
 //
 // Between tests. The counters are reset at each START and again after each
 // END, so every window is either one test's or a gap between two. A gap's

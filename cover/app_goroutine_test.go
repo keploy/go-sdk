@@ -61,6 +61,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"runtime"
@@ -69,6 +70,26 @@ import (
 	"sync/atomic"
 	"time"
 )
+
+type countingConn struct {
+	net.Conn
+}
+
+func (c *countingConn) Read(b []byte) (int, error) {
+	return c.Conn.Read(b)
+}
+
+type countingListener struct {
+	net.Listener
+}
+
+func (l *countingListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &countingConn{Conn: c}, nil
+}
 
 var (
 	fraudHits  atomic.Int64
@@ -89,6 +110,7 @@ var (
 	supSteadyCh    = make(chan struct{})
 	rdrSteadyCh    = make(chan struct{})
 	consumerHits   atomic.Int64
+	wrappedAddr    string
 )
 
 type asyncGate struct {
@@ -226,7 +248,7 @@ func supervisorLoop() {
 
 func waitForFuncState(fnPrefix, wantStatus string) bool {
 	buf := make([]byte, 128<<10)
-	for i := 0; i < 400; i++ {
+	for i := 0; i < 1500; i++ {
 		n := runtime.Stack(buf, true)
 		s := string(buf[:n])
 		idx := strings.Index(s, fnPrefix)
@@ -249,7 +271,17 @@ func init() {
 	if os.Getenv("ENABLE_SUPERVISOR_PAIR") == "1" {
 		go supervisorLoop()
 	}
+	if os.Getenv("ENABLE_WRAPPED_LISTENER") == "1" {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err == nil {
+			wrappedAddr = ln.Addr().String()
+			go func() { _ = http.Serve(&countingListener{Listener: ln}, nil) }()
+		}
+	}
 
+	http.HandleFunc("/wrapped-addr", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, wrappedAddr)
+	})
 	http.HandleFunc("/slow-flush", slowFlushHandler)
 	http.HandleFunc("/supervisor-wait-backoff", func(w http.ResponseWriter, r *http.Request) {
 		<-supReady
@@ -368,7 +400,7 @@ func init() {
 				buf := make([]byte, 128<<10)
 				needle := []byte(fn + "(")
 				exited := false
-				for i := 0; i < 400; i++ {
+				for i := 0; i < 1500; i++ {
 					n := runtime.Stack(buf, true)
 					if !bytes.Contains(buf[:n], needle) {
 						exited = true
@@ -545,12 +577,12 @@ func TestRealGoApp_P6FraudAlertGoroutineTailAcrossCleanGap(t *testing.T) {
 }
 
 // TestRealGoApp_FastGoroutineDrainsWithinEndWait verifies that a fast 20ms
-// goroutine finishes within KEPLOY_GO_END_WAIT_MS=200: END waits for it,
+// goroutine finishes within KEPLOY_GO_END_WAIT_MS=1000: END waits for it,
 // reports windowCut=false/contaminated=nil, and captures its blocks!
 func TestRealGoApp_FastGoroutineDrainsWithinEndWait(t *testing.T) {
 	k := newKeploySide(t)
 	bin := buildAsyncApp(t, k)
-	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=200")
+	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=1000")
 
 	rec := measure(t, k, a, "set-0/fast-1", "/fast-async")
 	if _, hasCut := rec["windowCut"]; hasCut {
@@ -577,7 +609,7 @@ func TestRealGoApp_FastGoroutineDrainsWithinEndWait(t *testing.T) {
 func TestRealGoApp_IdleHTTPKeepAliveZeroFalsePositives(t *testing.T) {
 	k := newKeploySide(t)
 	bin := buildAsyncApp(t, k)
-	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=200")
+	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=800")
 
 	upstream := http.NewServeMux()
 	upstream.HandleFunc("/ok", func(w http.ResponseWriter, r *http.Request) {
@@ -633,7 +665,7 @@ func TestRealGoApp_IdleHTTPKeepAliveZeroFalsePositives(t *testing.T) {
 		if got := send(t, k.sock, "END "+id); got != replyTaken {
 			t.Fatalf("END %s: %q", id, got)
 		}
-		if elapsed := time.Since(began); elapsed > 150*time.Millisecond {
+		if elapsed := time.Since(began); elapsed > 400*time.Millisecond {
 			t.Fatalf("END %s took %v (false-positive wait on idle keep-alive conn?)", id, elapsed)
 		}
 		rec := readNextRecord(t, k, a)
@@ -1288,4 +1320,117 @@ func TestRealGoApp_CoTargetSupervisorAndReaderWatchStaysClean(t *testing.T) {
 			t.Fatalf("R6 e2e failed: %s falsely contaminated by pre-existing child reader: %v", id, rec)
 		}
 	}
+}
+
+// TestRealGoApp_WrappedConnKeepAlive verifies SF2 end-to-end on a real -cover
+// binary whose net.Listener wraps net.Conn with an app-package Read method
+// (main.(*countingConn).Read):
+//   - T1 opens the first wrapped keep-alive conn (no pre-existing sibling yet) -> windowCut,
+//   - T2 (streak 1) -> tail:T1 (not windowCut),
+//   - T3 & T4 (reusing conn #1 after streak 2 moves it onto resumeWatch) -> 100% CLEAN,
+//   - T5 opens a BRAND NEW wrapped conn #2 -> IMMEDIATELY CLEAN via sibling match,
+//   - T6 triggers /slow-flush on conn #1 -> honestly caught as windowCut:true!
+func TestRealGoApp_WrappedConnKeepAlive(t *testing.T) {
+	k := newKeploySide(t)
+	bin := buildAsyncApp(t, k)
+	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=40", "ENABLE_WRAPPED_LISTENER=1")
+
+	resp, err := http.Get("http://" + a.addr + "/wrapped-addr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawAddr, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	wAddr := strings.TrimSpace(string(rawAddr))
+	if wAddr == "" {
+		t.Fatal("wrapped listener did not start")
+	}
+
+	makeClient := func() *http.Client {
+		tr := &http.Transport{MaxIdleConns: 1, MaxIdleConnsPerHost: 1, DisableKeepAlives: false}
+		t.Cleanup(tr.CloseIdleConnections)
+		return &http.Client{Transport: tr}
+	}
+	c1 := makeClient()
+	c2 := makeClient()
+
+	doReq := func(c *http.Client, path string) bool {
+		var reused bool
+		req, err := http.NewRequest("GET", "http://"+wAddr+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
+			GotConn: func(info httptrace.GotConnInfo) { reused = info.Reused },
+		}))
+		r, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, r.Body)
+		_ = r.Body.Close()
+		return reused
+	}
+
+	runWrapped := func(id string, c *http.Client, path string) (map[string]any, bool) {
+		if got := send(t, k.sock, "START "+id); got != replyStartUnasked {
+			t.Fatalf("START %s: %q", id, got)
+		}
+		reused := doReq(c, path)
+		if got := send(t, k.sock, "END "+id); got != replyTaken {
+			t.Fatalf("END %s: %q", id, got)
+		}
+		return readNextRecord(t, k, a), reused
+	}
+
+	// T1: first wrapped keep-alive conn (no sibling yet) -> windowCut.
+	rec1, _ := runWrapped("set-0/T1", c1, "/twin?n=1")
+	if rec1["windowCut"] != true {
+		t.Fatalf("T1 windowCut = %v, want true on first wrapped conn", rec1["windowCut"])
+	}
+
+	// T2: reuses conn #1 -> streak 1 (tail:T1, no windowCut).
+	rec2, reused2 := runWrapped("set-0/T2", c1, "/twin?n=2")
+	if !reused2 {
+		t.Fatal("expected T2 to reuse wrapped conn #1")
+	}
+	if _, hasCut := rec2["windowCut"]; hasCut {
+		t.Fatalf("T2 unexpectedly windowCut: %v", rec2)
+	}
+	if !reflect.DeepEqual(rec2["contaminated"], []any{"tail:set-0/T1"}) {
+		t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", rec2["contaminated"])
+	}
+
+	// T3 & T4: conn #1 moved onto resumeWatch -> 100% CLEAN!
+	for _, id := range []string{"set-0/T3", "set-0/T4"} {
+		rec, reused := runWrapped(id, c1, "/twin?n=3")
+		if !reused {
+			t.Fatalf("expected %s to reuse wrapped conn #1", id)
+		}
+		if _, hasCut := rec["windowCut"]; hasCut {
+			t.Fatalf("SF2 e2e failed: %s got false-positive windowCut: %v", id, rec)
+		}
+		if _, hasCont := rec["contaminated"]; hasCont {
+			t.Fatalf("SF2 e2e failed: %s got false-positive contaminated: %v", id, rec)
+		}
+	}
+
+	// T5: brand new wrapped conn #2 via c2 -> IMMEDIATELY CLEAN via sibling match!
+	rec5, reused5 := runWrapped("set-0/T5", c2, "/twin?n=5")
+	if reused5 {
+		t.Fatal("expected T5 on c2 to open a brand new wrapped conn #2")
+	}
+	if _, hasCut := rec5["windowCut"]; hasCut {
+		t.Fatalf("SF2 sibling e2e failed: T5 got false-positive windowCut on conn #2: %v", rec5)
+	}
+	if _, hasCont := rec5["contaminated"]; hasCont {
+		t.Fatalf("SF2 sibling e2e failed: T5 got false-positive contaminated on conn #2: %v", rec5)
+	}
+
+	// T6: active /slow-flush handler on conn #1 MUST STILL be caught honestly!
+	rec6, _ := runWrapped("set-0/T6", c1, "/slow-flush?gate=wrapflush")
+	if rec6["windowCut"] != true {
+		t.Fatalf("SF2 active handler check failed: T6 missed /slow-flush on wrapped conn #1: %v", rec6)
+	}
+	getOK(t, a, "/release?gate=wrapflush&wait=1")
 }

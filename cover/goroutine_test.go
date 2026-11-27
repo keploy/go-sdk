@@ -1302,4 +1302,318 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 			t.Fatalf("afterCut executedLinesByFile = %v, want empty {}", ls)
 		}
 	})
+
+	t.Run("SF1 pre-existing syscall, sync.Mutex.Lock, chan send, and runnable baselines", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		for _, status := range []string{"syscall", "sync.Mutex.Lock", "sync.RWMutex.RLock", "sync.WaitGroup.Wait", "chan send"} {
+			t.Run(status, func(t *testing.T) {
+				h := newGapHarness(t, lines(appFile, 3), lines(workerFile, 9), lines(appFile, 4), none(), lines(appFile, 5))
+				h.ask("sf1")
+				idle := &goroutineInfo{
+					id: 30, baseStatus: status, topLine: "/app/consumer.go:10",
+					frames: []string{"main.cgoConsumer"}, framePkgs: []string{"main"}, frameLines: []string{"/app/consumer.go:10"},
+					createdByFn: "main.init", createdByPkg: "main",
+				}
+				handling := &goroutineInfo{
+					id: 30, baseStatus: "IO wait", topLine: "/app/consumer.go:42",
+					frames: []string{"main.handleMsg", "main.cgoConsumer"}, framePkgs: []string{"main", "main"}, frameLines: []string{"/app/consumer.go:42", "/app/consumer.go:15"},
+					createdByFn: "main.init", createdByPkg: "main",
+				}
+				cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 30: idle}}
+				snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+				h.do("START set-0/T1", replyStartAskedBy("sf1"))
+				cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 30: handling}}
+				h.do("END set-0/T1", replyTaken)
+				if h.test("set-0/T1")["windowCut"] != true {
+					t.Fatalf("SF1 failed for status %q: T1 missed active pre-existing consumer: %v", status, h.test("set-0/T1"))
+				}
+
+				// T2 starts while still handling -> gap T1->T2 must be afterCut and T2 contaminated tail:T1.
+				h.do("START set-0/T2", replyStartAskedBy("sf1"))
+				cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 30: idle}}
+				h.do("END set-0/T2", replyTaken)
+				if !reflect.DeepEqual(h.test("set-0/T2")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+					t.Fatalf("SF1 failed for status %q: T2 contaminated = %v, want [tail:set-0/T1]", status, h.test("set-0/T2")["contaminated"])
+				}
+				if _, polluted := everGap[workerFile]; polluted {
+					t.Fatalf("SF1 failed for status %q: gap polluted everGap", status)
+				}
+
+				// Back at idle -> T3 is clean!
+				h.run("set-0/T3")
+				if _, hasCont := h.test("set-0/T3")["contaminated"]; hasCont {
+					t.Fatalf("SF1 failed for status %q: T3 should be clean after returning to idle: %v", status, h.test("set-0/T3"))
+				}
+			})
+		}
+
+		t.Run("runnable at START falls back to prior quiescent baseline", func(t *testing.T) {
+			h := newGapHarness(t, lines(appFile, 3), none(), lines(appFile, 4), none(), lines(appFile, 5), none(), lines(appFile, 6))
+			idle := &goroutineInfo{
+				id: 31, baseStatus: "chan receive", topLine: "/app/worker.go:10",
+				frames: []string{"main.worker"}, framePkgs: []string{"main"}, frameLines: []string{"/app/worker.go:10"},
+				createdByFn: "main.init", createdByPkg: "main",
+			}
+			running := &goroutineInfo{
+				id: 31, baseStatus: "runnable", topLine: "/app/worker.go:20",
+				frames: []string{"main.handleMsg", "main.worker"}, framePkgs: []string{"main", "main"}, frameLines: []string{"/app/worker.go:20", "/app/worker.go:12"},
+				createdByFn: "main.init", createdByPkg: "main",
+			}
+			handlingWait := &goroutineInfo{
+				id: 31, baseStatus: "IO wait", topLine: "/app/worker.go:25",
+				frames: []string{"main.handleMsg", "main.worker"}, framePkgs: []string{"main", "main"}, frameLines: []string{"/app/worker.go:25", "/app/worker.go:12"},
+				createdByFn: "main.init", createdByPkg: "main",
+			}
+			// T0 establishes lastQuiescentSigs[31] = idle.
+			cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 31: idle}}
+			snapshotGoroutines = func() goroutineSnapshot { return cur }
+			h.run("set-0/T0")
+
+			// START T1 catches goroutine 31 in [runnable]; at END T1 it is blocked in handleMsg [IO wait].
+			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 31: running}}
+			h.do("START set-0/T1", replyStartUnasked)
+			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 31: handlingWait}}
+			h.do("END set-0/T1", replyTaken)
+			if h.test("set-0/T1")["windowCut"] != true {
+				t.Fatalf("SF1 runnable fallback failed: T1 missed worker that was runnable at START: %v", h.test("set-0/T1"))
+			}
+
+			// Returns to T0's idle baseline during T2 -> T3 is clean.
+			h.do("START set-0/T2", replyStartUnasked)
+			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 31: idle}}
+			h.do("END set-0/T2", replyTaken)
+			h.run("set-0/T3")
+			if _, hasCont := h.test("set-0/T3")["contaminated"]; hasCont {
+				t.Fatalf("T3 should be clean after returning to prior idle: %v", h.test("set-0/T3"))
+			}
+		})
+
+		t.Run("runnable at first START with no prior baseline flags if still unparked or deeper at END", func(t *testing.T) {
+			h := newGapHarness(t, lines(appFile, 3))
+			runLoop := &goroutineInfo{
+				id: 32, baseStatus: "runnable", topLine: "/app/worker.go:10",
+				frames: []string{"main.worker"}, framePkgs: []string{"main"}, frameLines: []string{"/app/worker.go:10"},
+				createdByFn: "main.init", createdByPkg: "main",
+			}
+			deeperWait := &goroutineInfo{
+				id: 32, baseStatus: "IO wait", topLine: "/app/worker.go:30",
+				frames: []string{"main.handleMsg", "main.worker"}, framePkgs: []string{"main", "main"}, frameLines: []string{"/app/worker.go:30", "/app/worker.go:12"},
+				createdByFn: "main.init", createdByPkg: "main",
+			}
+			cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 32: runLoop}}
+			snapshotGoroutines = func() goroutineSnapshot { return cur }
+			h.do("START set-0/T1", replyStartUnasked)
+			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 32: deeperWait}}
+			h.do("END set-0/T1", replyTaken)
+			if h.test("set-0/T1")["windowCut"] != true {
+				t.Fatalf("SF1 first-START runnable failed: T1 missed deeper worker: %v", h.test("set-0/T1"))
+			}
+		})
+	})
+
+	t.Run("SF2 wrapped keep-alive conn settles onto watch and matches new siblings cleanly", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		h := newGapHarness(t,
+			lines(appFile, 3), none(), // T1: opens wrapped conn #1 (no sibling yet) -> windowCut
+			lines(appFile, 4), none(), // T2: streak 1 -> tail:T1
+			lines(appFile, 5), none(), // T3: streak 2 -> resumeWatch, clean!
+			lines(appFile, 6), none(), // T4: conn #1 clean
+			lines(appFile, 7), none(), // T5: opens wrapped conn #2 (matches sibling #1!) -> clean!
+			lines(appFile, 8), // T6: opens wrapped conn #3 still inside slowHandler -> windowCut!
+		)
+		wrappedIdle := func(id uint64) *goroutineInfo {
+			return &goroutineInfo{
+				id: id, baseStatus: "IO wait", topLine: "/go/src/internal/poll/fd_poll_runtime.go:84",
+				frames:      []string{"internal/poll.runtime_pollWait", "main.(*countingConn).Read", "net/http.(*connReader).Read", "net/http.(*conn).serve"},
+				framePkgs:   []string{"internal/poll", "main", "net/http", "net/http"},
+				frameLines:  []string{"/go/poll.go:84", "/app/async.go:50", "/go/server.go:790", "/go/server.go:1900"},
+				createdByFn: "net/http.(*Server).Serve", createdByPkg: "net/http",
+			}
+		}
+		wrappedActive := func(id uint64) *goroutineInfo {
+			return &goroutineInfo{
+				id: id, baseStatus: "chan receive", topLine: "/app/async.go:204",
+				frames:      []string{"main.slowFlushHandler", "net/http.serverHandler.ServeHTTP", "net/http.(*conn).serve"},
+				framePkgs:   []string{"main", "net/http", "net/http"},
+				frameLines:  []string{"/app/async.go:204", "/go/server.go:2900", "/go/server.go:1990"},
+				createdByFn: "net/http.(*Server).Serve", createdByPkg: "net/http",
+			}
+		}
+
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}}
+		snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+		// T1: new wrapped conn #1 parks in countingConn.Read -> windowCut (no sibling yet).
+		h.do("START set-0/T1", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 40: wrappedIdle(40)}}
+		h.do("END set-0/T1", replyTaken)
+		if h.test("set-0/T1")["windowCut"] != true {
+			t.Fatalf("T1 windowCut = %v, want true", h.test("set-0/T1")["windowCut"])
+		}
+
+		// T2: streak 1 -> tail:T1 (no windowCut).
+		h.run("set-0/T2")
+		if !reflect.DeepEqual(h.test("set-0/T2")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T2")["contaminated"])
+		}
+
+		// T3 & T4: streak 2 moves conn #1 onto resumeWatch -> clean!
+		for _, id := range []string{"set-0/T3", "set-0/T4"} {
+			h.run(id)
+			if _, hasCut := h.test(id)["windowCut"]; hasCut {
+				t.Fatalf("SF2 failed: %s got windowCut: %v", id, h.test(id))
+			}
+			if _, hasCont := h.test(id)["contaminated"]; hasCont {
+				t.Fatalf("SF2 failed: %s got contaminated: %v", id, h.test(id))
+			}
+		}
+
+		// T5: brand new wrapped conn #2 (gid 41) parks in exact same idle state as sibling #1 -> IMMEDIATELY clean!
+		h.do("START set-0/T5", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 40: wrappedIdle(40), 41: wrappedIdle(41)}}
+		h.do("END set-0/T5", replyTaken)
+		if _, hasCut := h.test("set-0/T5")["windowCut"]; hasCut {
+			t.Fatalf("SF2 sibling match failed: T5 got false-positive windowCut on new wrapped conn #2: %v", h.test("set-0/T5"))
+		}
+
+		// T6: brand new wrapped conn #3 (gid 42) is STILL inside slowFlushHandler at END -> MUST be windowCut!
+		h.do("START set-0/T6", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 40: wrappedIdle(40), 41: wrappedIdle(41), 42: wrappedActive(42)}}
+		h.do("END set-0/T6", replyTaken)
+		if h.test("set-0/T6")["windowCut"] != true {
+			t.Fatalf("SF2 active handler check failed: T6 missed active handler on new wrapped conn #3: %v", h.test("set-0/T6"))
+		}
+	})
+
+	t.Run("SF3 unclosed START->START checks resumeWatch first with no duplicate tail or double streak", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		h := newGapHarness(t,
+			lines(appFile, 3), none(), // T0 (creates watch)
+			lines(appFile, 4), none(), // T_s1 (streak 1)
+			lines(appFile, 5), none(), // T_s2 (streak 2 -> watch armed!)
+			lines(appFile, 6), none(), // T2 (after unclosed T1)
+			lines(appFile, 7), // T3 (parked -> streak must be 1, NOT 2!)
+		)
+		backoff := &goroutineInfo{
+			id: 15, baseStatus: "select", topLine: "/app/consumer.go:12",
+			frames: []string{"main.consumerLoop"}, framePkgs: []string{"main"}, frameLines: []string{"/app/consumer.go:12"},
+			createdByFn: "main.main", createdByPkg: "main",
+		}
+		steady := &goroutineInfo{
+			id: 15, baseStatus: "IO wait", topLine: "/app/consumer.go:25",
+			frames: []string{"internal/poll.runtime_pollWait", "main.consumerLoop"}, framePkgs: []string{"internal/poll", "main"}, frameLines: []string{"/go/poll.go:1", "/app/consumer.go:25"},
+			createdByFn: "main.main", createdByPkg: "main",
+		}
+		handling := &goroutineInfo{
+			id: 15, baseStatus: "chan receive", topLine: "/app/consumer.go:50",
+			frames: []string{"main.handleMsg", "main.consumerLoop"}, framePkgs: []string{"main", "main"}, frameLines: []string{"/app/consumer.go:50", "/app/consumer.go:28"},
+			createdByFn: "main.main", createdByPkg: "main",
+		}
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: backoff}}
+		snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+		// Arm watch on gid 15 originating from set-0/T0.
+		h.do("START set-0/T0", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: steady}}
+		h.do("END set-0/T0", replyTaken)
+		h.run("set-0/Ts1")
+		h.run("set-0/Ts2")
+		if _, armed := resumeWatches[15]; !armed {
+			t.Fatalf("expected resumeWatch armed on gid 15 after Ts2")
+		}
+
+		// START T1 with gid 15 parked at watchSig, then wake gid 15 into handling,
+		// then START T2 with NO END for T1!
+		h.do("START set-0/T1", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: handling}}
+		h.do("START set-0/T2", replyStartUnasked)
+
+		// gid 15 must be in EXACTLY ONE tail (set-0/T0, NOT duplicated in set-0/T1).
+		count15 := 0
+		var owner string
+		for _, lt := range lingeringTails {
+			for _, tgt := range lt.targets {
+				if tgt.gid == 15 {
+					count15++
+					owner = lt.testID
+				}
+			}
+		}
+		if count15 != 1 || owner != "set-0/T0" {
+			t.Fatalf("SF3 failed: gid 15 present in %d tails (owner=%q), want 1 (set-0/T0)", count15, owner)
+		}
+
+		// Finish T2 while gid 15 settles back to steady.
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: steady}}
+		h.do("END set-0/T2", replyTaken)
+		if !reflect.DeepEqual(h.test("set-0/T2")["contaminated"], []interface{}{"unclosed:set-0/T1", "tail:set-0/T0"}) {
+			t.Fatalf("SF3 failed: T2 contaminated = %v, want [unclosed:set-0/T1 tail:set-0/T0]", h.test("set-0/T2")["contaminated"])
+		}
+
+		// START T3 with gid 15 at steady: streak must be 1 (NOT incremented twice to 2!).
+		h.do("START set-0/T3", replyStartUnasked)
+		if _, armed := resumeWatches[15]; armed {
+			t.Fatalf("SF3 failed: gid 15 moved onto watch after 1 START (double streak increment)")
+		}
+		if st := lingeringStreaks[15]; st.count != 1 {
+			t.Fatalf("SF3 failed: lingeringStreaks[15].count = %d, want 1", st.count)
+		}
+		h.do("END set-0/T3", replyTaken)
+	})
+
+	t.Run("Nit1 addLingeringTail deduplicates gid across truncated END and armed watch re-attach", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		h := newGapHarness(t,
+			lines(appFile, 3), none(), // T0
+			lines(appFile, 4), none(), // Ts1
+			lines(appFile, 5), none(), // Ts2 (watch armed)
+			lines(appFile, 6), none(), // T1 (truncated END while watched gid 15 is active!)
+			lines(appFile, 7), // T2 (complete START fires watch -> must NOT duplicate gid 15!)
+		)
+		backoff := &goroutineInfo{
+			id: 15, baseStatus: "select", topLine: "/app/consumer.go:12",
+			frames: []string{"main.consumerLoop"}, framePkgs: []string{"main"}, frameLines: []string{"/app/consumer.go:12"},
+			createdByFn: "main.main", createdByPkg: "main",
+		}
+		steady := &goroutineInfo{
+			id: 15, baseStatus: "IO wait", topLine: "/app/consumer.go:25",
+			frames: []string{"internal/poll.runtime_pollWait", "main.consumerLoop"}, framePkgs: []string{"internal/poll", "main"}, frameLines: []string{"/go/poll.go:1", "/app/consumer.go:25"},
+			createdByFn: "main.main", createdByPkg: "main",
+		}
+		handling := &goroutineInfo{
+			id: 15, baseStatus: "chan receive", topLine: "/app/consumer.go:50",
+			frames: []string{"main.handleMsg", "main.consumerLoop"}, framePkgs: []string{"main", "main"}, frameLines: []string{"/app/consumer.go:50", "/app/consumer.go:28"},
+			createdByFn: "main.main", createdByPkg: "main",
+		}
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: backoff}}
+		snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+		h.do("START set-0/T0", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: steady}}
+		h.do("END set-0/T0", replyTaken)
+		h.run("set-0/Ts1")
+		h.run("set-0/Ts2")
+
+		// T1 starts cleanly, gid 15 wakes into handling, END T1 is truncated -> adds gid 15 to T1's tail while watch stays armed.
+		h.do("START set-0/T1", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: handling}, truncated: true}
+		h.do("END set-0/T1", replyTaken)
+
+		// T2 starts with complete snapshot -> watch fires and attempts re-attach; addLingeringTail MUST deduplicate!
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: handling}}
+		h.do("START set-0/T2", replyStartUnasked)
+		count15 := 0
+		for _, lt := range lingeringTails {
+			for _, tgt := range lt.targets {
+				if tgt.gid == 15 {
+					count15++
+				}
+			}
+		}
+		if count15 != 1 {
+			t.Fatalf("Nit1 failed: gid 15 duplicated across %d tails, want 1", count15)
+		}
+		h.do("END set-0/T2", replyTaken)
+	})
 }

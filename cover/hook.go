@@ -395,9 +395,18 @@ func runTestCommand(command string) string {
 		// so at its first START, not at each END.
 		if err := prepareMeta(); err != nil {
 			currentTestID, prevTestID = "", ""
-			activeTracking, activeTruncatedStart, startGids, startIdleStates, activeContaminated = false, false, nil, nil, nil
+			activeTracking, activeTruncatedStart, startGids, startIdleStates, startStdlibIdleSigs, activeContaminated = false, false, nil, nil, nil, nil
 			sayWhyNotMeasured(err)
 			return replyIgnored
+		}
+		// Read gap counters BEFORE taking the stop-the-world stack dump so a
+		// watched goroutine that wakes during stack parsing cannot land lines
+		// into a gap marked afterCut=false.
+		var gapLines map[string][]int
+		var gapErr error
+		haveGap := prevTestID != "" && currentTestID == ""
+		if haveGap {
+			gapLines, gapErr = snapshotLines()
 		}
 		tracking := goroutineTrackingActive()
 		covered := coveredPackageSet()
@@ -432,18 +441,12 @@ func runTestCommand(command string) string {
 				if len(pendingTruncatedCuts) > maxLingeringTails {
 					pendingTruncatedCuts = pendingTruncatedCuts[len(pendingTruncatedCuts)-maxLingeringTails:]
 				}
-			} else if alive := findActiveTestGoroutines(curSnap, startGids, startIdleStates, covered, ignore); len(alive) > 0 {
-				alreadyTracked := lingeringGidSet()
-				var targets []lingeringTarget
-				for _, ag := range alive {
-					if _, dup := alreadyTracked[ag.info.id]; dup {
-						continue
-					}
-					targets = append(targets, lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig})
+			} else if alive := findActiveTestGoroutines(curSnap, startGids, startIdleStates, startStdlibIdleSigs, covered, ignore); len(alive) > 0 {
+				targets := make([]lingeringTarget, len(alive))
+				for i, ag := range alive {
+					targets[i] = lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig}
 				}
-				if len(targets) > 0 {
-					addLingeringTail(unclosedID, targets, capturePreExistingChildren(curSnap, targets, startGids))
-				}
+				addLingeringTail(unclosedID, targets, capturePreExistingChildren(curSnap, targets, startGids))
 			}
 		}
 		// Compute whether the gap since prevTestID followed a cut window, ran
@@ -455,8 +458,8 @@ func runTestCommand(command string) string {
 		// The counters hold the gap since the last test's END: what the app
 		// ran between the two tests, never this test's or that one's.
 		switch {
-		case prevTestID != "" && currentTestID == "":
-			noteGap(prevTestID, id, afterCut)
+		case haveGap:
+			noteGap(prevTestID, id, gapLines, gapErr, afterCut)
 		case bgAsked && lastTest != "":
 			// The window since the last test holds more than a gap (a
 			// test whose END was not taken, a failed reset): keploy is
@@ -471,7 +474,7 @@ func runTestCommand(command string) string {
 		// coverage would hold the lines of the tests before it.
 		if err := clearCounters(); err != nil {
 			currentTestID = ""
-			activeTracking, activeTruncatedStart, startGids, startIdleStates, activeContaminated = false, false, nil, nil, nil
+			activeTracking, activeTruncatedStart, startGids, startIdleStates, startStdlibIdleSigs, activeContaminated = false, false, nil, nil, nil, nil
 			if len(firedWatches) > 0 {
 				pendingTailTestIDs = append(pendingTailTestIDs, firedWatches...)
 			}
@@ -488,15 +491,17 @@ func runTestCommand(command string) string {
 				activeTruncatedStart = true
 				startGids = buildTruncatedStartUnion(curSnap)
 				startIdleStates = nil
+				startStdlibIdleSigs = nil
 			} else {
 				activeTruncatedStart = false
-				startGids, startIdleStates = snapshotStartBaseline(curSnap, covered, ignore)
+				startGids, startIdleStates, startStdlibIdleSigs = snapshotStartBaseline(curSnap, covered, ignore)
 			}
 		} else {
 			activeTracking = false
 			activeTruncatedStart = false
 			startGids = nil
 			startIdleStates = nil
+			startStdlibIdleSigs = nil
 		}
 		currentTestID, lastTest = id, id
 		return startReply()
@@ -514,8 +519,9 @@ func runTestCommand(command string) string {
 		testTruncatedStart := activeTruncatedStart
 		testStartGids := startGids
 		testStartIdle := startIdleStates
+		testStartStdlibIdle := startStdlibIdleSigs
 		testContaminated := activeContaminated
-		activeTracking, activeTruncatedStart, startGids, startIdleStates, activeContaminated = false, false, nil, nil, nil
+		activeTracking, activeTruncatedStart, startGids, startIdleStates, startStdlibIdleSigs, activeContaminated = false, false, nil, nil, nil, nil
 
 		windowCut := false
 		var lingeringNames []string
@@ -539,7 +545,7 @@ func runTestCommand(command string) string {
 			} else {
 				waitDur := endWaitDuration()
 				snap := snapshotGoroutines()
-				active := findActiveTestGoroutines(snap, testStartGids, testStartIdle, covered, ignore)
+				active := findActiveTestGoroutines(snap, testStartGids, testStartIdle, testStartStdlibIdle, covered, ignore)
 				// Never burn END_WAIT repeating stop-the-world 16 MiB dumps when
 				// already truncated; only poll while !snap.truncated && len(active) > 0.
 				if !snap.truncated && len(active) > 0 && waitDur > 0 {
@@ -562,7 +568,7 @@ func runTestCommand(command string) string {
 							}
 						}
 						snap = snapshotGoroutines()
-						active = findActiveTestGoroutines(snap, testStartGids, testStartIdle, covered, ignore)
+						active = findActiveTestGoroutines(snap, testStartGids, testStartIdle, testStartStdlibIdle, covered, ignore)
 					}
 				}
 				// Check any one-time resume watches (so a re-baselined
@@ -621,18 +627,12 @@ func runTestCommand(command string) string {
 					prevWindowCutTestID = id
 				} else if len(active) > 0 {
 					windowCut = true
-					alreadyTracked := lingeringGidSet()
-					var targets []lingeringTarget
-					for _, ag := range active {
-						if _, dup := alreadyTracked[ag.info.id]; dup {
-							continue
-						}
-						targets = append(targets, lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig})
+					targets := make([]lingeringTarget, len(active))
+					for i, ag := range active {
+						targets[i] = lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig}
 					}
 					lingeringNames = summarizeActiveNames(active, covered)
-					if len(targets) > 0 {
-						addLingeringTail(id, targets, capturePreExistingChildren(snap, targets, testStartGids))
-					}
+					addLingeringTail(id, targets, capturePreExistingChildren(snap, targets, testStartGids))
 					prevWindowCutTestID = id
 					logLingeringOnce(id, lingeringNames)
 				}
@@ -671,16 +671,16 @@ func runTestCommand(command string) string {
 	}
 }
 
-// noteGap reads the window from after's END to before's START, a gap between
-// two tests, keeps its lines (everGap, unless afterCut is true so async tails
-// from cut windows never pollute between-tests tracking) and, once the agent
-// asked, sends it as a BACKGROUND record. When afterCut is true, the record
-// carries "afterCut":true with an empty executedLinesByFile map so neither v3
-// collectors nor older v2 collectors (which ignore unknown fields) can ever
-// absorb an async tail into calibrated stable background. Called with
-// controlMu held.
-func noteGap(after, before string, afterCut bool) {
-	lines, err := snapshotLines()
+// noteGap records the window from after's END to before's START (pre-read
+// before stack snapshotting so a watched goroutine waking during stack parsing
+// cannot land lines in an afterCut=false gap), keeps its lines in everGap
+// (unless afterCut is true so async tails from cut windows never pollute
+// between-tests tracking), and once the agent asked, sends it as a BACKGROUND
+// record. When afterCut is true, the record carries "afterCut":true with an
+// empty executedLinesByFile map so neither v3 collectors nor older v2
+// collectors (which ignore unknown fields) can ever absorb an async tail into
+// calibrated stable background. Called with controlMu held.
+func noteGap(after, before string, lines map[string][]int, err error, afterCut bool) {
 	if err != nil {
 		if bgAsked {
 			bgLost++
