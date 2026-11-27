@@ -395,7 +395,7 @@ func runTestCommand(command string) string {
 		// so at its first START, not at each END.
 		if err := prepareMeta(); err != nil {
 			currentTestID, prevTestID = "", ""
-			activeTracking, activeTruncatedStart, startGids, startIdleStates, startStdlibIdleSigs, activeContaminated = false, false, nil, nil, nil, nil
+			activeTracking, activeTruncatedStart, startGids, startIdleStates, activeContaminated = false, false, nil, nil, nil
 			sayWhyNotMeasured(err)
 			return replyIgnored
 		}
@@ -441,7 +441,7 @@ func runTestCommand(command string) string {
 				if len(pendingTruncatedCuts) > maxLingeringTails {
 					pendingTruncatedCuts = pendingTruncatedCuts[len(pendingTruncatedCuts)-maxLingeringTails:]
 				}
-			} else if alive := findActiveTestGoroutines(curSnap, startGids, startIdleStates, startStdlibIdleSigs, covered, ignore); len(alive) > 0 {
+			} else if alive := findActiveTestGoroutines(curSnap, startGids, startIdleStates, covered, ignore); len(alive) > 0 {
 				targets := make([]lingeringTarget, len(alive))
 				for i, ag := range alive {
 					targets[i] = lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig}
@@ -474,7 +474,7 @@ func runTestCommand(command string) string {
 		// coverage would hold the lines of the tests before it.
 		if err := clearCounters(); err != nil {
 			currentTestID = ""
-			activeTracking, activeTruncatedStart, startGids, startIdleStates, startStdlibIdleSigs, activeContaminated = false, false, nil, nil, nil, nil
+			activeTracking, activeTruncatedStart, startGids, startIdleStates, activeContaminated = false, false, nil, nil, nil
 			if len(firedWatches) > 0 {
 				pendingTailTestIDs = append(pendingTailTestIDs, firedWatches...)
 			}
@@ -491,17 +491,15 @@ func runTestCommand(command string) string {
 				activeTruncatedStart = true
 				startGids = buildTruncatedStartUnion(curSnap)
 				startIdleStates = nil
-				startStdlibIdleSigs = nil
 			} else {
 				activeTruncatedStart = false
-				startGids, startIdleStates, startStdlibIdleSigs = snapshotStartBaseline(curSnap, covered, ignore)
+				startGids, startIdleStates = snapshotStartBaseline(curSnap, covered, ignore)
 			}
 		} else {
 			activeTracking = false
 			activeTruncatedStart = false
 			startGids = nil
 			startIdleStates = nil
-			startStdlibIdleSigs = nil
 		}
 		currentTestID, lastTest = id, id
 		return startReply()
@@ -519,9 +517,8 @@ func runTestCommand(command string) string {
 		testTruncatedStart := activeTruncatedStart
 		testStartGids := startGids
 		testStartIdle := startIdleStates
-		testStartStdlibIdle := startStdlibIdleSigs
 		testContaminated := activeContaminated
-		activeTracking, activeTruncatedStart, startGids, startIdleStates, startStdlibIdleSigs, activeContaminated = false, false, nil, nil, nil, nil
+		activeTracking, activeTruncatedStart, startGids, startIdleStates, activeContaminated = false, false, nil, nil, nil
 
 		windowCut := false
 		var lingeringNames []string
@@ -545,7 +542,7 @@ func runTestCommand(command string) string {
 			} else {
 				waitDur := endWaitDuration()
 				snap := snapshotGoroutines()
-				active := findActiveTestGoroutines(snap, testStartGids, testStartIdle, testStartStdlibIdle, covered, ignore)
+				active := findActiveTestGoroutines(snap, testStartGids, testStartIdle, covered, ignore)
 				// Never burn END_WAIT repeating stop-the-world 16 MiB dumps when
 				// already truncated; only poll while !snap.truncated && len(active) > 0.
 				if !snap.truncated && len(active) > 0 && waitDur > 0 {
@@ -568,7 +565,7 @@ func runTestCommand(command string) string {
 							}
 						}
 						snap = snapshotGoroutines()
-						active = findActiveTestGoroutines(snap, testStartGids, testStartIdle, testStartStdlibIdle, covered, ignore)
+						active = findActiveTestGoroutines(snap, testStartGids, testStartIdle, covered, ignore)
 					}
 				}
 				// Check any one-time resume watches (so a re-baselined

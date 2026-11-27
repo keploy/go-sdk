@@ -66,7 +66,8 @@
 // unarmed or when KEPLOY_GO_GOROUTINE_TRACKING=off). At END, it checks for
 // newly-spawned app-relevant goroutines AND pre-existing app workers/handlers
 // still off their quiescent START baseline (excluding go-sdk's own goroutines,
-// idle stdlib keep-alive/housekeeping goroutines, and any patterns listed in
+// idle stdlib keep-alive/housekeeping goroutines including idle HTTP keep-alive
+// reads through a wrapped app net.Conn, and any patterns listed in
 // KEPLOY_GO_IGNORE_GOROUTINES — set this comma-separated substring list if the
 // app lazily starts an intentional permanent background goroutine during a
 // request), polling adaptively up to KEPLOY_GO_END_WAIT_MS (default 200ms, max

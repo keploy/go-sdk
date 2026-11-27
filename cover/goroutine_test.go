@@ -1303,9 +1303,9 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 		}
 	})
 
-	t.Run("SF1 pre-existing syscall, sync.Mutex.Lock, chan send, and runnable baselines", func(t *testing.T) {
+	t.Run("SF1 pre-existing syscall, sync.Mutex.Lock, chan send, coroutine, and runnable baselines", func(t *testing.T) {
 		t.Setenv(envEndWaitMS, "0")
-		for _, status := range []string{"syscall", "sync.Mutex.Lock", "sync.RWMutex.RLock", "sync.WaitGroup.Wait", "chan send"} {
+		for _, status := range []string{"syscall", "sync.Mutex.Lock", "sync.RWMutex.RLock", "sync.WaitGroup.Wait", "chan send", "coroutine"} {
 			t.Run(status, func(t *testing.T) {
 				h := newGapHarness(t, lines(appFile, 3), lines(workerFile, 9), lines(appFile, 4), none(), lines(appFile, 5))
 				h.ask("sf1")
@@ -1389,49 +1389,97 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 			}
 		})
 
-		t.Run("runnable at first START with no prior baseline flags if still unparked or deeper at END", func(t *testing.T) {
-			h := newGapHarness(t, lines(appFile, 3))
-			runLoop := &goroutineInfo{
-				id: 32, baseStatus: "runnable", topLine: "/app/worker.go:10",
-				frames: []string{"main.worker"}, framePkgs: []string{"main"}, frameLines: []string{"/app/worker.go:10"},
+		t.Run("runnable at first START with no prior baseline fails closed when parked mid-job at same or deeper depth at END", func(t *testing.T) {
+			h := newGapHarness(t, lines(appFile, 3), none(), lines(appFile, 4))
+			runJobA := &goroutineInfo{
+				id: 32, baseStatus: "runnable", topLine: "/app/worker.go:20",
+				frames: []string{"main.process", "main.worker"}, framePkgs: []string{"main", "main"}, frameLines: []string{"/app/worker.go:20", "/app/worker.go:12"},
 				createdByFn: "main.init", createdByPkg: "main",
 			}
-			deeperWait := &goroutineInfo{
+			waitJobB := &goroutineInfo{
 				id: 32, baseStatus: "IO wait", topLine: "/app/worker.go:30",
-				frames: []string{"main.handleMsg", "main.worker"}, framePkgs: []string{"main", "main"}, frameLines: []string{"/app/worker.go:30", "/app/worker.go:12"},
+				frames: []string{"main.process", "main.worker"}, framePkgs: []string{"main", "main"}, frameLines: []string{"/app/worker.go:30", "/app/worker.go:12"},
 				createdByFn: "main.init", createdByPkg: "main",
 			}
-			cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 32: runLoop}}
+			cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 32: runJobA}}
 			snapshotGoroutines = func() goroutineSnapshot { return cur }
 			h.do("START set-0/T1", replyStartUnasked)
-			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 32: deeperWait}}
+			// S2 regression: same app-frame depth (2) parked in IO wait on jobB must still be caught!
+			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 32: waitJobB}}
 			h.do("END set-0/T1", replyTaken)
 			if h.test("set-0/T1")["windowCut"] != true {
-				t.Fatalf("SF1 first-START runnable failed: T1 missed deeper worker: %v", h.test("set-0/T1"))
+				t.Fatalf("S2 failed: T1 missed worker runnable at first START and parked mid-job at same depth at END: %v", h.test("set-0/T1"))
+			}
+			h.run("set-0/T2")
+			if !reflect.DeepEqual(h.test("set-0/T2")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+				t.Fatalf("S2 failed: T2 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T2")["contaminated"])
 			}
 		})
 	})
 
-	t.Run("SF2 wrapped keep-alive conn settles onto watch and matches new siblings cleanly", func(t *testing.T) {
+	t.Run("SF2 wrapped keep-alive idle reads clear immediately while stuck handlers never whitelist", func(t *testing.T) {
 		t.Setenv(envEndWaitMS, "0")
 		h := newGapHarness(t,
-			lines(appFile, 3), none(), // T1: opens wrapped conn #1 (no sibling yet) -> windowCut
-			lines(appFile, 4), none(), // T2: streak 1 -> tail:T1
-			lines(appFile, 5), none(), // T3: streak 2 -> resumeWatch, clean!
-			lines(appFile, 6), none(), // T4: conn #1 clean
-			lines(appFile, 7), none(), // T5: opens wrapped conn #2 (matches sibling #1!) -> clean!
-			lines(appFile, 8), // T6: opens wrapped conn #3 still inside slowHandler -> windowCut!
+			lines(appFile, 3), none(), // T1: wrapped inbound keep-alive readRequest -> clean immediately!
+			lines(appFile, 4), none(), // T2: wrapped outbound persistConn.readLoop -> clean immediately!
+			lines(appFile, 5), none(), // T3: slow body read through countingConn under ServeHTTP -> windowCut!
+			lines(appFile, 6), none(), // T4 (B1/S1): g50 stuck in slowFlushHandler -> windowCut!
+			lines(appFile, 7), none(), // T5: g50 still stuck -> tail:T4 (never moves onto watch!)
+			lines(appFile, 8), none(), // T6: g50 still stuck -> tail:T4 (never moves onto watch!)
+			lines(appFile, 9), none(), // T7 (B1): new g51 stuck at EXACT same slowFlushHandler line -> windowCut!
+			lines(appFile, 10), none(), // T8: g50 finished, g51 still stuck -> MUST still be tail:T7!
+			lines(appFile, 11), // T9: g51 returned to readRequest -> clean!
 		)
-		wrappedIdle := func(id uint64) *goroutineInfo {
+		wrappedInboundIdle := func(id uint64) *goroutineInfo {
 			return &goroutineInfo{
 				id: id, baseStatus: "IO wait", topLine: "/go/src/internal/poll/fd_poll_runtime.go:84",
-				frames:      []string{"internal/poll.runtime_pollWait", "main.(*countingConn).Read", "net/http.(*connReader).Read", "net/http.(*conn).serve"},
-				framePkgs:   []string{"internal/poll", "main", "net/http", "net/http"},
-				frameLines:  []string{"/go/poll.go:84", "/app/async.go:50", "/go/server.go:790", "/go/server.go:1900"},
+				frames: []string{
+					"internal/poll.runtime_pollWait",
+					"net.(*conn).Read",
+					"main.(*countingConn).Read",
+					"net/http.(*connReader).Read",
+					"bufio.(*Reader).fill",
+					"bufio.(*Reader).Peek",
+					"net/http.(*conn).serve",
+				},
+				framePkgs:   []string{"internal/poll", "net", "main", "net/http", "bufio", "bufio", "net/http"},
+				frameLines:  []string{"/go/poll.go:84", "/go/net.go:180", "/app/async.go:50", "/go/server.go:856", "/go/bufio.go:113", "/go/bufio.go:152", "/go/server.go:2193"},
 				createdByFn: "net/http.(*Server).Serve", createdByPkg: "net/http",
 			}
 		}
-		wrappedActive := func(id uint64) *goroutineInfo {
+		wrappedOutboundIdle := func(id uint64) *goroutineInfo {
+			return &goroutineInfo{
+				id: id, baseStatus: "IO wait", topLine: "/go/src/internal/poll/fd_poll_runtime.go:84",
+				frames: []string{
+					"internal/poll.runtime_pollWait",
+					"net.(*conn).Read",
+					"main.(*countingConn).Read",
+					"bufio.(*Reader).Peek",
+					"net/http.(*persistConn).readLoop",
+				},
+				framePkgs:   []string{"internal/poll", "net", "main", "bufio", "net/http"},
+				frameLines:  []string{"/go/poll.go:84", "/go/net.go:180", "/app/async.go:50", "/go/bufio.go:140", "/go/transport.go:2200"},
+				createdByFn: "net/http.(*Transport).dialConn", createdByPkg: "net/http",
+			}
+		}
+		slowBodyRead := func(id uint64) *goroutineInfo {
+			return &goroutineInfo{
+				id: id, baseStatus: "IO wait", topLine: "/go/src/internal/poll/fd_poll_runtime.go:84",
+				frames: []string{
+					"internal/poll.runtime_pollWait",
+					"net.(*conn).Read",
+					"main.(*countingConn).Read",
+					"net/http.(*connReader).Read",
+					"main.slowBodyHandler",
+					"net/http.serverHandler.ServeHTTP",
+					"net/http.(*conn).serve",
+				},
+				framePkgs:   []string{"internal/poll", "net", "main", "net/http", "main", "net/http", "net/http"},
+				frameLines:  []string{"/go/poll.go:84", "/go/net.go:180", "/app/async.go:50", "/go/server.go:790", "/app/async.go:180", "/go/server.go:2900", "/go/server.go:1990"},
+				createdByFn: "net/http.(*Server).Serve", createdByPkg: "net/http",
+			}
+		}
+		slowFlush := func(id uint64) *goroutineInfo {
 			return &goroutineInfo{
 				id: id, baseStatus: "chan receive", topLine: "/app/async.go:204",
 				frames:      []string{"main.slowFlushHandler", "net/http.serverHandler.ServeHTTP", "net/http.(*conn).serve"},
@@ -1444,46 +1492,97 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}}
 		snapshotGoroutines = func() goroutineSnapshot { return cur }
 
-		// T1: new wrapped conn #1 parks in countingConn.Read -> windowCut (no sibling yet).
+		// T1: new wrapped inbound keep-alive conn parked in readRequest -> CLEAN immediately!
 		h.do("START set-0/T1", replyStartUnasked)
-		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 40: wrappedIdle(40)}}
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 40: wrappedInboundIdle(40)}}
 		h.do("END set-0/T1", replyTaken)
-		if h.test("set-0/T1")["windowCut"] != true {
-			t.Fatalf("T1 windowCut = %v, want true", h.test("set-0/T1")["windowCut"])
+		if _, hasCut := h.test("set-0/T1")["windowCut"]; hasCut {
+			t.Fatalf("SF2 failed: T1 got false-positive windowCut on idle wrapped inbound conn: %v", h.test("set-0/T1"))
 		}
 
-		// T2: streak 1 -> tail:T1 (no windowCut).
-		h.run("set-0/T2")
-		if !reflect.DeepEqual(h.test("set-0/T2")["contaminated"], []interface{}{"tail:set-0/T1"}) {
-			t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T2")["contaminated"])
+		// T2: new wrapped outbound keep-alive conn parked in persistConn.readLoop -> CLEAN immediately!
+		h.do("START set-0/T2", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 40: wrappedInboundIdle(40), 41: wrappedOutboundIdle(41)}}
+		h.do("END set-0/T2", replyTaken)
+		if _, hasCut := h.test("set-0/T2")["windowCut"]; hasCut {
+			t.Fatalf("SF2 failed: T2 got false-positive windowCut on idle wrapped outbound conn: %v", h.test("set-0/T2"))
 		}
 
-		// T3 & T4: streak 2 moves conn #1 onto resumeWatch -> clean!
-		for _, id := range []string{"set-0/T3", "set-0/T4"} {
+		// T3: slow request-body read via countingConn under ServeHTTP -> MUST be windowCut!
+		h.do("START set-0/T3", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 40: slowBodyRead(40), 41: wrappedOutboundIdle(41)}}
+		h.do("END set-0/T3", replyTaken)
+		if h.test("set-0/T3")["windowCut"] != true {
+			t.Fatalf("SF2 failed: T3 missed active slowBodyHandler reading wrapped conn: %v", h.test("set-0/T3"))
+		}
+		// Conn 40 finishes slowBodyHandler before T4.
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 40: wrappedInboundIdle(40), 41: wrappedOutboundIdle(41)}}
+
+		// T4 (B1 + S1 regression): new conn g50 stuck in slowFlushHandler -> windowCut!
+		h.do("START set-0/T4", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 40: wrappedInboundIdle(40), 41: wrappedOutboundIdle(41), 50: slowFlush(50)}}
+		h.do("END set-0/T4", replyTaken)
+		if h.test("set-0/T4")["windowCut"] != true {
+			t.Fatalf("B1 setup: T4 windowCut = %v, want true", h.test("set-0/T4")["windowCut"])
+		}
+
+		// T5 & T6: g50 stays stuck -> MUST NEVER move onto a resumeWatch (S1)!
+		for _, id := range []string{"set-0/T5", "set-0/T6"} {
 			h.run(id)
-			if _, hasCut := h.test(id)["windowCut"]; hasCut {
-				t.Fatalf("SF2 failed: %s got windowCut: %v", id, h.test(id))
+			if !reflect.DeepEqual(h.test(id)["contaminated"], []interface{}{"tail:set-0/T4"}) {
+				t.Fatalf("S1 failed: %s contaminated = %v, want [tail:set-0/T4]", id, h.test(id)["contaminated"])
 			}
-			if _, hasCont := h.test(id)["contaminated"]; hasCont {
-				t.Fatalf("SF2 failed: %s got contaminated: %v", id, h.test(id))
+			if len(resumeWatches) != 0 {
+				t.Fatalf("S1 failed: stuck handler g50 moved onto resumeWatch after %s", id)
 			}
 		}
 
-		// T5: brand new wrapped conn #2 (gid 41) parks in exact same idle state as sibling #1 -> IMMEDIATELY clean!
-		h.do("START set-0/T5", replyStartUnasked)
-		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 40: wrappedIdle(40), 41: wrappedIdle(41)}}
-		h.do("END set-0/T5", replyTaken)
-		if _, hasCut := h.test("set-0/T5")["windowCut"]; hasCut {
-			t.Fatalf("SF2 sibling match failed: T5 got false-positive windowCut on new wrapped conn #2: %v", h.test("set-0/T5"))
+		// T7 (B1): new conn g51 stuck at the EXACT same slowFlushHandler line as g50 -> MUST be windowCut!
+		h.do("START set-0/T7", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 40: wrappedInboundIdle(40), 41: wrappedOutboundIdle(41), 50: slowFlush(50), 51: slowFlush(51)}}
+		h.do("END set-0/T7", replyTaken)
+		if h.test("set-0/T7")["windowCut"] != true {
+			t.Fatalf("B1 failed: T7 missed new stuck handler g51 matching g50: %v", h.test("set-0/T7"))
 		}
 
-		// T6: brand new wrapped conn #3 (gid 42) is STILL inside slowFlushHandler at END -> MUST be windowCut!
-		h.do("START set-0/T6", replyStartUnasked)
-		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 40: wrappedIdle(40), 41: wrappedIdle(41), 42: wrappedActive(42)}}
-		h.do("END set-0/T6", replyTaken)
-		if h.test("set-0/T6")["windowCut"] != true {
-			t.Fatalf("SF2 active handler check failed: T6 missed active handler on new wrapped conn #3: %v", h.test("set-0/T6"))
+		// T8: g50 returns to idle readRequest, g51 still stuck -> MUST still be contaminated tail:T7!
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 40: wrappedInboundIdle(40), 41: wrappedOutboundIdle(41), 50: wrappedInboundIdle(50), 51: slowFlush(51)}}
+		h.do("START set-0/T8", replyStartUnasked)
+		// g51 returns to idle readRequest before END T8.
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 40: wrappedInboundIdle(40), 41: wrappedOutboundIdle(41), 50: wrappedInboundIdle(50), 51: wrappedInboundIdle(51)}}
+		h.do("END set-0/T8", replyTaken)
+		if !reflect.DeepEqual(h.test("set-0/T8")["contaminated"], []interface{}{"tail:set-0/T7"}) {
+			t.Fatalf("B1 failed: T8 contaminated = %v, want [tail:set-0/T7]", h.test("set-0/T8")["contaminated"])
 		}
+
+		// T9: both back at wrappedInboundIdle -> 100% clean!
+		h.run("set-0/T9")
+		if _, hasCont := h.test("set-0/T9")["contaminated"]; hasCont {
+			t.Fatalf("T9 should be clean after g50/g51 returned to readRequest: %v", h.test("set-0/T9"))
+		}
+	})
+
+	t.Run("Nit4 START reads gap counters before stop-the-world stack snapshot", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		h := newGapHarness(t, lines(appFile, 3), lines(workerFile, 9), lines(appFile, 4))
+		h.ask("n4")
+		origLines := snapshotLines
+		var order []string
+		snapshotLines = func() (map[string][]int, error) {
+			order = append(order, "lines")
+			return origLines()
+		}
+		snapshotGoroutines = func() goroutineSnapshot {
+			order = append(order, "stack")
+			return goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}}
+		}
+		h.run("set-0/T1")
+		order = nil
+		h.do("START set-0/T2", replyStartAskedBy("n4"))
+		if len(order) < 2 || order[0] != "lines" || order[1] != "stack" {
+			t.Fatalf("Nit4 failed: START call order = %v, want [lines stack ...]", order)
+		}
+		h.do("END set-0/T2", replyTaken)
 	})
 
 	t.Run("SF3 unclosed START->START checks resumeWatch first with no duplicate tail or double streak", func(t *testing.T) {

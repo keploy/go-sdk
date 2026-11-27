@@ -577,12 +577,12 @@ func TestRealGoApp_P6FraudAlertGoroutineTailAcrossCleanGap(t *testing.T) {
 }
 
 // TestRealGoApp_FastGoroutineDrainsWithinEndWait verifies that a fast 20ms
-// goroutine finishes within KEPLOY_GO_END_WAIT_MS=1000: END waits for it,
+// goroutine finishes within KEPLOY_GO_END_WAIT_MS=200: END waits for it,
 // reports windowCut=false/contaminated=nil, and captures its blocks!
 func TestRealGoApp_FastGoroutineDrainsWithinEndWait(t *testing.T) {
 	k := newKeploySide(t)
 	bin := buildAsyncApp(t, k)
-	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=1000")
+	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=200")
 
 	rec := measure(t, k, a, "set-0/fast-1", "/fast-async")
 	if _, hasCut := rec["windowCut"]; hasCut {
@@ -609,7 +609,7 @@ func TestRealGoApp_FastGoroutineDrainsWithinEndWait(t *testing.T) {
 func TestRealGoApp_IdleHTTPKeepAliveZeroFalsePositives(t *testing.T) {
 	k := newKeploySide(t)
 	bin := buildAsyncApp(t, k)
-	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=800")
+	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=200")
 
 	upstream := http.NewServeMux()
 	upstream.HandleFunc("/ok", func(w http.ResponseWriter, r *http.Request) {
@@ -665,7 +665,7 @@ func TestRealGoApp_IdleHTTPKeepAliveZeroFalsePositives(t *testing.T) {
 		if got := send(t, k.sock, "END "+id); got != replyTaken {
 			t.Fatalf("END %s: %q", id, got)
 		}
-		if elapsed := time.Since(began); elapsed > 400*time.Millisecond {
+		if elapsed := time.Since(began); elapsed > 150*time.Millisecond {
 			t.Fatalf("END %s took %v (false-positive wait on idle keep-alive conn?)", id, elapsed)
 		}
 		rec := readNextRecord(t, k, a)
@@ -1325,15 +1325,15 @@ func TestRealGoApp_CoTargetSupervisorAndReaderWatchStaysClean(t *testing.T) {
 // TestRealGoApp_WrappedConnKeepAlive verifies SF2 end-to-end on a real -cover
 // binary whose net.Listener wraps net.Conn with an app-package Read method
 // (main.(*countingConn).Read):
-//   - T1 opens the first wrapped keep-alive conn (no pre-existing sibling yet) -> windowCut,
-//   - T2 (streak 1) -> tail:T1 (not windowCut),
-//   - T3 & T4 (reusing conn #1 after streak 2 moves it onto resumeWatch) -> 100% CLEAN,
-//   - T5 opens a BRAND NEW wrapped conn #2 -> IMMEDIATELY CLEAN via sibling match,
-//   - T6 triggers /slow-flush on conn #1 -> honestly caught as windowCut:true!
+//   - T1..T4 on wrapped keep-alive conn #1 -> ALL 100% CLEAN (even T1!) with END < 150ms,
+//   - T5 on brand new wrapped keep-alive conn #2 -> 100% CLEAN immediately,
+//   - T6 triggers /slow-flush on wrapped conn #1 -> honestly caught as windowCut:true,
+//   - T7 while /slow-flush is still blocked -> contaminated:["tail:set-0/T6"] (exact origin),
+//   - After /release + closing idle conn #2 -> T8 & T9 are 100% CLEAN (zero close-conn false marks)!
 func TestRealGoApp_WrappedConnKeepAlive(t *testing.T) {
 	k := newKeploySide(t)
 	bin := buildAsyncApp(t, k)
-	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=40", "ENABLE_WRAPPED_LISTENER=1")
+	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=200", "ENABLE_WRAPPED_LISTENER=1")
 
 	resp, err := http.Get("http://" + a.addr + "/wrapped-addr")
 	if err != nil {
@@ -1346,13 +1346,13 @@ func TestRealGoApp_WrappedConnKeepAlive(t *testing.T) {
 		t.Fatal("wrapped listener did not start")
 	}
 
-	makeClient := func() *http.Client {
+	makeClient := func() (*http.Client, *http.Transport) {
 		tr := &http.Transport{MaxIdleConns: 1, MaxIdleConnsPerHost: 1, DisableKeepAlives: false}
 		t.Cleanup(tr.CloseIdleConnections)
-		return &http.Client{Transport: tr}
+		return &http.Client{Transport: tr}, tr
 	}
-	c1 := makeClient()
-	c2 := makeClient()
+	c1, _ := makeClient()
+	c2, tr2 := makeClient()
 
 	doReq := func(c *http.Client, path string) bool {
 		var reused bool
@@ -1372,40 +1372,27 @@ func TestRealGoApp_WrappedConnKeepAlive(t *testing.T) {
 		return reused
 	}
 
-	runWrapped := func(id string, c *http.Client, path string) (map[string]any, bool) {
+	runWrapped := func(id string, c *http.Client, path string) (map[string]any, bool, time.Duration) {
 		if got := send(t, k.sock, "START "+id); got != replyStartUnasked {
 			t.Fatalf("START %s: %q", id, got)
 		}
 		reused := doReq(c, path)
+		began := time.Now()
 		if got := send(t, k.sock, "END "+id); got != replyTaken {
 			t.Fatalf("END %s: %q", id, got)
 		}
-		return readNextRecord(t, k, a), reused
+		return readNextRecord(t, k, a), reused, time.Since(began)
 	}
 
-	// T1: first wrapped keep-alive conn (no sibling yet) -> windowCut.
-	rec1, _ := runWrapped("set-0/T1", c1, "/twin?n=1")
-	if rec1["windowCut"] != true {
-		t.Fatalf("T1 windowCut = %v, want true on first wrapped conn", rec1["windowCut"])
-	}
-
-	// T2: reuses conn #1 -> streak 1 (tail:T1, no windowCut).
-	rec2, reused2 := runWrapped("set-0/T2", c1, "/twin?n=2")
-	if !reused2 {
-		t.Fatal("expected T2 to reuse wrapped conn #1")
-	}
-	if _, hasCut := rec2["windowCut"]; hasCut {
-		t.Fatalf("T2 unexpectedly windowCut: %v", rec2)
-	}
-	if !reflect.DeepEqual(rec2["contaminated"], []any{"tail:set-0/T1"}) {
-		t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", rec2["contaminated"])
-	}
-
-	// T3 & T4: conn #1 moved onto resumeWatch -> 100% CLEAN!
-	for _, id := range []string{"set-0/T3", "set-0/T4"} {
-		rec, reused := runWrapped(id, c1, "/twin?n=3")
-		if !reused {
+	// T1..T4: conn #1 (first request + 3 keep-alive reuses) -> ALL 100% CLEAN immediately!
+	for i := 1; i <= 4; i++ {
+		id := fmt.Sprintf("set-0/T%d", i)
+		rec, reused, elapsed := runWrapped(id, c1, fmt.Sprintf("/twin?n=%d", i))
+		if i > 1 && !reused {
 			t.Fatalf("expected %s to reuse wrapped conn #1", id)
+		}
+		if elapsed > 150*time.Millisecond {
+			t.Fatalf("END %s took %v (false-positive wait on idle wrapped keep-alive conn?)", id, elapsed)
 		}
 		if _, hasCut := rec["windowCut"]; hasCut {
 			t.Fatalf("SF2 e2e failed: %s got false-positive windowCut: %v", id, rec)
@@ -1415,22 +1402,43 @@ func TestRealGoApp_WrappedConnKeepAlive(t *testing.T) {
 		}
 	}
 
-	// T5: brand new wrapped conn #2 via c2 -> IMMEDIATELY CLEAN via sibling match!
-	rec5, reused5 := runWrapped("set-0/T5", c2, "/twin?n=5")
+	// T5: brand new wrapped conn #2 via c2 -> 100% CLEAN immediately!
+	rec5, reused5, elapsed5 := runWrapped("set-0/T5", c2, "/twin?n=5")
 	if reused5 {
 		t.Fatal("expected T5 on c2 to open a brand new wrapped conn #2")
 	}
+	if elapsed5 > 150*time.Millisecond {
+		t.Fatalf("END T5 took %v (false-positive wait on new wrapped keep-alive conn #2?)", elapsed5)
+	}
 	if _, hasCut := rec5["windowCut"]; hasCut {
-		t.Fatalf("SF2 sibling e2e failed: T5 got false-positive windowCut on conn #2: %v", rec5)
+		t.Fatalf("SF2 e2e failed: T5 got false-positive windowCut on conn #2: %v", rec5)
 	}
 	if _, hasCont := rec5["contaminated"]; hasCont {
-		t.Fatalf("SF2 sibling e2e failed: T5 got false-positive contaminated on conn #2: %v", rec5)
+		t.Fatalf("SF2 e2e failed: T5 got false-positive contaminated on conn #2: %v", rec5)
 	}
 
-	// T6: active /slow-flush handler on conn #1 MUST STILL be caught honestly!
-	rec6, _ := runWrapped("set-0/T6", c1, "/slow-flush?gate=wrapflush")
+	// T6: active /slow-flush handler on conn #1 MUST be caught honestly as windowCut:true!
+	rec6, _, _ := runWrapped("set-0/T6", c1, "/slow-flush?gate=wrapflush")
 	if rec6["windowCut"] != true {
 		t.Fatalf("SF2 active handler check failed: T6 missed /slow-flush on wrapped conn #1: %v", rec6)
 	}
-	getOK(t, a, "/release?gate=wrapflush&wait=1")
+
+	// T7 while /slow-flush is still blocked -> contaminated:["tail:set-0/T6"] (exact origin!).
+	rec7, _, _ := runWrapped("set-0/T7", c2, "/twin?n=7")
+	if !reflect.DeepEqual(rec7["contaminated"], []any{"tail:set-0/T6"}) {
+		t.Fatalf("T7 contaminated = %v, want [tail:set-0/T6]", rec7["contaminated"])
+	}
+
+	// Release /slow-flush and wait for handler exit; also close idle conn #2!
+	getOK(t, a, "/release?gate=wrapflush&wait=1&fn=slowFlushHandler")
+	tr2.CloseIdleConnections()
+
+	// T8: back at idle readRequest -> 100% CLEAN (and closing idle conn #2 causes zero false tail marks)!
+	rec8, _, _ := runWrapped("set-0/T8", c1, "/twin?n=8")
+	if _, hasCut := rec8["windowCut"]; hasCut {
+		t.Fatalf("T8 unexpectedly got windowCut after slow-flush finished: %v", rec8)
+	}
+	if _, hasCont := rec8["contaminated"]; hasCont {
+		t.Fatalf("T8 unexpectedly got contaminated after slow-flush finished & conn #2 closed: %v", rec8)
+	}
 }
