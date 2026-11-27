@@ -747,50 +747,107 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 		}
 	})
 
-	t.Run("N3 outboxPoller parked deeper in deliver is NOT re-baselined and stays tail:T1", func(t *testing.T) {
+	t.Run("N3 outboxPoller parked deeper in HTTP RoundTrip never re-baselines, non-HTTP deeper wait settles and catches wakeup", func(t *testing.T) {
 		t.Setenv(envEndWaitMS, "0")
-		h := newGapHarness(t, lines(appFile, 3), none(), lines(appFile, 4), none(), lines(appFile, 5), none(), lines(appFile, 6))
-		idle := &goroutineInfo{
-			id: 15, baseStatus: "sleep", topLine: "/go/src/runtime/time.go:300",
-			frames: []string{"time.Sleep", "main.outboxPoller"}, framePkgs: []string{"time", "main"},
-			createdByFn: "main.main", createdByPkg: "main",
-		}
-		parked := &goroutineInfo{
-			id: 15, baseStatus: "select", topLine: "/go/src/net/http/transport.go:2700",
-			frames:      []string{"net/http.(*persistConn).roundTrip", "net/http.(*Transport).roundTrip", "main.deliver", "main.outboxPoller"},
-			framePkgs:   []string{"net/http", "net/http", "main", "main"},
-			createdByFn: "main.main", createdByPkg: "main",
-		}
-		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: idle}}
-		snapshotGoroutines = func() goroutineSnapshot { return cur }
+		t.Run("HTTP RoundTrip stays in lingeringTails through END T3", func(t *testing.T) {
+			h := newGapHarness(t, lines(appFile, 3), none(), lines(appFile, 4), none(), lines(appFile, 5), none(), lines(appFile, 6))
+			idle := &goroutineInfo{
+				id: 15, baseStatus: "sleep", topLine: "/go/src/runtime/time.go:300",
+				frames: []string{"time.Sleep", "main.outboxPoller"}, framePkgs: []string{"time", "main"},
+				createdByFn: "main.main", createdByPkg: "main",
+			}
+			httpDeliver := &goroutineInfo{
+				id: 15, baseStatus: "select", topLine: "/go/src/net/http/transport.go:2700",
+				frames:      []string{"net/http.(*persistConn).roundTrip", "net/http.(*Transport).RoundTrip", "main.deliver", "main.outboxPoller"},
+				framePkgs:   []string{"net/http", "net/http", "main", "main"},
+				createdByFn: "main.main", createdByPkg: "main",
+			}
+			cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: idle}}
+			snapshotGoroutines = func() goroutineSnapshot { return cur }
 
-		// START T1 (idle) -> END T1 (parked in deliver, appFrameCount 2 > 1): windowCut!
-		h.do("START set-0/T1", replyStartUnasked)
-		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: parked}}
-		h.do("END set-0/T1", replyTaken)
-		if h.test("set-0/T1")["windowCut"] != true {
-			t.Fatalf("T1 windowCut = %v, want true", h.test("set-0/T1")["windowCut"])
-		}
+			h.do("START set-0/T1", replyStartUnasked)
+			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: httpDeliver}}
+			h.do("END set-0/T1", replyTaken)
+			if h.test("set-0/T1")["windowCut"] != true {
+				t.Fatalf("T1 windowCut = %v, want true", h.test("set-0/T1")["windowCut"])
+			}
 
-		// T2 (still parked): tail:T1!
-		h.run("set-0/T2")
-		if !reflect.DeepEqual(h.test("set-0/T2")["contaminated"], []interface{}{"tail:set-0/T1"}) {
-			t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T2")["contaminated"])
-		}
+			// T2 and T3 remain parked in HTTP RoundTrip through END T3 -> MUST NOT move onto resumeWatch!
+			h.run("set-0/T2")
+			if !reflect.DeepEqual(h.test("set-0/T2")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+				t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T2")["contaminated"])
+			}
+			h.run("set-0/T3")
+			if _, armed := resumeWatches[15]; armed {
+				t.Fatal("HTTP RoundTrip outboxPoller must never settle onto resumeWatch")
+			}
+			if !reflect.DeepEqual(h.test("set-0/T3")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+				t.Fatalf("T3 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T3")["contaminated"])
+			}
 
-		// T3 (STILL parked in deeper main.deliver -> MUST NOT be re-baselined!): tail:T1!
-		h.do("START set-0/T3", replyStartUnasked)
-		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: idle}}
-		h.do("END set-0/T3", replyTaken)
-		if !reflect.DeepEqual(h.test("set-0/T3")["contaminated"], []interface{}{"tail:set-0/T1"}) {
-			t.Fatalf("outboxPoller regression: T3 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T3")["contaminated"])
-		}
+			// Returns to idle before T4 -> clean!
+			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: idle}}
+			h.run("set-0/T4")
+			if _, hasCont := h.test("set-0/T4")["contaminated"]; hasCont {
+				t.Fatalf("T4 should be clean after returning to idle: %v", h.test("set-0/T4"))
+			}
+		})
 
-		// T4 (back to idle): clean!
-		h.run("set-0/T4")
-		if _, hasCont := h.test("set-0/T4")["contaminated"]; hasCont {
-			t.Fatalf("T4 should be clean after outboxPoller returned to idle: %v", h.test("set-0/T4"))
-		}
+		t.Run("non-HTTP deeper wait settles at START T3 and catches wakeup at T4", func(t *testing.T) {
+			h := newGapHarness(t, lines(appFile, 3), none(), lines(appFile, 4), none(), lines(appFile, 5), none(), lines(appFile, 6), none(), lines(appFile, 7))
+			idle := &goroutineInfo{
+				id: 15, baseStatus: "sleep", topLine: "/go/src/runtime/time.go:300",
+				frames: []string{"time.Sleep", "main.outboxPoller"}, framePkgs: []string{"time", "main"},
+				createdByFn: "main.main", createdByPkg: "main",
+			}
+			dbDeliver := &goroutineInfo{
+				id: 15, baseStatus: "select", topLine: "/mod/db/exec.go:42",
+				frames:      []string{"example.com/db.Exec", "main.deliver", "main.outboxPoller"},
+				framePkgs:   []string{"example.com/db", "main", "main"},
+				createdByFn: "main.main", createdByPkg: "main",
+			}
+			cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: idle}}
+			snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+			h.do("START set-0/T1", replyStartUnasked)
+			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: dbDeliver}}
+			h.do("END set-0/T1", replyTaken)
+			if h.test("set-0/T1")["windowCut"] != true {
+				t.Fatalf("T1 windowCut = %v, want true", h.test("set-0/T1")["windowCut"])
+			}
+
+			// T2 (streak 1): tail:T1.
+			h.run("set-0/T2")
+			if !reflect.DeepEqual(h.test("set-0/T2")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+				t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T2")["contaminated"])
+			}
+
+			// T3 (stays parked through END T3): settles onto resumeWatch at START T3 -> clean while parked!
+			h.run("set-0/T3")
+			if _, armed := resumeWatches[15]; !armed {
+				t.Fatal("expected non-HTTP deeper wait to settle onto resumeWatch at START T3")
+			}
+			if _, hasCont := h.test("set-0/T3")["contaminated"]; hasCont {
+				t.Fatalf("T3 should be clean while parked on resumeWatch: %v", h.test("set-0/T3"))
+			}
+
+			// T4: wakes and returns to idle -> resumeWatch fires tail:T1 (no false windowCut)!
+			h.do("START set-0/T4", replyStartUnasked)
+			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: idle}}
+			h.do("END set-0/T4", replyTaken)
+			if !reflect.DeepEqual(h.test("set-0/T4")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+				t.Fatalf("T4 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T4")["contaminated"])
+			}
+			if _, hasCut := h.test("set-0/T4")["windowCut"]; hasCut {
+				t.Fatalf("T4 got false windowCut after watch returned to original idle: %v", h.test("set-0/T4"))
+			}
+
+			// T5: clean!
+			h.run("set-0/T5")
+			if _, hasCont := h.test("set-0/T5")["contaminated"]; hasCont {
+				t.Fatalf("T5 should be clean after returning to idle: %v", h.test("set-0/T5"))
+			}
+		})
 	})
 
 	t.Run("N3 same-depth consumer moves to one-time resume watch and catches wakeup", func(t *testing.T) {
@@ -1425,6 +1482,46 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 			h.do("START set-0/T2", replyStartUnasked)
 			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 31: idle}}
 			h.do("END set-0/T2", replyTaken)
+			h.run("set-0/T3")
+			if _, hasCont := h.test("set-0/T3")["contaminated"]; hasCont {
+				t.Fatalf("T3 should be clean after returning to prior idle: %v", h.test("set-0/T3"))
+			}
+		})
+
+		t.Run("runnable at START with prior quiescent baseline fails closed even when returning to idle before END", func(t *testing.T) {
+			h := newGapHarness(t, lines(appFile, 3), none(), lines(appFile, 4), none(), lines(appFile, 5), none(), lines(appFile, 6))
+			idle := &goroutineInfo{
+				id: 33, baseStatus: "chan receive", topLine: "/app/worker.go:10",
+				frames: []string{"main.worker"}, framePkgs: []string{"main"}, frameLines: []string{"/app/worker.go:10"},
+				createdByFn: "main.init", createdByPkg: "main",
+			}
+			running := &goroutineInfo{
+				id: 33, baseStatus: "runnable", topLine: "/app/worker.go:20",
+				frames: []string{"main.handleMsg", "main.worker"}, framePkgs: []string{"main", "main"}, frameLines: []string{"/app/worker.go:20", "/app/worker.go:12"},
+				createdByFn: "main.init", createdByPkg: "main",
+			}
+			cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 33: idle}}
+			snapshotGoroutines = func() goroutineSnapshot { return cur }
+			h.run("set-0/T0")
+
+			// START T1 catches goroutine 33 runnable on gap work; it finishes and returns to idle before END T1.
+			// T1 MUST fail closed (windowCut:true) so the gap job's remaining lines are never trusted as T1's.
+			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 33: running}}
+			h.do("START set-0/T1", replyStartUnasked)
+			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 33: idle}}
+			h.do("END set-0/T1", replyTaken)
+			if h.test("set-0/T1")["windowCut"] != true {
+				t.Fatalf("T1 missed worker runnable at START that returned to idle before END: %v", h.test("set-0/T1"))
+			}
+
+			// T2 gets boundary tail:T1 (no false windowCut), and T3 is clean!
+			h.run("set-0/T2")
+			if !reflect.DeepEqual(h.test("set-0/T2")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+				t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T2")["contaminated"])
+			}
+			if _, hasCut := h.test("set-0/T2")["windowCut"]; hasCut {
+				t.Fatalf("T2 unexpectedly marked windowCut: %v", h.test("set-0/T2"))
+			}
 			h.run("set-0/T3")
 			if _, hasCont := h.test("set-0/T3")["contaminated"]; hasCont {
 				t.Fatalf("T3 should be clean after returning to prior idle: %v", h.test("set-0/T3"))

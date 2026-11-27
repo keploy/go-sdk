@@ -454,15 +454,20 @@ func runTestCommand(command string) string {
 					pendingTruncatedCuts = pendingTruncatedCuts[len(pendingTruncatedCuts)-maxLingeringTails:]
 				}
 			} else if alive := findActiveTestGoroutines(curSnap, startGids, startIdleStates, covered, ignore); len(alive) > 0 {
-				targets := make([]lingeringTarget, len(alive))
-				for i, ag := range alive {
-					targets[i] = lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig}
+				var targets []lingeringTarget
+				for _, ag := range alive {
+					if ag.alreadyAtIdle {
+						continue
+					}
+					targets = append(targets, lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig})
 					if skipStreak == nil {
 						skipStreak = make(map[uint64]struct{}, len(alive))
 					}
 					skipStreak[ag.info.id] = struct{}{}
 				}
-				addLingeringTail(unclosedID, targets, capturePreExistingChildren(curSnap, targets, startGids))
+				if len(targets) > 0 {
+					addLingeringTail(unclosedID, targets, capturePreExistingChildren(curSnap, targets, startGids))
+				}
 			}
 		}
 		// Compute whether the gap since prevTestID followed a cut window, ran
@@ -565,11 +570,12 @@ func runTestCommand(command string) string {
 				}
 				active := findActiveTestGoroutinesWithLingering(snap, testStartGids, testStartIdle, preEndLingering, covered, ignore)
 				// Never burn END_WAIT repeating stop-the-world 16 MiB dumps when
-				// already truncated; only poll while !snap.truncated && len(active) > 0.
-				if !snap.truncated && len(active) > 0 && waitDur > 0 {
+				// already truncated, or when the only active entries are drifted
+				// goroutines that have already returned to their idle baseline.
+				if !snap.truncated && hasWaitableActive(active) && waitDur > 0 {
 					deadline := time.Now().Add(waitDur)
 					poll := endWaitPollMin
-					for !snap.truncated && len(active) > 0 {
+					for !snap.truncated && hasWaitableActive(active) {
 						rem := time.Until(deadline)
 						if rem <= 0 {
 							break
@@ -611,11 +617,14 @@ func runTestCommand(command string) string {
 				if snap.truncated {
 					logStackTruncatedOnce()
 					windowCut = true
-					if len(active) > 0 {
-						targets := make([]lingeringTarget, len(active))
-						for i, ag := range active {
-							targets[i] = lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig}
+					var targets []lingeringTarget
+					for _, ag := range active {
+						if ag.alreadyAtIdle {
+							continue
 						}
+						targets = append(targets, lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig})
+					}
+					if len(targets) > 0 {
 						addLingeringTail(id, targets, capturePreExistingChildren(snap, targets, testStartGids))
 					}
 					pendingTruncatedCuts = append(pendingTruncatedCuts, truncatedCutWindow{
@@ -629,12 +638,17 @@ func runTestCommand(command string) string {
 					prevWindowCutTestID = id
 				} else if len(active) > 0 {
 					windowCut = true
-					targets := make([]lingeringTarget, len(active))
-					for i, ag := range active {
-						targets[i] = lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig}
+					var targets []lingeringTarget
+					for _, ag := range active {
+						if ag.alreadyAtIdle {
+							continue
+						}
+						targets = append(targets, lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig})
 					}
 					lingeringNames = summarizeActiveNames(active, covered)
-					addLingeringTail(id, targets, capturePreExistingChildren(snap, targets, testStartGids))
+					if len(targets) > 0 {
+						addLingeringTail(id, targets, capturePreExistingChildren(snap, targets, testStartGids))
+					}
 					prevWindowCutTestID = id
 					logLingeringOnce(id, lingeringNames)
 				}

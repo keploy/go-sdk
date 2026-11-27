@@ -76,17 +76,14 @@ type goroutineSig struct {
 
 // startBaseline records a pre-existing goroutine's START baseline. Normally
 // only idle is set (the quiescent idle signature to compare against at END).
-// When START observes a goroutine at a quiescent signature startSig that
-// differs from its established lastQuiescentSigs entry (idle), drifted is set
-// so END fails closed both when the goroutine stays at startSig (caught
-// mid-job at START, keeping idle as the return target) AND when it transitions
-// from startSig back to idle (when idle itself was a first-START mid-job
-// capture and startSig is the true idle, or when a gap job finished during the
-// window).
+// When START observes a goroutine off its established lastQuiescentSigs entry
+// (either parked at a different quiescent signature or unparked/runnable in
+// app code), drifted is set so END fails closed both when the goroutine is
+// still off idle AND when it returns to idle during the window (without ever
+// overwriting lastQuiescentSigs with a mid-job signature).
 type startBaseline struct {
-	idle     goroutineSig
-	startSig goroutineSig
-	drifted  bool
+	idle    goroutineSig
+	drifted bool
 }
 
 // lingeringTarget tracks one lingering goroutine belonging to a cut test.
@@ -120,21 +117,21 @@ type truncatedCutWindow struct {
 }
 
 // quiescentStreak tracks consecutive START snapshots in which a lingering
-// pre-existing goroutine remained at the same quiescent signature no deeper
-// than its baseline app-frame depth.
+// non-HTTP goroutine remained stably parked at the same quiescent signature.
 type quiescentStreak struct {
 	sig   goroutineSig
 	count int
 }
 
-// resumeWatch holds a one-time watch on a pre-existing goroutine that settled
-// into a different quiescent state no deeper than its baseline app-frame depth
-// across consecutive STARTs (e.g. startup-backoff consumer settling into
-// steady-state IO wait). While the goroutine remains parked at watchSig,
-// subsequent tests run clean; the moment it leaves watchSig (including inside
-// a gap), the watch fires, marks the window/gap contaminated, and re-attaches
-// target to lingeringTails if the goroutine has not returned to its original
-// idle state.
+// resumeWatch holds a one-time watch on a lingering non-HTTP goroutine that
+// remained stably parked at the same quiescent signature across consecutive
+// windows (e.g. a startup-backoff consumer settling into steady-state IO wait,
+// a lazily started sync.Once janitor, or a worker returning to its deeper real
+// idle after a first-START mid-job capture). While the goroutine remains parked
+// at watchSig, subsequent tests run clean; the moment it leaves watchSig
+// (including inside a gap or on an intermediate END_WAIT poll), the watch
+// fires, marks the window/gap contaminated, and re-attaches target to
+// lingeringTails if the goroutine has not returned to its original idle state.
 type resumeWatch struct {
 	testID              string
 	target              lingeringTarget
@@ -857,7 +854,6 @@ func goroutineStateSig(g *goroutineInfo, selfID uint64, covered map[string]bool,
 // is re-attached with its preserved preExistingChildren so post-wake children
 // are adopted normally by adoptLingeringChildren.
 //
-// checkResumeWatches checks every active one-time resumeWatch against snap.
 // Any non-mustExit watch that fires also returns its original idleSig in
 // firedOrigIdle so END polling can recognize when the goroutine returns to its
 // original idle state during the same test window, and returns reattached with
@@ -994,15 +990,17 @@ func snapshotStartBaseline(snap goroutineSnapshot, covered map[string]bool, igno
 			// genuinely moved to a new steady state settles through the
 			// existing streak/resumeWatch path.
 			if prevQ, hadPrev := lastQuiescentSigs[id]; hadPrev && prevQ != sig {
-				idle[id] = startBaseline{idle: prevQ, startSig: sig, drifted: true}
+				idle[id] = startBaseline{idle: prevQ, drifted: true}
 			} else {
 				idle[id] = startBaseline{idle: sig}
 				lastQuiescentSigs[id] = sig
 			}
 		} else if prevQ, ok := lastQuiescentSigs[id]; ok {
 			// Pre-existing goroutine was unparked (e.g. runnable) at START,
-			// but has a prior quiescent baseline from an earlier complete START.
-			idle[id] = startBaseline{idle: prevQ}
+			// with a prior quiescent baseline from an earlier complete START.
+			// Mark drifted=true so END fails closed even if the gap job
+			// finishes and returns to prevQ during this window.
+			idle[id] = startBaseline{idle: prevQ, drifted: true}
 		} else {
 			// Pre-existing goroutine was unparked at START with no prior
 			// quiescent baseline: record its app-frame depth with status == ""
@@ -1049,12 +1047,27 @@ func lingeringGidSet() map[uint64]struct{} {
 
 // activeTestGoroutine is a goroutine still running work attributable to the
 // current test at END: either newly spawned since START, or a pre-existing
-// goroutine that transitioned out of its quiescent START baseline into active
-// app work.
+// goroutine that transitioned out of (or started drifted from) its quiescent
+// START baseline. When alreadyAtIdle is true, a goroutine that started drifted
+// has already returned to its established idle by END: END still marks the
+// window windowCut (because gap/prior work ran in the window) without wasting
+// END_WAIT or adding a stale lingering target.
 type activeTestGoroutine struct {
-	info     *goroutineInfo
-	mustExit bool
-	idleSig  goroutineSig
+	info          *goroutineInfo
+	mustExit      bool
+	idleSig       goroutineSig
+	alreadyAtIdle bool
+}
+
+// hasWaitableActive reports whether any entry in gs is still running/parked
+// off its idle baseline (i.e. worth polling END_WAIT for).
+func hasWaitableActive(gs []activeTestGoroutine) bool {
+	for _, ag := range gs {
+		if !ag.alreadyAtIdle {
+			return true
+		}
+	}
+	return false
 }
 
 // findActiveTestGoroutines returns all goroutines currently executing work
@@ -1097,26 +1110,23 @@ func findActiveTestGoroutinesWithLingering(snap goroutineSnapshot, startSet map[
 			continue
 		}
 		curSig := goroutineStateSig(g, snap.selfID, covered, ignore)
-		if !curSig.active {
+		if base.drifted {
+			// START observed this goroutine off its established idle (either
+			// parked at a different quiescent state or unparked/runnable in
+			// app code). Fail closed even if it returned to base.idle (or
+			// non-app idle) during the window: when already back at base.idle,
+			// set alreadyAtIdle so END cuts the window without overwriting
+			// lastQuiescentSigs or attaching a stale target.
+			atIdle := !curSig.active || curSig == base.idle
+			out = append(out, activeTestGoroutine{
+				info:          g,
+				mustExit:      false,
+				idleSig:       base.idle,
+				alreadyAtIdle: atIdle,
+			})
 			continue
 		}
-		if base.drifted {
-			// START observed a quiescent state (base.startSig) differing from
-			// the established idle (base.idle). Fail closed for both outcomes:
-			//   - curSig == base.idle: goroutine moved from base.startSig to
-			//     base.idle during the window; return target is base.startSig
-			//     (or settles via resumeWatch if base.idle is the true idle).
-			//   - curSig != base.idle: goroutine is still off its established
-			//     idle (e.g. caught mid-job at START); return target is base.idle.
-			targetIdle := base.idle
-			if curSig == base.idle {
-				targetIdle = base.startSig
-			}
-			out = append(out, activeTestGoroutine{
-				info:     g,
-				mustExit: false,
-				idleSig:  targetIdle,
-			})
+		if !curSig.active {
 			continue
 		}
 		if base.idle.status == "" || curSig != base.idle {

@@ -2098,12 +2098,14 @@ func TestRealGoApp_SF1MidJobWorkerBaselineCatchesNAndNotInnocentN1(t *testing.T)
 
 // assertTailOnlyOrBetweenTests verifies that rec carries wantTail in
 // contaminated, has NO windowCut and NO "window-cut" mark, and that any
-// additional contamination entry is solely a legitimate "between-tests:" mark.
+// additional contamination entry is solely a legitimate "between-tests:" mark
+// for delta.go.
 func assertTailOnlyOrBetweenTests(t *testing.T, label string, rec map[string]any, wantTail string) {
 	t.Helper()
 	if _, hasCut := rec["windowCut"]; hasCut {
 		t.Fatalf("%s was falsely marked windowCut: %v", label, rec)
 	}
+	wantBetween := "between-tests:" + appModule + "/delta.go"
 	raw, _ := rec["contaminated"].([]any)
 	foundTail := false
 	for _, entry := range raw {
@@ -2112,8 +2114,8 @@ func assertTailOnlyOrBetweenTests(t *testing.T, label string, rec map[string]any
 			foundTail = true
 			continue
 		}
-		if s == "window-cut" || !strings.HasPrefix(s, "between-tests:") {
-			t.Fatalf("%s contaminated = %v, want %s (and optional between-tests: only)", label, raw, wantTail)
+		if s != wantBetween {
+			t.Fatalf("%s contaminated = %v, want %s (and optional %s only)", label, raw, wantTail, wantBetween)
 		}
 	}
 	if !foundTail {
@@ -2230,7 +2232,7 @@ func TestRealGoApp_SF2LazyOnceJanitorRebaselinesAfterT2(t *testing.T) {
 		}
 	}
 	if cleanBGs < 7 {
-		t.Fatalf("SF2: expected >= 7 clean non-empty BACKGROUND records after T3, got %d", cleanBGs)
+		t.Fatalf("expected >= 7 clean non-empty BACKGROUND records after T3, got %d", cleanBGs)
 	}
 }
 
@@ -2398,6 +2400,72 @@ func TestRealGoApp_ShallowerMidJobWorkerBaselineAndNoPersistentTaint(t *testing.
 			}
 			if _, hasCont := rec["contaminated"]; hasCont {
 				t.Fatalf("%s stuck in permanent taint after returning to deeper idle: %v", id, rec)
+			}
+		}
+	})
+
+	t.Run("re-parked-gap-job-after-N-never-poisons-established-Pop-baseline", func(t *testing.T) {
+		k := newKeploySide(t)
+		bin := buildDeltaProbeApp(t, k)
+		a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=30")
+
+		// 1. Establish Pop idle baseline in lastQuiescentSigs.
+		getOK(t, a, "/shallow-wait-idle")
+		if warm := measure(t, k, a, "set-0/warm", "/plain"); warm["windowCut"] != nil {
+			t.Fatalf("warm unexpected windowCut: %v", warm)
+		}
+
+		// 2. Gap: park worker in asynclib.Call (g0).
+		getOK(t, a, "/shallow-job?kind=bg&gate=g0")
+
+		// 3. N: finish g0 -> worker returns to Pop; N is windowCut, Pop stays established idle.
+		recN := measure(t, k, a, "set-0/N", "/shallow-open?gate=g0")
+		if recN["windowCut"] != true {
+			t.Fatalf("N windowCut = %v, want true", recN["windowCut"])
+		}
+
+		// 4. Gap: park worker in asynclib.Call (g1) again!
+		getOK(t, a, "/shallow-job?kind=bg&gate=g1")
+
+		// 5. N+1: worker is STILL parked in asynclib.Call (g1) -> MUST NOT poison lastQuiescentSigs with D!
+		recN1 := measure(t, k, a, "set-0/N1", "/plain")
+		if recN1["windowCut"] != true {
+			t.Fatalf("N+1 windowCut = %v, want true (worker still parked mid-job in g1)", recN1["windowCut"])
+		}
+
+		// 6. N+2: release g1 and park fraud job (g2) at the exact same asynclib.Call line!
+		// N+2 MUST be contaminated (NOT trusted as clean!).
+		recN2 := measure(t, k, a, "set-0/N2", "/shallow-job?kind=fraud&gate=g2&release=g1")
+		if containsInt(linesOfRecord(t, recN2)[deltaFile], fraudLine) {
+			t.Fatalf("setup: shallowFraud line %d should not have run in N+2", fraudLine)
+		}
+		assertTailOnlyOrBetweenTests(t, "N+2", recN2, "tail:set-0/N1")
+
+		// 7. N+3: open g2 so fraud runs inside N+3 and worker returns to Pop.
+		// Innocent N+3 MUST carry tail:set-0/N1 and MUST NOT be falsely marked windowCut!
+		if got := send(t, k.sock, "START set-0/N3"); got != replyStartUnasked {
+			t.Fatalf("START N3: %q", got)
+		}
+		getOK(t, a, "/shallow-open?gate=g2")
+		getOK(t, a, "/plain")
+		if got := send(t, k.sock, "END set-0/N3"); got != replyTaken {
+			t.Fatalf("END N3: %q", got)
+		}
+		recN3 := readNextRecord(t, k, a)
+		if !containsInt(linesOfRecord(t, recN3)[deltaFile], fraudLine) {
+			t.Fatalf("setup: shallowFraud line %d did not land in N+3: %v", fraudLine, linesOfRecord(t, recN3))
+		}
+		assertTailOnlyOrBetweenTests(t, "N+3", recN3, "tail:set-0/N1")
+
+		// 8. N+4..N+8: worker back at Pop -> ALL 100% CLEAN!
+		for i := 4; i <= 8; i++ {
+			id := fmt.Sprintf("set-0/N%d", i)
+			rec := measure(t, k, a, id, "/plain")
+			if _, hasCut := rec["windowCut"]; hasCut {
+				t.Fatalf("%s unexpectedly marked windowCut: %v", id, rec)
+			}
+			if _, hasCont := rec["contaminated"]; hasCont {
+				t.Fatalf("%s unexpectedly marked contaminated: %v", id, rec)
 			}
 		}
 	})

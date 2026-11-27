@@ -77,11 +77,11 @@
 // idle signature so a worker caught mid-job at START fails closed instead of
 // adopting the mid-job stack as idle (failing closed on a mid-job START
 // requires a prior idle START in history; a worker already mid-job at the very
-// first START it is seen at has no prior idle history). At END, it checks for newly-spawned
-// app-relevant goroutines AND pre-existing app workers/handlers still off
-// their quiescent idle baseline (excluding go-sdk's own goroutines, idle
-// stdlib keep-alive/housekeeping goroutines including idle HTTP keep-alive
-// reads through a wrapped app net.Conn, and any patterns listed in
+// first START it is seen at has no prior idle history). At END, it checks for
+// newly-spawned app-relevant goroutines AND pre-existing app workers/handlers
+// still off their quiescent idle baseline (excluding go-sdk's own goroutines,
+// idle stdlib keep-alive/housekeeping goroutines including idle HTTP
+// keep-alive reads through a wrapped app net.Conn, and any patterns listed in
 // KEPLOY_GO_IGNORE_GOROUTINES), polling adaptively up to KEPLOY_GO_END_WAIT_MS
 // (default 200ms, max 2000ms; 0 checks immediately) for them to drain. If any
 // remain active when the wait expires (or if runtime.Stack hits its 16 MiB
@@ -124,13 +124,14 @@
 // batchers/debouncers that dequeue work and re-park at the exact same idle
 // signature before END. Likewise, a test-spawned periodic loop parked on a
 // channel/select timer or time.Sleep (for example select{case <-time.After(d):}
-// or for{time.Sleep(d); ...}) settles onto a resume watch after two windows
-// (T1 cut, T2 tail:T1), so a later tick that runs and re-parks at the same
-// signature strictly between two snapshots is not observed; snapshots also
-// cannot observe a child goroutine or watched wakeup that starts and
-// returns/exits strictly between two snapshots (nor a grandchild orphaned when
-// its intermediate parent spawns and exits between snapshots), nor work queued
-// in a channel buffer for a busy pre-existing worker until dequeued;
+// or for{time.Sleep(d); ...}), or a pre-existing worker stably parked mid-job
+// in a non-HTTP downstream call, settles onto a resume watch after two windows
+// (T1 cut, T2 tail:T1), so a later tick or wakeup that runs and re-parks at
+// the exact same signature strictly between two snapshots is not observed;
+// snapshots also cannot observe a child goroutine or watched wakeup that starts
+// and returns/exits strictly between two snapshots (nor a grandchild orphaned
+// when its intermediate parent spawns and exits between snapshots), nor work
+// queued in a channel buffer for a busy pre-existing worker until dequeued;
 // parent-goid child adoption relies on Go 1.21+ "created by ... in goroutine N"
 // stack lines (windowCut=false on Go < 1.21 toolchains).
 //
