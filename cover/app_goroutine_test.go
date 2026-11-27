@@ -77,12 +77,13 @@ var (
 	childHits  atomic.Int64
 	poolHits   atomic.Int64
 
-	gateMu       sync.Mutex
-	gates        = map[string]*asyncGate{}
-	poolJobs     = make(chan string, 8)
-	consumerMsgs = make(chan string, 4)
-	consumerMode atomic.Int32
-	consumerHits atomic.Int64
+	gateMu        sync.Mutex
+	gates         = map[string]*asyncGate{}
+	poolJobs      = make(chan string, 8)
+	consumerMsgs  = make(chan string, 4)
+	connectCh     = make(chan struct{})
+	backoffReady  = make(chan struct{})
+	consumerHits  atomic.Int64
 )
 
 type asyncGate struct {
@@ -165,10 +166,13 @@ func poolWorker() {
 }
 
 func backoffConsumer() {
-	// Starts in startup backoff sleep until consumerMode flips to 1, then
-	// settles into steady-state <-consumerMsgs (same app-frame depth = 1).
-	for consumerMode.Load() == 0 {
-		time.Sleep(10 * time.Millisecond)
+	// Deterministically park in [select] until /consumer-connect closes
+	// connectCh, then settle into steady-state <-consumerMsgs (same app-frame
+	// depth = 1, zero timer races).
+	close(backoffReady)
+	select {
+	case <-connectCh:
+	case <-time.After(time.Hour):
 	}
 	for msg := range consumerMsgs {
 		g := getGate(msg)
@@ -191,6 +195,23 @@ func slowFlushHandler(w http.ResponseWriter, r *http.Request) {
 	<-g.release
 }
 
+func waitForConsumerState(wantStatus string) bool {
+	buf := make([]byte, 128<<10)
+	for i := 0; i < 400; i++ {
+		n := runtime.Stack(buf, true)
+		s := string(buf[:n])
+		idx := strings.Index(s, "main.backoffConsumer(")
+		if idx >= 0 {
+			hdr := strings.LastIndex(s[:idx], "goroutine ")
+			if hdr >= 0 && strings.Contains(s[hdr:idx], "["+wantStatus) {
+				return true
+			}
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	return false
+}
+
 func init() {
 	go poolWorker()
 	if os.Getenv("ENABLE_BACKOFF_CONSUMER") == "1" {
@@ -198,21 +219,19 @@ func init() {
 	}
 
 	http.HandleFunc("/slow-flush", slowFlushHandler)
+	http.HandleFunc("/consumer-wait-backoff", func(w http.ResponseWriter, r *http.Request) {
+		<-backoffReady
+		if !waitForConsumerState("select") {
+			http.Error(w, "timed out waiting for backoffConsumer to park in select", http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprint(w, "parked")
+	})
 	http.HandleFunc("/consumer-connect", func(w http.ResponseWriter, r *http.Request) {
-		consumerMode.Store(1)
-		// Wait until backoffConsumer transitions off time.Sleep onto <-consumerMsgs.
-		buf := make([]byte, 128<<10)
-		for i := 0; i < 200; i++ {
-			n := runtime.Stack(buf, true)
-			s := string(buf[:n])
-			idx := strings.Index(s, "main.backoffConsumer(")
-			if idx >= 0 {
-				hdr := strings.LastIndex(s[:idx], "goroutine ")
-				if hdr >= 0 && strings.Contains(s[hdr:idx], "[chan receive") {
-					break
-				}
-			}
-			time.Sleep(2 * time.Millisecond)
+		close(connectCh)
+		if !waitForConsumerState("chan receive") {
+			http.Error(w, "timed out waiting for backoffConsumer to reach chan receive", http.StatusInternalServerError)
+			return
 		}
 		fmt.Fprint(w, "connected")
 	})
@@ -1041,8 +1060,18 @@ func TestRealGoApp_N3BackoffConsumerRebaselinesAndResumeWatchCatchesWakeup(t *te
 	bin := buildAsyncApp(t, k)
 	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=30", "ENABLE_BACKOFF_CONSUMER=1")
 
-	// T1: backoffConsumer transitions from time.Sleep backoff to <-consumerMsgs.
-	rec1 := measure(t, k, a, "set-0/T1", "/consumer-connect")
+	// Deterministically verify backoffConsumer is parked in [select] before START T1!
+	getOK(t, a, "/consumer-wait-backoff")
+
+	// T1: backoffConsumer transitions from [select] backoff to [chan receive] <-consumerMsgs.
+	if got := send(t, k.sock, "START set-0/T1"); got != replyStartUnasked {
+		t.Fatalf("START T1: %q", got)
+	}
+	getOK(t, a, "/consumer-connect")
+	if got := send(t, k.sock, "END set-0/T1"); got != replyTaken {
+		t.Fatalf("END T1: %q", got)
+	}
+	rec1 := readNextRecord(t, k, a)
 	if rec1["windowCut"] != true {
 		t.Fatalf("T1 windowCut = %v, want true (rec=%v)", rec1["windowCut"], rec1)
 	}

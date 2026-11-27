@@ -572,7 +572,7 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 		if !found100 {
 			t.Fatal("oldest live goroutine 100 was dropped instead of merged into overflow catch-all")
 		}
-		startMarks := collectStartContamination("", goroutineSnapshot{all: alive}, true, nil, nil)
+		startMarks := collectStartContamination("", goroutineSnapshot{all: alive}, true, nil, nil, nil)
 		gapMarks := []string{"between-tests:a.go", "between-tests:b.go", "+4"}
 		merged := mergeContaminated(startMarks, gapMarks)
 		plusCount := 0
@@ -798,6 +798,81 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 		}
 		if t4["windowCut"] != true {
 			t.Fatalf("T4 should also be windowCut while resumed work is active: %v", t4)
+		}
+	})
+
+	t.Run("S1+S2 resume watch waking in gap marks gap afterCut and keeps runnable goroutine tracked across T4 and T5", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		h := newGapHarness(t,
+			lines(appFile, 3), none(), // T1, gap1->2
+			lines(appFile, 4), none(), // T2, gap2->3
+			lines(appFile, 5), lines(workerFile, 9), // T3, gap3->4 (watch wakes here!)
+			lines(appFile, 6), none(), // T4 (goroutine runnable at START T4!), gap4->5
+			lines(appFile, 7), none(), // T5 (goroutine still active at START T5, returns to idle during T5!)
+			lines(appFile, 8), // T6 (clean!)
+		)
+		h.ask("r1")
+		backoff := &goroutineInfo{
+			id: 15, baseStatus: "select", topLine: "/app/consumer.go:12",
+			frames: []string{"main.consumerLoop"}, framePkgs: []string{"main"},
+			createdByFn: "main.main", createdByPkg: "main",
+		}
+		steady := &goroutineInfo{
+			id: 15, baseStatus: "IO wait", topLine: "/app/consumer.go:25",
+			frames: []string{"internal/poll.runtime_pollWait", "main.consumerLoop"}, framePkgs: []string{"internal/poll", "main"},
+			createdByFn: "main.main", createdByPkg: "main",
+		}
+		runnableMidJob := &goroutineInfo{
+			id: 15, baseStatus: "runnable", topLine: "/app/consumer.go:40",
+			frames: []string{"main.handleMsg", "main.consumerLoop"}, framePkgs: []string{"main", "main"},
+			createdByFn: "main.main", createdByPkg: "main",
+		}
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: backoff}}
+		snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+		// T1: backoff -> steady (windowCut).
+		h.do("START set-0/T1", replyStartAskedBy("r1"))
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: steady}}
+		h.do("END set-0/T1", replyTaken)
+		// T2: streak 1 (tail:T1).
+		h.run("set-0/T2")
+		// T3: streak 2 -> moves onto resume watch (clean while parked).
+		h.run("set-0/T3")
+		if _, hasCont := h.test("set-0/T3")["contaminated"]; hasCont {
+			t.Fatalf("T3 should be clean on resume watch: %v", h.test("set-0/T3"))
+		}
+
+		// In gap T3->T4, goroutine 15 wakes into runnableMidJob (non-quiescent!).
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: runnableMidJob}}
+		h.run("set-0/T4")
+		// S1 check: gap T3->T4 MUST be emitted with afterCut:true and empty lines, and NOT added to everGap!
+		bgs := h.backgrounds()
+		if len(bgs) != 1 || bgs[0]["afterCut"] != true {
+			t.Fatalf("S1 failed: gap T3->T4 background = %v, want 1 record with afterCut:true", bgs)
+		}
+		if ls, _ := bgs[0]["executedLinesByFile"].(map[string]interface{}); len(ls) != 0 {
+			t.Fatalf("S1 failed: afterCut gap carried lines %v, want empty {}", ls)
+		}
+		if _, polluted := everGap[workerFile]; polluted {
+			t.Fatalf("S1 failed: gap wake polluted everGap: %v", everGap)
+		}
+		if !reflect.DeepEqual(h.test("set-0/T4")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("T4 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T4")["contaminated"])
+		}
+
+		// S2 check: goroutine 15 is STILL runnableMidJob at START T5 (was non-quiescent at START T4),
+		// so re-attached target MUST keep T5 contaminated tail:T1! Then returns to backoff (original idleSig) during T5.
+		h.do("START set-0/T5", replyStartAskedBy("r1"))
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: backoff}}
+		h.do("END set-0/T5", replyTaken)
+		if !reflect.DeepEqual(h.test("set-0/T5")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("S2 failed: T5 contaminated = %v, want [tail:set-0/T1] via re-attached target", h.test("set-0/T5")["contaminated"])
+		}
+
+		// T6: back at original idle -> 100% clean!
+		h.run("set-0/T6")
+		if _, hasCont := h.test("set-0/T6")["contaminated"]; hasCont {
+			t.Fatalf("T6 should be clean after returning to original idle: %v", h.test("set-0/T6"))
 		}
 	})
 

@@ -432,9 +432,18 @@ func runTestCommand(command string) string {
 				addLingeringTail(unclosedID, targets, capturePreExistingChildren(curSnap, targets))
 			}
 		}
-		// Compute whether the gap since prevTestID followed a cut window or ran
-		// while lingering goroutines were still tracked BEFORE pruning them.
-		afterCut := prevWindowCutTestID != "" || len(lingeringTails) > 0 || len(pendingTruncatedCuts) > 0
+		// Check one-time resume watches BEFORE computing afterCut so a watched
+		// goroutine that woke up during the gap marks the gap afterCut=true
+		// (never polluting everGap or emitting clean BACKGROUND) and re-attaches
+		// its target if still active.
+		var firedWatches []string
+		if haveSnap && !curSnap.truncated {
+			firedWatches = checkResumeWatches(curSnap, covered, ignore)
+		}
+		// Compute whether the gap since prevTestID followed a cut window, ran
+		// while lingering goroutines were still tracked, or woke a resume watch
+		// BEFORE pruning lingeringTails.
+		afterCut := prevWindowCutTestID != "" || len(lingeringTails) > 0 || len(pendingTruncatedCuts) > 0 || len(firedWatches) > 0
 		// The counters hold the gap since the last test's END: what the app
 		// ran between the two tests, never this test's or that one's.
 		switch {
@@ -455,10 +464,13 @@ func runTestCommand(command string) string {
 		if err := clearCounters(); err != nil {
 			currentTestID = ""
 			activeTracking, activeTruncatedStart, startGids, startIdleStates, activeContaminated = false, false, nil, nil, nil
+			if prevWindowCutTestID == "" && len(firedWatches) > 0 {
+				prevWindowCutTestID = firedWatches[0]
+			}
 			sayWhyNotMeasured(err)
 			return replyIgnored
 		}
-		activeContaminated = collectStartContamination(unclosedID, curSnap, haveSnap, covered, ignore)
+		activeContaminated = collectStartContamination(unclosedID, curSnap, haveSnap, firedWatches, covered, ignore)
 		if tracking {
 			activeTracking = true
 			if curSnap.truncated {
@@ -554,16 +566,21 @@ func runTestCommand(command string) string {
 					if triggered := checkResumeWatches(snap, covered, ignore); len(triggered) > 0 {
 						seen := make(map[string]struct{}, len(testContaminated)+len(triggered))
 						for _, m := range testContaminated {
-							seen[m] = struct{}{}
+							if !strings.HasPrefix(m, "+") {
+								seen[m] = struct{}{}
+							}
 						}
+						var addMarks []string
 						for _, tid := range triggered {
 							mark := "tail:" + tid
 							if _, dup := seen[mark]; !dup {
 								seen[mark] = struct{}{}
-								testContaminated = append(testContaminated, mark)
+								addMarks = append(addMarks, mark)
 							}
 						}
-						testContaminated = capContaminated(testContaminated)
+						if len(addMarks) > 0 {
+							testContaminated = mergeContaminated(testContaminated, addMarks)
+						}
 					}
 					resolveTruncatedCutWindows(snap, covered, ignore)
 					pruneLingeringTails(snap, covered, ignore, false)

@@ -80,10 +80,10 @@
 // children adopted via Go 1.21+ "created by ... in goroutine N") remain active
 // (plus the immediate next test) carry "contaminated":["tail:<test>"] with
 // overlapLinesByFile omitted. Pre-existing goroutines that transition to a
-// different quiescent steady state at or above their baseline app-frame depth
-// across consecutive STARTs move onto a one-time resume watch (clearing clean
-// tests while parked, and marking the test in which they next wake up with
-// "tail:<test>"). Any BACKGROUND record emitted for a gap after a cut window
+// different quiescent steady state no deeper than their baseline app-frame
+// depth across consecutive STARTs move onto a one-time resume watch (clearing
+// clean tests while parked, and marking the gap or test in which they next
+// wake up with afterCut / "tail:<test>", re-attaching if still active). Any BACKGROUND record emitted for a gap after a cut window
 // carries "afterCut":true with an empty executedLinesByFile (and does not
 // pollute everGap) so neither v3 nor older v2 collectors can absorb recurring
 // async tails into calibrated stable background. A START arriving without a

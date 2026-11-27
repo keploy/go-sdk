@@ -103,21 +103,24 @@ type truncatedCutWindow struct {
 }
 
 // quiescentStreak tracks consecutive START snapshots in which a lingering
-// pre-existing goroutine remained at the same quiescent signature at or above
-// its baseline app-frame depth.
+// pre-existing goroutine remained at the same quiescent signature no deeper
+// than its baseline app-frame depth.
 type quiescentStreak struct {
 	sig   goroutineSig
 	count int
 }
 
 // resumeWatch holds a one-time watch on a pre-existing goroutine that settled
-// into a different quiescent state at <= baseline app-frame depth across
-// consecutive STARTs (e.g. startup-backoff consumer settling into steady-state
-// IO wait). While the goroutine remains parked at watchSig, subsequent tests
-// run clean; the moment it leaves watchSig, the active test is honestly marked
-// contaminated with "tail:<testID>" instead of silently missing resumed work.
+// into a different quiescent state no deeper than its baseline app-frame depth
+// across consecutive STARTs (e.g. startup-backoff consumer settling into
+// steady-state IO wait). While the goroutine remains parked at watchSig,
+// subsequent tests run clean; the moment it leaves watchSig (including inside
+// a gap), the watch fires, marks the window/gap contaminated, and re-attaches
+// target to lingeringTails if the goroutine has not returned to its original
+// idle state.
 type resumeWatch struct {
 	testID   string
+	target   lingeringTarget
 	watchSig goroutineSig
 }
 
@@ -675,9 +678,11 @@ func goroutineStateSig(g *goroutineInfo, selfID uint64, covered map[string]bool,
 
 // checkResumeWatches checks every active one-time resumeWatch against snap.
 // If a watched goroutine exited or left its watchSig (meaning it woke up and
-// resumed work!), the watch is consumed and its original testID is returned so
-// the caller marks the affected window contaminated instead of silently missing
-// resumed work. Called with controlMu held.
+// resumed work!), the watch is consumed, its original testID is returned so
+// the caller marks the affected gap/window contaminated, and if the goroutine
+// is still alive and has not returned to its original idle state, its original
+// lingeringTarget is re-attached to lingeringTails so continued work stays
+// tracked across subsequent windows. Called with controlMu held.
 func checkResumeWatches(snap goroutineSnapshot, covered map[string]bool, ignore []string) []string {
 	if len(resumeWatches) == 0 {
 		return nil
@@ -698,6 +703,13 @@ func checkResumeWatches(snap goroutineSnapshot, covered map[string]bool, ignore 
 		if curSig != rw.watchSig {
 			triggered = append(triggered, rw.testID)
 			delete(resumeWatches, gid)
+			// Re-attach the original target when the goroutine is still active
+			// and has not returned to its original START idle state so it
+			// cannot escape tracking if it is runnable/busy at START.
+			if curSig.active && curSig != rw.target.idleSig {
+				targets := []lingeringTarget{rw.target}
+				addLingeringTail(rw.testID, targets, capturePreExistingChildren(snap, targets))
+			}
 		}
 	}
 	if len(triggered) > 1 {
@@ -909,7 +921,7 @@ func capturePreExistingChildren(snap goroutineSnapshot, targets []lingeringTarge
 	return children
 }
 
-func mergePreExistingChildren(dst *lingeringTail, src map[uint64]struct{}) {
+func mergePreExistingChildren(dst *lingeringTail, src map[uint64]struct{}, maxCap int) {
 	if len(src) == 0 {
 		return
 	}
@@ -917,6 +929,12 @@ func mergePreExistingChildren(dst *lingeringTail, src map[uint64]struct{}) {
 		dst.preExistingChildren = make(map[uint64]struct{}, len(src))
 	}
 	for id := range src {
+		if _, ok := dst.preExistingChildren[id]; ok {
+			continue
+		}
+		if maxCap > 0 && len(dst.preExistingChildren) >= maxCap {
+			return
+		}
 		dst.preExistingChildren[id] = struct{}{}
 	}
 }
@@ -924,9 +942,8 @@ func mergePreExistingChildren(dst *lingeringTail, src map[uint64]struct{}) {
 // addLingeringTail records a test whose window was cut with lingering
 // goroutine targets. When maxLingeringTails is reached, older entries are
 // merged into a bounded catch-all "overflow" entry (retaining up to
-// maxOverflowTailGids unique targets so memory stays bounded under sustained
-// leaks, and unioning preExistingChildren across merged entries).
-// Called with controlMu held.
+// maxOverflowTailGids unique targets and pre-existing children so memory stays
+// bounded under sustained leaks). Called with controlMu held.
 func addLingeringTail(testID string, targets []lingeringTarget, preExisting map[uint64]struct{}) {
 	if len(targets) == 0 {
 		return
@@ -934,7 +951,7 @@ func addLingeringTail(testID string, targets []lingeringTarget, preExisting map[
 	for _, lt := range lingeringTails {
 		if lt.testID == testID {
 			mergeTargets(lt, targets, 0)
-			mergePreExistingChildren(lt, preExisting)
+			mergePreExistingChildren(lt, preExisting, maxOverflowTailGids)
 			return
 		}
 	}
@@ -949,7 +966,7 @@ func addLingeringTail(testID string, targets []lingeringTarget, preExisting map[
 		if overflow == nil {
 			overflow = &lingeringTail{testID: "overflow"}
 			mergeTargets(overflow, lingeringTails[0].targets, maxOverflowTailGids)
-			mergePreExistingChildren(overflow, lingeringTails[0].preExistingChildren)
+			mergePreExistingChildren(overflow, lingeringTails[0].preExistingChildren, maxOverflowTailGids)
 			lingeringTails[0] = overflow
 		} else if len(lingeringTails) > 1 {
 			dropIdx := 0
@@ -957,12 +974,12 @@ func addLingeringTail(testID string, targets []lingeringTarget, preExisting map[
 				dropIdx = 1
 			}
 			mergeTargets(overflow, lingeringTails[dropIdx].targets, maxOverflowTailGids)
-			mergePreExistingChildren(overflow, lingeringTails[dropIdx].preExistingChildren)
+			mergePreExistingChildren(overflow, lingeringTails[dropIdx].preExistingChildren, maxOverflowTailGids)
 			lingeringTails = append(lingeringTails[:dropIdx], lingeringTails[dropIdx+1:]...)
 		}
 		if len(lingeringTails) >= maxLingeringTails && len(lingeringTails) > 1 {
 			mergeTargets(overflow, lingeringTails[1].targets, maxOverflowTailGids)
-			mergePreExistingChildren(overflow, lingeringTails[1].preExistingChildren)
+			mergePreExistingChildren(overflow, lingeringTails[1].preExistingChildren, maxOverflowTailGids)
 			lingeringTails = append(lingeringTails[:1], lingeringTails[2:]...)
 		}
 	}
@@ -972,7 +989,7 @@ func addLingeringTail(testID string, targets []lingeringTarget, preExisting map[
 		testID:  testID,
 		targets: copied,
 	}
-	mergePreExistingChildren(lt, preExisting)
+	mergePreExistingChildren(lt, preExisting, maxOverflowTailGids)
 	lingeringTails = append(lingeringTails, lt)
 }
 
@@ -1147,6 +1164,7 @@ func pruneLingeringTails(snap goroutineSnapshot, covered map[string]bool, ignore
 					if st.count >= rebaselineStreakLimit {
 						resumeWatches[t.gid] = resumeWatch{
 							testID:   lt.testID,
+							target:   t,
 							watchSig: curSig,
 						}
 						delete(lingeringStreaks, t.gid)
@@ -1161,6 +1179,12 @@ func pruneLingeringTails(snap goroutineSnapshot, covered map[string]bool, ignore
 			tw++
 		}
 		lt.targets = lt.targets[:tw]
+		// Drop exited goroutine IDs from preExistingChildren (goids are never reused).
+		for cid := range lt.preExistingChildren {
+			if _, alive := snap.all[cid]; !alive {
+				delete(lt.preExistingChildren, cid)
+			}
+		}
 		if len(lt.targets) > 0 {
 			lingeringTails[w] = lt
 			w++
@@ -1174,12 +1198,12 @@ func pruneLingeringTails(snap goroutineSnapshot, covered map[string]bool, ignore
 
 // collectStartContamination computes the contamination markers for a newly
 // starting test from any unclosed previous window, truncated START, immediately
-// preceding cut window, triggered resume watches, and any still-active
-// lingering goroutines from earlier cut windows. It also resolves pending
-// truncated cuts, adopts children, prunes finished lingering goroutines, and
-// clears prevWindowCutTestID. Called with controlMu held after clearCounters
-// succeeds.
-func collectStartContamination(unclosedID string, snap goroutineSnapshot, haveSnap bool, covered map[string]bool, ignore []string) []string {
+// preceding cut window, already-fired resume watches (checked before noteGap),
+// and any still-active lingering goroutines from earlier cut windows. It also
+// resolves pending truncated cuts, adopts children, prunes finished lingering
+// goroutines, and clears prevWindowCutTestID. Called with controlMu held after
+// clearCounters succeeds.
+func collectStartContamination(unclosedID string, snap goroutineSnapshot, haveSnap bool, firedWatches []string, covered map[string]bool, ignore []string) []string {
 	var reasons []string
 	seen := map[string]struct{}{}
 	add := func(r string) {
@@ -1199,10 +1223,10 @@ func collectStartContamination(unclosedID string, snap goroutineSnapshot, haveSn
 		add("tail:" + prevWindowCutTestID)
 		prevWindowCutTestID = ""
 	}
+	for _, rwTest := range firedWatches {
+		add("tail:" + rwTest)
+	}
 	if haveSnap && !snap.truncated {
-		for _, rwTest := range checkResumeWatches(snap, covered, ignore) {
-			add("tail:" + rwTest)
-		}
 		resolveTruncatedCutWindows(snap, covered, ignore)
 		pruneLingeringTails(snap, covered, ignore, true)
 	}
