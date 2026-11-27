@@ -61,12 +61,13 @@
 // command replies with "ACK proto=3 [bg=<token>] caps=..." declaring live
 // runtime honesty capabilities (windowCut, contaminated, classMismatch,
 // background, asyncExecutors, listenerContamination), compatible with proto>=2
-// control-socket parsers. Go ALWAYS declares asyncExecutors=false in R1
-// because runtime.Stack snapshots cannot observe all deferred hand-offs (see
-// Scope limits below); collectors that gate removal eligibility on
-// asyncExecutors=true therefore keep Go soft-mark-only. Go declares
-// windowCut=true when block-level coverage, goroutine-tail tracking, and a
-// Go 1.21+ toolchain (for parent-goid child adoption) are active, and
+// control-socket parsers. Go honestly declares asyncExecutors=false because
+// goroutine stack snapshots cannot observe third-party async writers,
+// time.AfterFunc timers, or pre-existing batchers re-parking at the same idle
+// signature (see Scope limits below), so Go removal eligibility comes from a
+// collector-side isolation check rather than SDK capabilities alone. Go
+// declares windowCut=true when block-level coverage, goroutine-tail tracking,
+// and a Go 1.21+ toolchain (for parent-goid child adoption) are active, and
 // windowCut=false on Go < 1.21 toolchains, under per-func granularity, or when
 // KEPLOY_GO_GOROUTINE_TRACKING=off.
 //

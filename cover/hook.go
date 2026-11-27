@@ -47,12 +47,12 @@ const (
 // capsString formats the v3 honesty capability token (no spaces) from live
 // runtime state. Called with controlMu held (or after verifying coverage).
 //
-// In R1, Go always declares asyncExecutors=false because runtime.Stack
-// snapshots cannot observe work handed off to library-owned third-party async
-// writers/producers (e.g. kafka-go / sarama), dormant time.AfterFunc timers
-// not yet fired by END, or pre-existing app batchers/debouncers that re-park
-// at the same idle signature before END. Collectors gating removal eligibility
-// on asyncExecutors=true therefore keep Go soft-mark-only. Go also declares
+// Go honestly declares asyncExecutors=false because runtime.Stack snapshots
+// cannot observe work handed off to third-party async writers/producers (e.g.
+// kafka-go / sarama), dormant time.AfterFunc timers not yet fired by END, or
+// pre-existing app batchers/debouncers that re-park at the same idle signature
+// before END; Go removal eligibility therefore comes from a collector-side
+// isolation check rather than SDK capabilities alone. Go also declares
 // windowCut=false on Go < 1.21 toolchains (which lack "created by ... in
 // goroutine N" parent-goid lines) or when KEPLOY_GO_GOROUTINE_TRACKING=off.
 func capsString(coverageActive bool) string {
@@ -434,7 +434,7 @@ func runTestCommand(command string) string {
 		// cleanly without being duplicated into two tails.
 		var firedWatches []string
 		if haveSnap && !curSnap.truncated {
-			firedWatches, _ = checkResumeWatches(curSnap, covered, ignore)
+			firedWatches, _ = checkResumeWatches(curSnap, startIdleStates, covered, ignore)
 		}
 		unclosedID := currentTestID
 		if unclosedID != "" && activeTracking && haveSnap {

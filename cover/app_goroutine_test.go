@@ -1805,8 +1805,9 @@ func deltaLineOf(t *testing.T, needle string) int {
 //     tick runs and re-parks at the same signature between snapshots
 //
 // In all four patterns, a deferred line lands in a later test without
-// goroutine marks, AND every START/END reply declares asyncExecutors=false so
-// collectors gating removal on asyncExecutors=true keep Go soft-mark-only.
+// goroutine marks, AND every START/END reply honestly declares
+// asyncExecutors=false so Go removal eligibility relies on a collector-side
+// isolation check rather than SDK capabilities alone.
 func TestRealGoApp_B1DeferredAsyncScopeLimitsPinAsyncExecutorsFalse(t *testing.T) {
 	k := newKeploySide(t)
 	bin := buildDeltaProbeApp(t, k)
