@@ -165,6 +165,15 @@ func poolWorker() {
 	}
 }
 
+func handleConsumerMsg(msg string) {
+	g := getGate(msg)
+	defer close(g.done)
+	<-g.release
+	if msg != "" {
+		consumerHits.Add(1)
+	}
+}
+
 func backoffConsumer() {
 	// Deterministically park in [select] until /consumer-connect closes
 	// connectCh, then settle into steady-state <-consumerMsgs (same app-frame
@@ -175,12 +184,7 @@ func backoffConsumer() {
 	case <-time.After(time.Hour):
 	}
 	for msg := range consumerMsgs {
-		g := getGate(msg)
-		<-g.release
-		if msg != "" {
-			consumerHits.Add(1)
-		}
-		close(g.done)
+		handleConsumerMsg(msg)
 	}
 }
 
@@ -1052,9 +1056,10 @@ func TestRealGoApp_N2NewKeepAliveSlowFlushClearsWhenHandlerReturns(t *testing.T)
 
 // TestRealGoApp_N3BackoffConsumerRebaselinesAndResumeWatchCatchesWakeup verifies
 // end-to-end on a real -cover binary that a pre-existing consumer transitioning
-// from startup time.Sleep backoff to steady-state <-consumerMsgs settles cleanly
-// onto a one-time resume watch (T3 clean while parked) AND honestly catches the
-// test in which it next wakes up (T4 contaminated tail:T1)!
+// from startup [select] backoff to steady-state <-consumerMsgs settles cleanly
+// onto a one-time resume watch (T3 clean while parked), catches an in-window
+// wakeup (T4 contaminated tail:T1), and also covers a gap wakeup (emitting
+// afterCut:true empty BACKGROUND and re-attaching while still blocked).
 func TestRealGoApp_N3BackoffConsumerRebaselinesAndResumeWatchCatchesWakeup(t *testing.T) {
 	k := newKeploySide(t)
 	bin := buildAsyncApp(t, k)
@@ -1100,4 +1105,94 @@ func TestRealGoApp_N3BackoffConsumerRebaselinesAndResumeWatchCatchesWakeup(t *te
 		t.Fatalf("T4 windowCut = %v, want true while consumer processes cmsg1", rec4["windowCut"])
 	}
 	getOK(t, a, "/release?gate=cmsg1&wait=1")
+}
+
+// TestRealGoApp_ResumeWatchGapWakeAfterCutAndReattach verifies end-to-end on a
+// real -cover binary that when a resume-watched consumer wakes during the gap
+// T3->T4:
+//   - gap T3->T4 emits BACKGROUND with afterCut:true and empty executedLinesByFile,
+//   - T4 gets contaminated:["tail:set-0/T1"] and the consumer is re-attached,
+//   - T5 stays contaminated:["tail:set-0/T1"] while the consumer remains blocked.
+func TestRealGoApp_ResumeWatchGapWakeAfterCutAndReattach(t *testing.T) {
+	k := newKeploySide(t)
+	bin := buildAsyncApp(t, k)
+	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=30", "ENABLE_BACKOFF_CONSUMER=1")
+
+	if got := send(t, k.sock, backgroundAsk+" rwgap"); got != replyTaken {
+		t.Fatalf("BACKGROUND: %q", got)
+	}
+	getOK(t, a, "/consumer-wait-backoff")
+
+	// T1: connect consumer onto <-consumerMsgs (windowCut).
+	if got := send(t, k.sock, "START set-0/T1"); got != replyStartAskedBy("rwgap") {
+		t.Fatalf("START T1: %q", got)
+	}
+	getOK(t, a, "/consumer-connect")
+	if got := send(t, k.sock, "END set-0/T1"); got != replyTaken {
+		t.Fatalf("END T1: %q", got)
+	}
+	_ = readNextRecord(t, k, a)
+
+	// T2 (streak 1) & T3 (streak 2 -> moves onto resume watch).
+	for _, id := range []string{"set-0/T2", "set-0/T3"} {
+		if got := send(t, k.sock, "START "+id); got != replyStartAskedBy("rwgap") {
+			t.Fatalf("START %s: %q", id, got)
+		}
+		getOK(t, a, "/twin?n=1")
+		if got := send(t, k.sock, "END "+id); got != replyTaken {
+			t.Fatalf("END %s: %q", id, got)
+		}
+		_ = readNextRecord(t, k, a)
+	}
+
+	// Gap T3->T4: send a message to wake the watched consumer (runs in gap & blocks on gate)!
+	getOK(t, a, "/consumer-send?gate=gapmsg")
+	// Give backoffConsumer a moment to dequeue gapmsg and park on <-g.release.
+	time.Sleep(25 * time.Millisecond)
+
+	// T4 starts: gap T3->T4 MUST emit afterCut:true empty BACKGROUND, and T4 gets tail:T1!
+	if got := send(t, k.sock, "START set-0/T4"); got != replyStartAskedBy("rwgap") {
+		t.Fatalf("START T4: %q", got)
+	}
+	getOK(t, a, "/twin?n=4")
+	if got := send(t, k.sock, "END set-0/T4"); got != replyTaken {
+		t.Fatalf("END T4: %q", got)
+	}
+	var gotAfterCutBG bool
+	var rec4 map[string]any
+	for {
+		r := readNextRecord(t, k, a)
+		if r["kind"] == "background" {
+			if r["afterCut"] != true {
+				t.Fatalf("gap-wake BACKGROUND missing afterCut:true: %v", r)
+			}
+			if ls := linesOfRecord(t, r); len(ls) != 0 {
+				t.Fatalf("gap-wake BACKGROUND must have empty executedLinesByFile: %v", ls)
+			}
+			gotAfterCutBG = true
+			continue
+		}
+		rec4 = r
+		break
+	}
+	if !gotAfterCutBG {
+		t.Fatal("expected an afterCut:true BACKGROUND record from gap T3->T4 wakeup")
+	}
+	if !reflect.DeepEqual(rec4["contaminated"], []any{"tail:set-0/T1"}) {
+		t.Fatalf("T4 contaminated = %v, want [tail:set-0/T1]", rec4["contaminated"])
+	}
+
+	// T5 starts while consumer is STILL blocked on gapmsg -> MUST still be tail:T1 via re-attach!
+	if got := send(t, k.sock, "START set-0/T5"); got != replyStartAskedBy("rwgap") {
+		t.Fatalf("START T5: %q", got)
+	}
+	getOK(t, a, "/twin?n=5")
+	if got := send(t, k.sock, "END set-0/T5"); got != replyTaken {
+		t.Fatalf("END T5: %q", got)
+	}
+	rec5 := readNextRecord(t, k, a)
+	if !reflect.DeepEqual(rec5["contaminated"], []any{"tail:set-0/T1"}) {
+		t.Fatalf("T5 contaminated = %v, want [tail:set-0/T1] via re-attached watch target", rec5["contaminated"])
+	}
+	getOK(t, a, "/release?gate=gapmsg&wait=1")
 }

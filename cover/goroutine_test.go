@@ -876,6 +876,101 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 		}
 	})
 
+	t.Run("R5-A post-wake child of watched parent is adopted and stays tracked", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		h := newGapHarness(t,
+			lines(appFile, 3), none(), // T1, gap1->2
+			lines(appFile, 4), none(), // T2, gap2->3
+			lines(appFile, 5), none(), // T3, gap3->4
+			lines(appFile, 6), none(), // T4 (post-wake child H alive!)
+			lines(appFile, 7), // T5 (child H STILL alive -> MUST stay tail:T1!)
+		)
+		h.ask("r1")
+		backoff := &goroutineInfo{
+			id: 15, baseStatus: "select", topLine: "/app/consumer.go:12",
+			frames: []string{"main.consumerLoop"}, framePkgs: []string{"main"}, frameLines: []string{"/app/consumer.go:12"},
+			createdByFn: "main.main", createdByPkg: "main",
+		}
+		steady := &goroutineInfo{
+			id: 15, baseStatus: "IO wait", topLine: "/app/consumer.go:25",
+			frames: []string{"internal/poll.runtime_pollWait", "main.consumerLoop"}, framePkgs: []string{"internal/poll", "main"}, frameLines: []string{"/go/netpoll.go:1", "/app/consumer.go:25"},
+			createdByFn: "main.main", createdByPkg: "main",
+		}
+		childH := &goroutineInfo{
+			id: 200, baseStatus: "sleep", topLine: "/app/handler.go:50",
+			frames: []string{"main.handleMsg"}, framePkgs: []string{"main"}, frameLines: []string{"/app/handler.go:50"},
+			createdByFn: "main.consumerLoop", createdByPkg: "main", createdByGoid: 15,
+		}
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: backoff}}
+		snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+		// T1 -> T2 -> T3 moves gid 15 onto resume watch.
+		h.do("START set-0/T1", replyStartAskedBy("r1"))
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: steady}}
+		h.do("END set-0/T1", replyTaken)
+		h.run("set-0/T2")
+		h.run("set-0/T3")
+
+		// Gid 15 spawns post-wake child H (gid 200) and returns to steady!
+		// Watch MUST fire on child H, re-attach with preserved preExistingChildren
+		// (NOT swallowing 200), and adopt child H so T4 AND T5 stay tail:T1!
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: steady, 200: childH}}
+		h.run("set-0/T4")
+		if !reflect.DeepEqual(h.test("set-0/T4")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("R5-A failed: T4 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T4")["contaminated"])
+		}
+		h.run("set-0/T5")
+		if !reflect.DeepEqual(h.test("set-0/T5")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("R5-A failed: T5 contaminated = %v, want [tail:set-0/T1] via adopted post-wake child H", h.test("set-0/T5")["contaminated"])
+		}
+	})
+
+	t.Run("R5-B truncated START with armed watch marks gap afterCut and R5-C caps 9 marks", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		h := newGapHarness(t,
+			lines(appFile, 3), none(), // T1, gap1->2
+			lines(appFile, 4), none(), // T2, gap2->3
+			lines(appFile, 5), lines(workerFile, 9), // T3, gap3->4 (truncated START with armed watch!)
+			lines(appFile, 6), // T4
+		)
+		h.ask("r1")
+		backoff := &goroutineInfo{
+			id: 15, baseStatus: "select", topLine: "/app/consumer.go:12",
+			frames: []string{"main.consumerLoop"}, framePkgs: []string{"main"}, frameLines: []string{"/app/consumer.go:12"},
+			createdByFn: "main.main", createdByPkg: "main",
+		}
+		steady := &goroutineInfo{
+			id: 15, baseStatus: "IO wait", topLine: "/app/consumer.go:25",
+			frames: []string{"internal/poll.runtime_pollWait", "main.consumerLoop"}, framePkgs: []string{"internal/poll", "main"}, frameLines: []string{"/go/netpoll.go:1", "/app/consumer.go:25"},
+			createdByFn: "main.main", createdByPkg: "main",
+		}
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: backoff}}
+		snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+		h.do("START set-0/T1", replyStartAskedBy("r1"))
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: steady}}
+		h.do("END set-0/T1", replyTaken)
+		h.run("set-0/T2")
+		h.run("set-0/T3")
+
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: steady}, truncated: true}
+		h.run("set-0/T4")
+		bgs := h.backgrounds()
+		if len(bgs) != 1 || bgs[0]["afterCut"] != true {
+			t.Fatalf("R5-B failed: truncated START with armed watch emitted background %v, want afterCut:true", bgs)
+		}
+		if ls, _ := bgs[0]["executedLinesByFile"].(map[string]interface{}); len(ls) != 0 {
+			t.Fatalf("R5-B failed: afterCut gap carried lines %v, want empty {}", ls)
+		}
+
+		// R5-C: mergeContaminated caps >maxPartialNames even when startMarks is empty.
+		nine := []string{"tail:T1", "tail:T2", "tail:T3", "tail:T4", "tail:T5", "tail:T6", "tail:T7", "tail:T8", "tail:T9"}
+		got := mergeContaminated(nil, nine)
+		if len(got) != maxPartialNames+1 || got[maxPartialNames] != "+1" {
+			t.Fatalf("R5-C failed: mergeContaminated(nil, 9 items) = %v, want 8 items + +1", got)
+		}
+	})
+
 	t.Run("N3 mid-job worker at START is not permanently whitelisted for later tests", func(t *testing.T) {
 		t.Setenv(envEndWaitMS, "0")
 		h := newGapHarness(t, lines(appFile, 3), none(), lines(appFile, 4))

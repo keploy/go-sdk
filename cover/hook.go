@@ -441,9 +441,11 @@ func runTestCommand(command string) string {
 			firedWatches = checkResumeWatches(curSnap, covered, ignore)
 		}
 		// Compute whether the gap since prevTestID followed a cut window, ran
-		// while lingering goroutines were still tracked, or woke a resume watch
+		// while lingering goroutines were still tracked, woke a resume watch,
+		// or hit a truncated snapshot while watches were armed (fail-closed)
 		// BEFORE pruning lingeringTails.
-		afterCut := prevWindowCutTestID != "" || len(lingeringTails) > 0 || len(pendingTruncatedCuts) > 0 || len(firedWatches) > 0
+		afterCut := prevWindowCutTestID != "" || len(lingeringTails) > 0 || len(pendingTruncatedCuts) > 0 ||
+			len(firedWatches) > 0 || len(pendingTailTestIDs) > 0 || (haveSnap && curSnap.truncated && len(resumeWatches) > 0)
 		// The counters hold the gap since the last test's END: what the app
 		// ran between the two tests, never this test's or that one's.
 		switch {
@@ -464,8 +466,8 @@ func runTestCommand(command string) string {
 		if err := clearCounters(); err != nil {
 			currentTestID = ""
 			activeTracking, activeTruncatedStart, startGids, startIdleStates, activeContaminated = false, false, nil, nil, nil
-			if prevWindowCutTestID == "" && len(firedWatches) > 0 {
-				prevWindowCutTestID = firedWatches[0]
+			if len(firedWatches) > 0 {
+				pendingTailTestIDs = append(pendingTailTestIDs, firedWatches...)
 			}
 			sayWhyNotMeasured(err)
 			return replyIgnored
@@ -613,12 +615,18 @@ func runTestCommand(command string) string {
 					prevWindowCutTestID = id
 				} else if len(active) > 0 {
 					windowCut = true
-					targets := make([]lingeringTarget, len(active))
-					for i, ag := range active {
-						targets[i] = lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig}
+					alreadyTracked := lingeringGidSet()
+					var targets []lingeringTarget
+					for _, ag := range active {
+						if _, dup := alreadyTracked[ag.info.id]; dup {
+							continue
+						}
+						targets = append(targets, lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig})
 					}
 					lingeringNames = summarizeActiveNames(active, covered)
-					addLingeringTail(id, targets, capturePreExistingChildren(snap, targets))
+					if len(targets) > 0 {
+						addLingeringTail(id, targets, capturePreExistingChildren(snap, targets))
+					}
 					prevWindowCutTestID = id
 					logLingeringOnce(id, lingeringNames)
 				}

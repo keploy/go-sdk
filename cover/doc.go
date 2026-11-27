@@ -82,16 +82,18 @@
 // overlapLinesByFile omitted. Pre-existing goroutines that transition to a
 // different quiescent steady state no deeper than their baseline app-frame
 // depth across consecutive STARTs move onto a one-time resume watch (clearing
-// clean tests while parked, and marking the gap or test in which they next
-// wake up with afterCut / "tail:<test>", re-attaching if still active). Any BACKGROUND record emitted for a gap after a cut window
-// carries "afterCut":true with an empty executedLinesByFile (and does not
-// pollute everGap) so neither v3 nor older v2 collectors can absorb recurring
-// async tails into calibrated stable background. A START arriving without a
-// preceding END marks the new test with "contaminated":["unclosed:<test>"].
-// Scope note: stack snapshots cannot observe a child goroutine that is both
-// spawned and exits strictly between two snapshots (nor a grandchild orphaned
-// when its intermediate parent spawns and exits between snapshots), nor a
-// dormant time.AfterFunc timer that has not yet fired by END; parent-goid child
+// clean tests while parked, and marking the gap or test in which a snapshot
+// observes them awake or spawning a child with afterCut / "tail:<test>",
+// re-attaching if still active). Any BACKGROUND record emitted for a gap after
+// a cut window carries "afterCut":true with an empty executedLinesByFile (and
+// does not pollute everGap) so neither v3 nor older v2 collectors can absorb
+// recurring async tails into calibrated stable background. A START arriving
+// without a preceding END marks the new test with
+// "contaminated":["unclosed:<test>"]. Scope note: stack snapshots cannot
+// observe a child goroutine or watched wakeup that starts and returns/exits
+// strictly between two snapshots (nor a grandchild orphaned when its
+// intermediate parent spawns and exits between snapshots), nor a dormant
+// time.AfterFunc timer that has not yet fired by END; parent-goid child
 // adoption relies on Go 1.21+ "created by ... in goroutine N" stack lines and
 // is inactive on Go 1.20 toolchains.
 //

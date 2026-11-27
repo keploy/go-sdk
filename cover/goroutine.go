@@ -47,6 +47,7 @@ type goroutineInfo struct {
 	topLine       string // source file:line of frames[0] without "+0x..." offset
 	frames        []string
 	framePkgs     []string
+	frameLines    []string // source file:line for each frame (without "+0x..." offset)
 	createdByFn   string
 	createdByPkg  string
 	createdByGoid uint64 // parent goroutine ID from "created by X in goroutine N" (Go 1.21+)
@@ -119,9 +120,10 @@ type quiescentStreak struct {
 // target to lingeringTails if the goroutine has not returned to its original
 // idle state.
 type resumeWatch struct {
-	testID   string
-	target   lingeringTarget
-	watchSig goroutineSig
+	testID              string
+	target              lingeringTarget
+	watchSig            goroutineSig
+	preExistingChildren map[uint64]struct{}
 }
 
 var (
@@ -136,6 +138,7 @@ var (
 	activeContaminated   []string
 	lingeringTails       []*lingeringTail
 	prevWindowCutTestID  string
+	pendingTailTestIDs   []string
 	pendingTruncatedCuts []truncatedCutWindow
 	saidLingering        = map[string]bool{}
 
@@ -279,7 +282,7 @@ func parseGoroutineStacks(raw []byte, selfID uint64, truncated bool) goroutineSn
 		truncated: truncated,
 	}
 	var cur *goroutineInfo
-	expectTopLine := false
+	expectFrameLine := false
 	for len(raw) > 0 {
 		var lineBytes []byte
 		if nl := bytes.IndexByte(raw, '\n'); nl >= 0 {
@@ -294,11 +297,11 @@ func parseGoroutineStacks(raw []byte, selfID uint64, truncated bool) goroutineSn
 		}
 		if len(lineBytes) == 0 {
 			cur = nil
-			expectTopLine = false
+			expectFrameLine = false
 			continue
 		}
 		if bytes.HasPrefix(lineBytes, []byte("goroutine ")) {
-			expectTopLine = false
+			expectFrameLine = false
 			if id, status, ok := parseGoroutineHeader(string(lineBytes)); ok {
 				cur = &goroutineInfo{id: id, baseStatus: status}
 				snap.all[id] = cur
@@ -311,13 +314,17 @@ func parseGoroutineStacks(raw []byte, selfID uint64, truncated bool) goroutineSn
 			continue
 		}
 		if lineBytes[0] == '\t' {
-			if expectTopLine {
-				cur.topLine = parseSourceLine(lineBytes[1:])
-				expectTopLine = false
+			if expectFrameLine && len(cur.frameLines) > 0 {
+				srcLine := parseSourceLine(lineBytes[1:])
+				cur.frameLines[len(cur.frameLines)-1] = srcLine
+				if len(cur.frameLines) == 1 {
+					cur.topLine = srcLine
+				}
+				expectFrameLine = false
 			}
 			continue
 		}
-		expectTopLine = false
+		expectFrameLine = false
 		if bytes.HasPrefix(lineBytes, []byte("...")) {
 			continue
 		}
@@ -339,11 +346,10 @@ func parseGoroutineStacks(raw []byte, selfID uint64, truncated bool) goroutineSn
 		}
 		fn, pkg := parseFrameFunc(line)
 		if fn != "" {
-			if len(cur.frames) == 0 {
-				expectTopLine = true
-			}
 			cur.frames = append(cur.frames, fn)
 			cur.framePkgs = append(cur.framePkgs, pkg)
+			cur.frameLines = append(cur.frameLines, "")
+			expectFrameLine = true
 		}
 	}
 	return snap
@@ -665,6 +671,9 @@ func goroutineStateSig(g *goroutineInfo, selfID uint64, covered map[string]bool,
 		h = fnv64aStr(h, fn)
 		if isAppPkg(g.framePkgs[i], covered) {
 			appFrames++
+			if i < len(g.frameLines) && g.frameLines[i] != "" {
+				h = fnv64aStr(h, g.frameLines[i])
+			}
 		}
 	}
 	h = fnv64aStr(h, g.topLine)
@@ -677,22 +686,44 @@ func goroutineStateSig(g *goroutineInfo, selfID uint64, covered map[string]bool,
 }
 
 // checkResumeWatches checks every active one-time resumeWatch against snap.
-// If a watched goroutine exited or left its watchSig (meaning it woke up and
-// resumed work!), the watch is consumed, its original testID is returned so
-// the caller marks the affected gap/window contaminated, and if the goroutine
-// is still alive and has not returned to its original idle state, its original
-// lingeringTarget is re-attached to lingeringTails so continued work stays
-// tracked across subsequent windows. Called with controlMu held.
+// A watch fires if the watched goroutine exited, left its watchSig, OR spawned
+// a new app-relevant child not in its original preExistingChildren. When it
+// fires, its original testID is returned so the caller marks the affected
+// gap/window contaminated, and if the goroutine is still active (not back at
+// its original idleSig) or spawned a new child, its original lingeringTarget
+// is re-attached with its preserved preExistingChildren so post-wake children
+// are adopted normally by adoptLingeringChildren. Called with controlMu held.
 func checkResumeWatches(snap goroutineSnapshot, covered map[string]bool, ignore []string) []string {
 	if len(resumeWatches) == 0 {
 		return nil
 	}
+	// Pre-index whether any watched gid currently has a new app-relevant child.
+	hasNewChild := map[uint64]bool{}
+	for id, g := range snap.all {
+		if g.createdByGoid == 0 {
+			continue
+		}
+		rw, watched := resumeWatches[g.createdByGoid]
+		if !watched {
+			continue
+		}
+		if _, pre := rw.preExistingChildren[id]; pre {
+			continue
+		}
+		if isAppRelevantGoroutineWithIgnore(g, snap.selfID, covered, ignore) {
+			hasNewChild[g.createdByGoid] = true
+		}
+	}
+
 	var triggered []string
 	for gid, rw := range resumeWatches {
 		g, alive := snap.all[gid]
 		if !alive {
 			triggered = append(triggered, rw.testID)
 			delete(resumeWatches, gid)
+			if hasNewChild[gid] {
+				addLingeringTail(rw.testID, []lingeringTarget{rw.target}, rw.preExistingChildren)
+			}
 			continue
 		}
 		if matchesIgnorePatterns(g, ignore) {
@@ -700,15 +731,14 @@ func checkResumeWatches(snap goroutineSnapshot, covered map[string]bool, ignore 
 			continue
 		}
 		curSig := goroutineStateSig(g, snap.selfID, covered, ignore)
-		if curSig != rw.watchSig {
+		spawnedChild := hasNewChild[gid]
+		if curSig != rw.watchSig || spawnedChild {
 			triggered = append(triggered, rw.testID)
 			delete(resumeWatches, gid)
-			// Re-attach the original target when the goroutine is still active
-			// and has not returned to its original START idle state so it
-			// cannot escape tracking if it is runnable/busy at START.
-			if curSig.active && curSig != rw.target.idleSig {
-				targets := []lingeringTarget{rw.target}
-				addLingeringTail(rw.testID, targets, capturePreExistingChildren(snap, targets))
+			// Re-attach using the watch's preserved preExistingChildren (never
+			// re-capturing snap's live children, which include post-wake work!).
+			if (curSig.active && curSig != rw.target.idleSig) || spawnedChild {
+				addLingeringTail(rw.testID, []lingeringTarget{rw.target}, rw.preExistingChildren)
 			}
 		}
 	}
@@ -950,7 +980,11 @@ func addLingeringTail(testID string, targets []lingeringTarget, preExisting map[
 	}
 	for _, lt := range lingeringTails {
 		if lt.testID == testID {
-			mergeTargets(lt, targets, 0)
+			maxCap := 0
+			if lt.testID == "overflow" {
+				maxCap = maxOverflowTailGids
+			}
+			mergeTargets(lt, targets, maxCap)
 			mergePreExistingChildren(lt, preExisting, maxOverflowTailGids)
 			return
 		}
@@ -1162,10 +1196,20 @@ func pruneLingeringTails(snap goroutineSnapshot, covered map[string]bool, ignore
 						st = quiescentStreak{sig: curSig, count: 1}
 					}
 					if st.count >= rebaselineStreakLimit {
+						var preserved map[uint64]struct{}
+						for cid := range lt.preExistingChildren {
+							if cg := snap.all[cid]; cg != nil && cg.createdByGoid == t.gid {
+								if preserved == nil {
+									preserved = make(map[uint64]struct{})
+								}
+								preserved[cid] = struct{}{}
+							}
+						}
 						resumeWatches[t.gid] = resumeWatch{
-							testID:   lt.testID,
-							target:   t,
-							watchSig: curSig,
+							testID:              lt.testID,
+							target:              t,
+							watchSig:            curSig,
+							preExistingChildren: preserved,
 						}
 						delete(lingeringStreaks, t.gid)
 						continue
@@ -1223,6 +1267,10 @@ func collectStartContamination(unclosedID string, snap goroutineSnapshot, haveSn
 		add("tail:" + prevWindowCutTestID)
 		prevWindowCutTestID = ""
 	}
+	for _, tid := range pendingTailTestIDs {
+		add("tail:" + tid)
+	}
+	pendingTailTestIDs = nil
 	for _, rwTest := range firedWatches {
 		add("tail:" + rwTest)
 	}
@@ -1256,10 +1304,10 @@ func capContaminated(items []string) []string {
 // allocating on the common clean path, ensuring at most one trailing "+N"
 // summary entry.
 func mergeContaminated(startMarks, gapMarks []string) []string {
-	if len(startMarks) == 0 {
+	if len(startMarks) == 0 && len(gapMarks) <= maxPartialNames {
 		return gapMarks
 	}
-	if len(gapMarks) == 0 {
+	if len(gapMarks) == 0 && len(startMarks) <= maxPartialNames {
 		out := make([]string, len(startMarks))
 		copy(out, startMarks)
 		return out
@@ -1301,6 +1349,7 @@ func resetGoroutineState() {
 	activeContaminated = nil
 	lingeringTails = nil
 	prevWindowCutTestID = ""
+	pendingTailTestIDs = nil
 	pendingTruncatedCuts = nil
 	saidLingering = map[string]bool{}
 	pendingEndWindowCut = false
