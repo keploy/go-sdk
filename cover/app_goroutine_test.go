@@ -2961,7 +2961,7 @@ func TestRealGoApp_GapBornAndEndSeenCarryOverFailClosed(t *testing.T) {
 	}
 
 	t.Run("wrapped-outbound-keepalive-stays-clean", func(t *testing.T) {
-		up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "1") }))
+		up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = fmt.Fprint(w, "1") }))
 		defer up.Close()
 		k, a, _ := buildGapBorn(t)
 		for i := 0; i < 10; i++ {
