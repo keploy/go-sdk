@@ -434,7 +434,7 @@ func runTestCommand(command string) string {
 		// cleanly without being duplicated into two tails.
 		var firedWatches []string
 		if haveSnap && !curSnap.truncated {
-			firedWatches = checkResumeWatches(curSnap, covered, ignore)
+			firedWatches, _ = checkResumeWatches(curSnap, covered, ignore)
 		}
 		unclosedID := currentTestID
 		if unclosedID != "" && activeTracking && haveSnap {
@@ -553,11 +553,12 @@ func runTestCommand(command string) string {
 			} else {
 				waitDur := endWaitDuration()
 				preEndLingering := lingeringGidSet()
+				var watchOrigIdle map[uint64]goroutineSig
 				snap := snapshotGoroutines()
-				active := findActiveTestGoroutinesWithLingering(snap, testStartGids, testStartIdle, preEndLingering, covered, ignore)
 				if !snap.truncated {
-					testContaminated = checkEndWatchesAndStreaks(snap, testContaminated, covered, ignore)
+					testContaminated = checkEndWatchesAndStreaks(snap, testContaminated, testStartIdle, &watchOrigIdle, covered, ignore)
 				}
+				active := findActiveTestGoroutinesWithLingering(snap, testStartGids, testStartIdle, preEndLingering, covered, ignore)
 				// Never burn END_WAIT repeating stop-the-world 16 MiB dumps when
 				// already truncated; only poll while !snap.truncated && len(active) > 0.
 				if !snap.truncated && len(active) > 0 && waitDur > 0 {
@@ -580,10 +581,10 @@ func runTestCommand(command string) string {
 							}
 						}
 						snap = snapshotGoroutines()
-						active = findActiveTestGoroutinesWithLingering(snap, testStartGids, testStartIdle, preEndLingering, covered, ignore)
 						if !snap.truncated {
-							testContaminated = checkEndWatchesAndStreaks(snap, testContaminated, covered, ignore)
+							testContaminated = checkEndWatchesAndStreaks(snap, testContaminated, testStartIdle, &watchOrigIdle, covered, ignore)
 						}
+						active = findActiveTestGoroutinesWithLingering(snap, testStartGids, testStartIdle, preEndLingering, covered, ignore)
 					}
 				}
 				// Resolve any prior truncated cuts and adopt/prune lingering

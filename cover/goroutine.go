@@ -840,10 +840,14 @@ func goroutineStateSig(g *goroutineInfo, selfID uint64, covered map[string]bool,
 // gap/window contaminated, and if the goroutine is still active (not back at
 // its original idleSig) or spawned a new child, its original lingeringTarget
 // is re-attached with its preserved preExistingChildren so post-wake children
-// are adopted normally by adoptLingeringChildren. Called with controlMu held.
-func checkResumeWatches(snap goroutineSnapshot, covered map[string]bool, ignore []string) []string {
+// are adopted normally by adoptLingeringChildren.
+//
+// Any non-mustExit watch that fires also returns its original idleSig in
+// firedOrigIdle so END polling can recognize when the goroutine returns to its
+// original idle state during the same test window. Called with controlMu held.
+func checkResumeWatches(snap goroutineSnapshot, covered map[string]bool, ignore []string) ([]string, map[uint64]goroutineSig) {
 	if len(resumeWatches) == 0 {
-		return nil
+		return nil, nil
 	}
 	// Pre-index whether any watched gid currently has a new app-relevant child
 	// (excluding pre-existing children and goroutines already tracked in lingeringTails).
@@ -869,6 +873,7 @@ func checkResumeWatches(snap goroutineSnapshot, covered map[string]bool, ignore 
 	}
 
 	var triggered []string
+	var firedOrigIdle map[uint64]goroutineSig
 	for gid, rw := range resumeWatches {
 		g, alive := snap.all[gid]
 		if !alive {
@@ -888,6 +893,12 @@ func checkResumeWatches(snap goroutineSnapshot, covered map[string]bool, ignore 
 		if curSig != rw.watchSig || spawnedChild {
 			triggered = append(triggered, rw.testID)
 			delete(resumeWatches, gid)
+			if !rw.target.mustExit {
+				if firedOrigIdle == nil {
+					firedOrigIdle = make(map[uint64]goroutineSig)
+				}
+				firedOrigIdle[gid] = rw.target.idleSig
+			}
 			if !curSig.active || curSig == rw.target.idleSig {
 				// Restore lastQuiescentSigs when the goroutine returned
 				// directly to its original idle state so snapshotStartBaseline
@@ -904,7 +915,7 @@ func checkResumeWatches(snap goroutineSnapshot, covered map[string]bool, ignore 
 	if len(triggered) > 1 {
 		sort.Strings(triggered)
 	}
-	return triggered
+	return triggered, firedOrigIdle
 }
 
 // snapshotStartBaseline captures the set of live non-SDK goroutine IDs and the
@@ -1447,12 +1458,15 @@ func resetBrokenLingeringStreaks(snap goroutineSnapshot, covered map[string]bool
 	}
 }
 
-// checkEndWatchesAndStreaks checks armed resumeWatches and resets broken
-// lingeringStreaks against a single non-truncated END snapshot so transient
-// wakeups observed on an earlier END_WAIT poll are never lost when a goroutine
-// re-parks before the final poll. Called with controlMu held.
-func checkEndWatchesAndStreaks(snap goroutineSnapshot, testContaminated []string, covered map[string]bool, ignore []string) []string {
-	if triggered := checkResumeWatches(snap, covered, ignore); len(triggered) > 0 {
+// checkEndWatchesAndStreaks checks armed resumeWatches, tracks original idle
+// signatures of fired non-mustExit watches (updating testStartIdle and
+// lastQuiescentSigs whenever a watched goroutine returns to its original idle
+// either directly or on a later END_WAIT poll), and resets broken
+// lingeringStreaks against a single non-truncated END snapshot. Called with
+// controlMu held BEFORE findActiveTestGoroutinesWithLingering on each poll.
+func checkEndWatchesAndStreaks(snap goroutineSnapshot, testContaminated []string, testStartIdle map[uint64]goroutineSig, watchOrigIdle *map[uint64]goroutineSig, covered map[string]bool, ignore []string) []string {
+	triggered, firedOrig := checkResumeWatches(snap, covered, ignore)
+	if len(triggered) > 0 {
 		seen := make(map[string]struct{}, len(testContaminated)+len(triggered))
 		for _, m := range testContaminated {
 			if !strings.HasPrefix(m, "+") {
@@ -1469,6 +1483,27 @@ func checkEndWatchesAndStreaks(snap goroutineSnapshot, testContaminated []string
 		}
 		if len(addMarks) > 0 {
 			testContaminated = mergeContaminated(testContaminated, addMarks)
+		}
+	}
+	for gid, origIdle := range firedOrig {
+		if *watchOrigIdle == nil {
+			*watchOrigIdle = make(map[uint64]goroutineSig)
+		}
+		(*watchOrigIdle)[gid] = origIdle
+	}
+	for gid, origIdle := range *watchOrigIdle {
+		g, alive := snap.all[gid]
+		if !alive {
+			delete(*watchOrigIdle, gid)
+			continue
+		}
+		curSig := goroutineStateSig(g, snap.selfID, covered, ignore)
+		if !curSig.active || curSig == origIdle {
+			lastQuiescentSigs[gid] = curSig
+			if testStartIdle != nil {
+				testStartIdle[gid] = curSig
+			}
+			delete(*watchOrigIdle, gid)
 		}
 	}
 	resetBrokenLingeringStreaks(snap, covered, ignore)

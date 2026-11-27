@@ -1522,16 +1522,19 @@ var (
 	flushedFraud   atomic.Int64
 	jobFraud       atomic.Int64
 	janitorTicks   atomic.Int64
+	periodicTicks  atomic.Int64
 
-	batchQ       = make(chan string)
-	batchFlushCh = make(chan chan struct{})
-	jobQ         = make(chan deltaJob, 64)
-	auditDoneMu  sync.Mutex
-	auditDone    chan struct{}
+	batchQ         = make(chan string)
+	batchFlushCh   = make(chan chan struct{})
+	jobQ           = make(chan deltaJob, 64)
+	periodicTickCh = make(chan chan struct{})
+	auditDoneMu    sync.Mutex
+	auditDone      chan struct{}
 
-	deltaGateMu sync.Mutex
-	deltaGates  = map[string]chan struct{}{}
-	lazyOnce    sync.Once
+	deltaGateMu  sync.Mutex
+	deltaGates   = map[string]chan struct{}{}
+	lazyOnce     sync.Once
+	periodicOnce sync.Once
 )
 
 type deltaJob struct {
@@ -1595,6 +1598,13 @@ func janitor() {
 	t := time.NewTicker(time.Hour)
 	for range t.C {
 		janitorTicks.Add(1)
+	}
+}
+
+func periodicLoop() {
+	for done := range periodicTickCh {
+		periodicTicks.Add(1)
+		close(done)
 	}
 }
 
@@ -1723,6 +1733,31 @@ func init() {
 		}
 		fmt.Fprint(w, "lazy")
 	})
+	http.HandleFunc("/start-periodic", func(w http.ResponseWriter, r *http.Request) {
+		periodicOnce.Do(func() {
+			started := make(chan struct{})
+			go func() {
+				close(started)
+				periodicLoop()
+			}()
+			<-started
+		})
+		if !waitParkedDelta("main.periodicLoop(", "chan receive") {
+			http.Error(w, "periodicLoop did not park", 500)
+			return
+		}
+		fmt.Fprint(w, "periodic-started")
+	})
+	http.HandleFunc("/tick-periodic", func(w http.ResponseWriter, r *http.Request) {
+		done := make(chan struct{})
+		periodicTickCh <- done
+		<-done
+		if !waitParkedDelta("main.periodicLoop(", "chan receive") {
+			http.Error(w, "periodicLoop did not re-park", 500)
+			return
+		}
+		fmt.Fprint(w, "periodic-ticked")
+	})
 }
 `
 
@@ -1762,14 +1797,16 @@ func deltaLineOf(t *testing.T, needle string) int {
 
 // TestRealGoApp_B1DeferredAsyncScopeLimitsPinAsyncExecutorsFalse builds a real
 // -cover -covermode=atomic app with a vendored uncovered third-party async
-// writer and pins all three R1 scope limits from B1:
+// writer and pins all four R1 scope limits:
 //   - (a) library-owned third-party async writer (kafka-go/sarama style)
 //   - (b) dormant time.AfterFunc timer firing after END
 //   - (c) pre-existing app batcher/debouncer re-parking at the same idle sig
+//   - (d) test-spawned periodic loop settled onto a resumeWatch whose later
+//     tick runs and re-parks at the same signature between snapshots
 //
-// In all three patterns, test N's deferred fraud line lands in test N+1 without
+// In all four patterns, a deferred line lands in a later test without
 // goroutine marks, AND every START/END reply declares asyncExecutors=false so
-// Go stays soft-mark-only and never authorizes removal in R1.
+// collectors gating removal on asyncExecutors=true keep Go soft-mark-only.
 func TestRealGoApp_B1DeferredAsyncScopeLimitsPinAsyncExecutorsFalse(t *testing.T) {
 	k := newKeploySide(t)
 	bin := buildDeltaProbeApp(t, k)
@@ -1825,6 +1862,39 @@ func TestRealGoApp_B1DeferredAsyncScopeLimitsPinAsyncExecutorsFalse(t *testing.T
 			}
 		})
 	}
+
+	// (d) Test-spawned periodic loop: T1 cut, T2 tail:T1, T3 settled onto
+	// resumeWatch, then T4 fires a tick that completes and re-parks at the same
+	// signature before END T4 -> tick line lands in T4 unmarked while caps
+	// declare asyncExecutors=false.
+	t.Run("d-settled-periodic-loop-tick", func(t *testing.T) {
+		tickLine := deltaLineOf(t, "periodicTicks.Add(1)")
+		rec1 := runWithCapsCheck("set-0/d-T1", "/start-periodic")
+		if rec1["windowCut"] != true {
+			t.Fatalf("d-T1 windowCut = %v, want true", rec1["windowCut"])
+		}
+		rec2 := runWithCapsCheck("set-0/d-T2", "/plain")
+		if !reflect.DeepEqual(rec2["contaminated"], []any{"tail:set-0/d-T1"}) {
+			t.Fatalf("d-T2 contaminated = %v, want [tail:set-0/d-T1]", rec2["contaminated"])
+		}
+		rec3 := runWithCapsCheck("set-0/d-T3", "/plain")
+		if _, cut := rec3["windowCut"]; cut {
+			t.Fatalf("d-T3 unexpected windowCut: %v", rec3)
+		}
+		if _, cont := rec3["contaminated"]; cont {
+			t.Fatalf("d-T3 unexpected contaminated: %v", rec3)
+		}
+		rec4 := runWithCapsCheck("set-0/d-T4", "/tick-periodic")
+		if !containsInt(linesOfRecord(t, rec4)[deltaFile], tickLine) {
+			t.Fatalf("d-T4 missing periodicTicks.Add(1) line %d: %v", tickLine, linesOfRecord(t, rec4)[deltaFile])
+		}
+		if _, cut := rec4["windowCut"]; cut {
+			t.Fatalf("d-T4 unexpected windowCut: %v", rec4)
+		}
+		if _, cont := rec4["contaminated"]; cont {
+			t.Fatalf("d-T4 unexpected contaminated: %v", rec4)
+		}
+	})
 }
 
 // TestRealGoApp_SF1MidJobWorkerBaselineCatchesNAndNotInnocentN1 reproduces SF1

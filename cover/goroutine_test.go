@@ -2078,6 +2078,117 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 					t.Fatalf("R10-SF1 failed: T5 got contaminated: %v", rec5)
 				}
 			})
+
+			t.Run(tc.name+"/in-window direct return", func(t *testing.T) {
+				t.Setenv(envEndWaitMS, "0")
+				h := newGapHarness(t,
+					lines(appFile, 1), none(), // T1: orig -> watchState
+					lines(appFile, 2), none(), // T2: streak 1
+					lines(appFile, 3), none(), // T3: moves onto watchState watch (clean)
+					lines(appFile, 4), none(), // T4: START at watchState, returns directly to orig BEFORE END T4 -> tail:T1, NO windowCut!
+					lines(appFile, 5), // T5: clean!
+				)
+				watchState := &goroutineInfo{
+					id: 80, baseStatus: "IO wait", topLine: "/app/c.go:30",
+					frames: []string{"internal/poll.runtime_pollWait", "main.consumer"}, framePkgs: []string{"internal/poll", "main"}, frameLines: []string{"/go/poll.go:1", "/app/c.go:30"},
+					createdByFn: "main.init", createdByPkg: "main",
+				}
+				cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 80: tc.orig}}
+				snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+				h.do("START set-0/T1", replyStartUnasked)
+				cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 80: watchState}}
+				h.do("END set-0/T1", replyTaken)
+				h.run("set-0/T2")
+				h.run("set-0/T3")
+				if _, armed := resumeWatches[80]; !armed {
+					t.Fatal("expected resumeWatch armed on gid 80 after T3")
+				}
+
+				// START T4 with gid 80 still at watchState, then return directly to tc.orig BEFORE END T4.
+				h.do("START set-0/T4", replyStartUnasked)
+				cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 80: tc.orig}}
+				h.do("END set-0/T4", replyTaken)
+				rec4 := h.test("set-0/T4")
+				if !reflect.DeepEqual(rec4["contaminated"], []interface{}{"tail:set-0/T1"}) {
+					t.Fatalf("in-window return: T4 contaminated = %v, want [tail:set-0/T1]", rec4["contaminated"])
+				}
+				if _, hasCut := rec4["windowCut"]; hasCut {
+					t.Fatalf("in-window return failed: T4 got false windowCut: %v", rec4)
+				}
+
+				// T5 MUST be 100% clean (never stuck in tail:T4 forever!).
+				h.run("set-0/T5")
+				rec5 := h.test("set-0/T5")
+				if _, hasCut := rec5["windowCut"]; hasCut {
+					t.Fatalf("in-window return failed: T5 got windowCut: %v", rec5)
+				}
+				if _, hasCont := rec5["contaminated"]; hasCont {
+					t.Fatalf("in-window return failed: T5 got contaminated: %v", rec5)
+				}
+			})
+
+			t.Run(tc.name+"/in-window wake then return on poll 2", func(t *testing.T) {
+				t.Setenv(envEndWaitMS, "0")
+				h := newGapHarness(t,
+					lines(appFile, 1), none(), // T1
+					lines(appFile, 2), none(), // T2
+					lines(appFile, 3), none(), // T3
+					lines(appFile, 4), none(), // T4: END poll #1 awake at busyState, poll #2 returned to tc.orig!
+					lines(appFile, 5), // T5: clean!
+				)
+				watchState := &goroutineInfo{
+					id: 80, baseStatus: "IO wait", topLine: "/app/c.go:30",
+					frames: []string{"internal/poll.runtime_pollWait", "main.consumer"}, framePkgs: []string{"internal/poll", "main"}, frameLines: []string{"/go/poll.go:1", "/app/c.go:30"},
+					createdByFn: "main.init", createdByPkg: "main",
+				}
+				busyState := &goroutineInfo{
+					id: 80, baseStatus: "runnable", topLine: "/app/c.go:45",
+					frames: []string{"main.handleMsg", "main.consumer"}, framePkgs: []string{"main", "main"}, frameLines: []string{"/app/c.go:45", "/app/c.go:31"},
+					createdByFn: "main.init", createdByPkg: "main",
+				}
+				var seq []goroutineSnapshot
+				cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 80: tc.orig}}
+				snapshotGoroutines = func() goroutineSnapshot {
+					if len(seq) > 0 {
+						s := seq[0]
+						seq = seq[1:]
+						return s
+					}
+					return cur
+				}
+
+				h.do("START set-0/T1", replyStartUnasked)
+				cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 80: watchState}}
+				h.do("END set-0/T1", replyTaken)
+				h.run("set-0/T2")
+				h.run("set-0/T3")
+
+				t.Setenv(envEndWaitMS, "100")
+				h.do("START set-0/T4", replyStartUnasked)
+				seq = []goroutineSnapshot{
+					{all: map[uint64]*goroutineInfo{1: {id: 1}, 80: busyState}},
+					{all: map[uint64]*goroutineInfo{1: {id: 1}, 80: tc.orig}},
+				}
+				cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 80: tc.orig}}
+				h.do("END set-0/T4", replyTaken)
+				rec4 := h.test("set-0/T4")
+				if !reflect.DeepEqual(rec4["contaminated"], []interface{}{"tail:set-0/T1"}) {
+					t.Fatalf("wake->orig poll2: T4 contaminated = %v, want [tail:set-0/T1]", rec4["contaminated"])
+				}
+				if _, hasCut := rec4["windowCut"]; hasCut {
+					t.Fatalf("wake->orig poll2 failed: T4 got false windowCut: %v", rec4)
+				}
+
+				h.run("set-0/T5")
+				rec5 := h.test("set-0/T5")
+				if _, hasCut := rec5["windowCut"]; hasCut {
+					t.Fatalf("wake->orig poll2 failed: T5 got windowCut: %v", rec5)
+				}
+				if _, hasCont := rec5["contaminated"]; hasCont {
+					t.Fatalf("wake->orig poll2 failed: T5 got contaminated: %v", rec5)
+				}
+			})
 		}
 	})
 
@@ -2231,20 +2342,23 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 }
 
 // TestV3WireRepliesAndRecordsAgainstCollectorParsers pins the exact wire
-// format of go-sdk's v3 control-socket replies and JSON coverage/background
-// records against exact parser mirrors of enterprise and k8s-proxy, verifying:
-//   - ACK replies stay well under the 1024-byte control buffer cap and parse
-//     cleanly under both proto>=2 legacy parsers and v3 caps= parsers,
+// format of go-sdk's v3 control-socket replies (ACK/IGNORED, proto=3, bg=,
+// caps=) and JSON coverage/background records against a mirror of the paired
+// R1 ParseCapsString / IsHonest contract (cross-repo parser golden tests
+// against enterprise and k8s-proxy live in those collector PRs), verifying:
+//   - replies stay well under the 1024-byte control buffer cap and parse
+//     cleanly under both proto>=2 token parsing and v3 caps= parsing,
+//   - IGNORED proto=3 <reason> and START replies with bg=<token> parse cleanly,
 //   - asyncExecutors is ALWAYS false across all Go versions/modes so a shared
 //     collector IsHonest gate requiring asyncExecutors=true keeps Go soft-mark-only,
-//   - windowCut/lingeringGoroutines/contaminated/afterCut JSON fields match
-//     enterprise DedupRecord/BackgroundRecord and k8s-proxy R1 dedupRecord.
+//   - windowCut/lingeringGoroutines/contaminated/afterCut JSON fields decode
+//     into the collector record schema.
 func TestV3WireRepliesAndRecordsAgainstCollectorParsers(t *testing.T) {
 	stubCoverage(t, nil, nil)
 	origGoVersion := runtimeGoVersion
 	t.Cleanup(func() { runtimeGoVersion = origGoVersion })
 
-	parseV3Ack := func(reply string) (cmd string, proto int, bg string, caps map[string]bool) {
+	parseV3Reply := func(reply string) (cmd string, proto int, bg string, caps map[string]bool) {
 		t.Helper()
 		if len(reply) >= 1024 {
 			t.Fatalf("reply length %d >= 1024 byte collector cap: %q", len(reply), reply)
@@ -2278,10 +2392,22 @@ func TestV3WireRepliesAndRecordsAgainstCollectorParsers(t *testing.T) {
 		return cmd, proto, bg, caps
 	}
 
-	// Shared R1 honesty predicate requiring asyncExecutors=true for removal eligibility.
+	// Mirror of paired R1 collector IsHonest gate requiring asyncExecutors=true.
 	isRemovalEligible := func(proto int, caps map[string]bool) bool {
 		return proto >= 3 && caps["windowCut"] && caps["contaminated"] && caps["background"] && caps["asyncExecutors"]
 	}
+
+	// Verify IGNORED proto=3 <reason> and START with bg=<token>.
+	cmdIgn, protoIgn, _, _ := parseV3Reply(replyIgnoredWith("not built with -cover"))
+	if cmdIgn != "IGNORED" || protoIgn != 3 {
+		t.Fatalf("IGNORED reply parse = (%q, %d), want (IGNORED, 3)", cmdIgn, protoIgn)
+	}
+	bgAsked, bgToken = true, "tok-42"
+	cmdStartBG, protoStartBG, gotBG, capsStartBG := parseV3Reply(startReply())
+	if cmdStartBG != "ACK" || protoStartBG != 3 || gotBG != "tok-42" || capsStartBG["asyncExecutors"] {
+		t.Fatalf("START with bg token parsed = (%q, %d, %q, %v)", cmdStartBG, protoStartBG, gotBG, capsStartBG)
+	}
+	bgAsked, bgToken = false, ""
 
 	for _, tc := range []struct {
 		ver           string
@@ -2296,7 +2422,7 @@ func TestV3WireRepliesAndRecordsAgainstCollectorParsers(t *testing.T) {
 		runtimeGoVersion = func() string { return tc.ver }
 		t.Setenv(envGoroutineTracking, tc.trackingEnv)
 		for _, reply := range []string{startReply(), ackReply()} {
-			cmd, proto, _, caps := parseV3Ack(reply)
+			cmd, proto, _, caps := parseV3Reply(reply)
 			if cmd != "ACK" || proto != 3 {
 				t.Fatalf("ver=%s env=%q reply=%q -> cmd=%q proto=%d", tc.ver, tc.trackingEnv, reply, cmd, proto)
 			}
