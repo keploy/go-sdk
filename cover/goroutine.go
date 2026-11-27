@@ -2,6 +2,7 @@ package cover
 
 import (
 	"bytes"
+	"log"
 	"os"
 	"runtime"
 	"sort"
@@ -14,28 +15,44 @@ const (
 	// envGoroutineTracking disables goroutine-tail stack diffing when set to
 	// "off" (or "false", "0", "no", case-insensitive).
 	envGoroutineTracking = "KEPLOY_GO_GOROUTINE_TRACKING"
-	// envEndWaitMS sets how long END polls for newly-spawned app goroutines to
-	// exit before declaring windowCut=true (default 200ms, capped at 2000ms;
-	// 0 disables waiting and checks immediately).
+	// envEndWaitMS sets how long END polls for newly-spawned app goroutines
+	// and busy pre-existing app worker goroutines to settle before declaring
+	// windowCut=true (default 200ms, capped at 2000ms; 0 checks immediately).
 	envEndWaitMS = "KEPLOY_GO_END_WAIT_MS"
+	// envIgnoreGoroutines is an optional comma-separated list of function or
+	// package substrings to exclude from goroutine-tail detection (for example
+	// a known benign lazy-init background worker). Empty by default.
+	envIgnoreGoroutines = "KEPLOY_GO_IGNORE_GOROUTINES"
 
 	defaultEndWaitMS = 200
 	maxEndWaitMS     = 2000
-	endWaitPollEvery = 5 * time.Millisecond
 
-	stackInitBufSize  = 64 << 10 // 64 KiB initial stack buffer
-	stackMaxBufSize   = 16 << 20 // 16 MiB cap so pathological apps cannot OOM
-	maxLingeringTails = 64
+	endWaitPollMin = 5 * time.Millisecond
+	endWaitPollMax = 25 * time.Millisecond
+
+	stackInitBufSize     = 64 << 10 // 64 KiB initial stack buffer
+	stackShrinkThreshold = 1 << 20  // shrink stackBuf when >=1 MiB and mostly unused
+	stackMaxBufSize      = 16 << 20 // 16 MiB cap so pathological apps cannot OOM
+
+	maxLingeringTails   = 64
+	maxOverflowTailGids = 512
+
+	// mustExitIdleKey marks a newly-spawned lingering goroutine that remains
+	// active until its monotonic goroutine ID disappears from runtime.Stack.
+	mustExitIdleKey = "\x00exit"
 )
 
 // goroutineInfo is the parsed identity and stack summary of one live goroutine
 // from runtime.Stack(buf, true).
 type goroutineInfo struct {
-	id           uint64
-	frames       []string
-	framePkgs    []string
-	createdByFn  string
-	createdByPkg string
+	id            uint64
+	baseStatus    string // wait/run state without duration suffix (e.g. "chan receive", "sleep")
+	topLine       string // source file:line of frames[0] without "+0x..." offset
+	frames        []string
+	framePkgs     []string
+	createdByFn   string
+	createdByPkg  string
+	createdByGoid uint64 // parent goroutine ID from "created by X in goroutine N" (Go 1.21+)
 }
 
 // goroutineSnapshot holds all live goroutines parsed from one runtime.Stack
@@ -47,21 +64,41 @@ type goroutineSnapshot struct {
 	truncated bool
 }
 
-// lingeringTail tracks one test whose END was cut with app-relevant goroutines
-// still alive. It remains active until all of its goroutine IDs exit.
+// lingeringTarget tracks one lingering goroutine belonging to a cut test.
+// For a newly-spawned goroutine, idleKey is mustExitIdleKey (stays active until
+// the goroutine exits). For a pre-existing worker/handler goroutine, idleKey is
+// its quiescent START signature (stays active until it exits or returns to idle).
+type lingeringTarget struct {
+	gid     uint64
+	idleKey string
+}
+
+// lingeringTail tracks one test whose END was cut with lingering goroutines.
+// It remains active until all of its targets (and any adopted children) finish.
 type lingeringTail struct {
-	testID string
-	gids   []uint64
-	names  []string
+	testID  string
+	targets []lingeringTarget
+}
+
+// truncatedCutWindow retains the START baseline of a test whose END snapshot
+// was truncated so the next complete snapshot can resolve any goroutines that
+// were missed past the 16 MiB stack cap.
+type truncatedCutWindow struct {
+	testID    string
+	startGids map[uint64]struct{}
 }
 
 var (
 	// Goroutine-tail tracking state, all guarded by controlMu.
-	activeTracking      bool
-	startGids           map[uint64]struct{}
-	activeContaminated  []string
-	lingeringTails      []*lingeringTail
-	prevWindowCutTestID string
+	activeTracking       bool
+	activeTruncatedStart bool
+	startGids            map[uint64]struct{}
+	startIdleStates      map[uint64]string
+	activeContaminated   []string
+	lingeringTails       []*lingeringTail
+	prevWindowCutTestID  string
+	pendingTruncatedCuts []truncatedCutWindow
+	saidLingering        = map[string]bool{}
 
 	// pendingEnd* carry finalized END-time tail metadata into reportCoverage
 	// while controlMu is held, keeping publishCoverage's signature unchanged.
@@ -71,7 +108,7 @@ var (
 
 	// stackBuf is lazily allocated on first armed START and reused under
 	// controlMu so unarmed apps allocate nothing and armed runs avoid repeated
-	// 64 KiB allocations.
+	// 64 KiB allocations. Shrunk back down after transient spikes.
 	stackBuf []byte
 
 	// snapshotGoroutines captures all live goroutines; a variable for tests.
@@ -88,6 +125,37 @@ func goroutineTrackingEnabled() bool {
 	default:
 		return true
 	}
+}
+
+// blockCoverageActive reports whether block-level coverage is active (true in
+// production under -cover -covermode=atomic, and in unit tests that stub
+// prepareMeta without populating meta; false for per-func granularity).
+func blockCoverageActive() bool {
+	return meta == nil || meta.granularity == ctrGranularityPerBlk
+}
+
+// goroutineTrackingActive reports whether goroutine-tail tracking should arm
+// for the current process configuration and coverage mode.
+func goroutineTrackingActive() bool {
+	return goroutineTrackingEnabled() && blockCoverageActive()
+}
+
+// ignoreGoroutinePatterns returns any user-configured substring patterns from
+// KEPLOY_GO_IGNORE_GOROUTINES (nil in the common unset case).
+func ignoreGoroutinePatterns() []string {
+	raw := strings.TrimSpace(os.Getenv(envIgnoreGoroutines))
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	var out []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // endWaitDuration returns the bounded END drain wait configured by
@@ -112,7 +180,7 @@ func endWaitDuration() time.Duration {
 func currentGoroutineID() uint64 {
 	var buf [64]byte
 	n := runtime.Stack(buf[:], false)
-	id, _ := parseGoroutineHeader(string(buf[:n]))
+	id, _, _ := parseGoroutineHeader(string(buf[:n]))
 	return id
 }
 
@@ -121,7 +189,9 @@ func currentGoroutineID() uint64 {
 func liveGoroutineSnapshot() goroutineSnapshot {
 	selfID := currentGoroutineID()
 	raw, truncated := captureStackAll()
-	return parseGoroutineStacks(raw, selfID, truncated)
+	snap := parseGoroutineStacks(raw, selfID, truncated)
+	maybeShrinkStackBuf(len(raw))
+	return snap
 }
 
 // captureStackAll reads runtime.Stack(buf, true), growing stackBuf until the
@@ -146,6 +216,21 @@ func captureStackAll() ([]byte, bool) {
 	}
 }
 
+// maybeShrinkStackBuf releases excess capacity if stackBuf grew past
+// stackShrinkThreshold during a transient spike and the latest dump is much
+// smaller. Called with controlMu held after parseGoroutineStacks copied needed
+// strings out of stackBuf.
+func maybeShrinkStackBuf(used int) {
+	if len(stackBuf) < stackShrinkThreshold || used >= len(stackBuf)/4 {
+		return
+	}
+	target := stackInitBufSize
+	for target < used*2 && target < len(stackBuf)/2 {
+		target *= 2
+	}
+	stackBuf = make([]byte, target)
+}
+
 // parseGoroutineStacks parses the output of runtime.Stack(buf, true) into a
 // goroutineSnapshot keyed by unique monotonic goroutine ID.
 func parseGoroutineStacks(raw []byte, selfID uint64, truncated bool) goroutineSnapshot {
@@ -155,6 +240,7 @@ func parseGoroutineStacks(raw []byte, selfID uint64, truncated bool) goroutineSn
 		truncated: truncated,
 	}
 	var cur *goroutineInfo
+	expectTopLine := false
 	for len(raw) > 0 {
 		var lineBytes []byte
 		if nl := bytes.IndexByte(raw, '\n'); nl >= 0 {
@@ -169,11 +255,13 @@ func parseGoroutineStacks(raw []byte, selfID uint64, truncated bool) goroutineSn
 		}
 		if len(lineBytes) == 0 {
 			cur = nil
+			expectTopLine = false
 			continue
 		}
 		if bytes.HasPrefix(lineBytes, []byte("goroutine ")) {
-			if id, ok := parseGoroutineHeader(string(lineBytes)); ok {
-				cur = &goroutineInfo{id: id}
+			expectTopLine = false
+			if id, status, ok := parseGoroutineHeader(string(lineBytes)); ok {
+				cur = &goroutineInfo{id: id, baseStatus: status}
 				snap.all[id] = cur
 			} else {
 				cur = nil
@@ -183,7 +271,15 @@ func parseGoroutineStacks(raw []byte, selfID uint64, truncated bool) goroutineSn
 		if cur == nil {
 			continue
 		}
-		if lineBytes[0] == '\t' || bytes.HasPrefix(lineBytes, []byte("...")) {
+		if lineBytes[0] == '\t' {
+			if expectTopLine {
+				cur.topLine = parseSourceLine(lineBytes[1:])
+				expectTopLine = false
+			}
+			continue
+		}
+		expectTopLine = false
+		if bytes.HasPrefix(lineBytes, []byte("...")) {
 			continue
 		}
 		if bytes.HasPrefix(lineBytes, []byte("[originating from goroutine")) {
@@ -194,15 +290,19 @@ func parseGoroutineStacks(raw []byte, selfID uint64, truncated bool) goroutineSn
 		}
 		line := string(lineBytes)
 		if strings.HasPrefix(line, "created by ") {
-			fn, pkg := parseCreatedBy(line)
+			fn, pkg, parentID := parseCreatedBy(line)
 			if fn != "" {
 				cur.createdByFn = fn
 				cur.createdByPkg = pkg
+				cur.createdByGoid = parentID
 			}
 			continue
 		}
 		fn, pkg := parseFrameFunc(line)
 		if fn != "" {
+			if len(cur.frames) == 0 {
+				expectTopLine = true
+			}
 			cur.frames = append(cur.frames, fn)
 			cur.framePkgs = append(cur.framePkgs, pkg)
 		}
@@ -210,11 +310,22 @@ func parseGoroutineStacks(raw []byte, selfID uint64, truncated bool) goroutineSn
 	return snap
 }
 
-// parseGoroutineHeader parses the monotonic goroutine ID from a runtime.Stack
-// header line such as "goroutine 42 [IO wait]:".
-func parseGoroutineHeader(line string) (uint64, bool) {
+// parseSourceLine extracts "<file>:<line>" from an indented runtime.Stack
+// location line such as "/app/worker.go:95 +0x54".
+func parseSourceLine(b []byte) string {
+	b = bytes.TrimSpace(b)
+	if sp := bytes.LastIndexByte(b, ' '); sp >= 0 && bytes.HasPrefix(b[sp+1:], []byte("+0x")) {
+		b = b[:sp]
+	}
+	return string(b)
+}
+
+// parseGoroutineHeader parses the monotonic goroutine ID and base wait/run
+// status (stripping any ", N minutes" duration suffix) from a runtime.Stack
+// header line such as "goroutine 42 [chan receive, 2 minutes]:".
+func parseGoroutineHeader(line string) (uint64, string, bool) {
 	if !strings.HasPrefix(line, "goroutine ") {
-		return 0, false
+		return 0, "", false
 	}
 	rest := line[len("goroutine "):]
 	end := 0
@@ -222,13 +333,26 @@ func parseGoroutineHeader(line string) (uint64, bool) {
 		end++
 	}
 	if end == 0 {
-		return 0, false
+		return 0, "", false
 	}
 	id, err := strconv.ParseUint(rest[:end], 10, 64)
 	if err != nil {
-		return 0, false
+		return 0, "", false
 	}
-	return id, true
+	status := ""
+	if open := strings.IndexByte(rest[end:], '['); open >= 0 {
+		after := rest[end+open+1:]
+		if closeIdx := strings.IndexByte(after, ']'); closeIdx >= 0 {
+			status = after[:closeIdx]
+		} else {
+			status = after
+		}
+		if comma := strings.IndexByte(status, ','); comma >= 0 {
+			status = status[:comma]
+		}
+		status = strings.TrimSpace(status)
+	}
+	return id, status, true
 }
 
 // parseFrameFunc extracts the function name and package path from one
@@ -257,18 +381,29 @@ func parseFrameFunc(line string) (fn, pkg string) {
 	return fn, pkgOfFunc(fn)
 }
 
-// parseCreatedBy extracts the creator function name and package path from a
+// parseCreatedBy extracts the creator function name, package path, and
+// optional parent goroutine ID (Go 1.21+) from a
 // "created by <fn>[ in goroutine <id>]" line.
-func parseCreatedBy(line string) (fn, pkg string) {
+func parseCreatedBy(line string) (fn, pkg string, parentID uint64) {
 	rest := strings.TrimPrefix(line, "created by ")
 	if idx := strings.Index(rest, " in goroutine "); idx >= 0 {
+		idStr := strings.TrimSpace(rest[idx+len(" in goroutine "):])
+		end := 0
+		for end < len(idStr) && idStr[end] >= '0' && idStr[end] <= '9' {
+			end++
+		}
+		if end > 0 {
+			if parsed, err := strconv.ParseUint(idStr[:end], 10, 64); err == nil {
+				parentID = parsed
+			}
+		}
 		rest = rest[:idx]
 	}
 	fn = strings.TrimSpace(rest)
 	if fn == "" {
-		return "", ""
+		return "", "", 0
 	}
-	return fn, pkgOfFunc(fn)
+	return fn, pkgOfFunc(fn), parentID
 }
 
 // pkgOfFunc extracts the Go package import path from a runtime.Stack function
@@ -412,11 +547,37 @@ func isAppPkg(pkg string, covered map[string]bool) bool {
 	return !isStdlibOrInfraPkg(pkg)
 }
 
+// matchesIgnorePatterns reports whether any frame or creator of g matches a
+// user-supplied KEPLOY_GO_IGNORE_GOROUTINES substring.
+func matchesIgnorePatterns(g *goroutineInfo, patterns []string) bool {
+	if len(patterns) == 0 {
+		return false
+	}
+	for _, p := range patterns {
+		if g.createdByFn != "" && strings.Contains(g.createdByFn, p) {
+			return true
+		}
+		for _, fn := range g.frames {
+			if strings.Contains(fn, p) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // isAppRelevantGoroutine reports whether g was spawned by or is executing
-// application code (as opposed to go-sdk's own goroutines or idle stdlib/runtime
-// keep-alive/housekeeping goroutines).
+// application code (as opposed to go-sdk's own goroutines, explicitly ignored
+// goroutines, or idle stdlib/runtime keep-alive/housekeeping goroutines).
 func isAppRelevantGoroutine(g *goroutineInfo, selfID uint64, covered map[string]bool) bool {
+	return isAppRelevantGoroutineWithIgnore(g, selfID, covered, ignoreGoroutinePatterns())
+}
+
+func isAppRelevantGoroutineWithIgnore(g *goroutineInfo, selfID uint64, covered map[string]bool, ignore []string) bool {
 	if isSDKGoroutine(g, selfID) {
+		return false
+	}
+	if matchesIgnorePatterns(g, ignore) {
 		return false
 	}
 	if isAppPkg(g.createdByPkg, covered) {
@@ -430,32 +591,112 @@ func isAppRelevantGoroutine(g *goroutineInfo, selfID uint64, covered map[string]
 	return false
 }
 
-// gidSetOf returns the set of non-SDK goroutine IDs currently alive in snap.
-func gidSetOf(snap goroutineSnapshot) map[uint64]struct{} {
-	set := make(map[uint64]struct{}, len(snap.all))
+// isQuiescentStatus reports whether a pre-existing goroutine's baseStatus is a
+// quiescent waiting state suitable for worker-pool idle baselining at START.
+func isQuiescentStatus(baseStatus string) bool {
+	switch baseStatus {
+	case "chan receive", "select", "sync.Cond.Wait", "semacquire", "IO wait", "sleep":
+		return true
+	default:
+		return false
+	}
+}
+
+// goroutineStateKey builds a canonical state signature for g (or "" when g is
+// not currently app-relevant, such as an idle net/http.(*conn).serve).
+func goroutineStateKey(g *goroutineInfo, selfID uint64, covered map[string]bool, ignore []string) string {
+	if !isAppRelevantGoroutineWithIgnore(g, selfID, covered, ignore) {
+		return ""
+	}
+	return g.baseStatus + "|" + strings.Join(g.frames, ";") + "|" + g.topLine
+}
+
+// snapshotStartBaseline captures the set of live non-SDK goroutine IDs and the
+// quiescent idle state signatures of pre-existing goroutines at START (skipping
+// any goroutine already tracked as busy in lingeringTails).
+func snapshotStartBaseline(snap goroutineSnapshot, covered map[string]bool, ignore []string) (map[uint64]struct{}, map[uint64]string) {
+	alreadyLingering := lingeringGidSet()
+	gids := make(map[uint64]struct{}, len(snap.all))
+	idle := make(map[uint64]string, len(snap.all))
 	for id, g := range snap.all {
 		if isSDKGoroutine(g, snap.selfID) {
 			continue
 		}
-		set[id] = struct{}{}
+		gids[id] = struct{}{}
+		if _, busy := alreadyLingering[id]; busy {
+			continue
+		}
+		key := goroutineStateKey(g, snap.selfID, covered, ignore)
+		if key == "" {
+			// Non-app idle goroutine (e.g. net/http.(*conn).serve waiting in
+			// readRequest): baseline as "" so if it is still inside an app
+			// handler at END (e.g. after Flusher.Flush), END detects it.
+			idle[id] = ""
+		} else if isQuiescentStatus(g.baseStatus) {
+			// Pre-existing app worker goroutine waiting quiescently (e.g.
+			// blocked on <-jobsCh or select): baseline its idle signature so
+			// work dispatched to it during this test is detected at END.
+			idle[id] = key
+		}
+	}
+	return gids, idle
+}
+
+// lingeringGidSet returns all goroutine IDs currently tracked across
+// lingeringTails. Called with controlMu held.
+func lingeringGidSet() map[uint64]struct{} {
+	if len(lingeringTails) == 0 {
+		return nil
+	}
+	set := make(map[uint64]struct{})
+	for _, lt := range lingeringTails {
+		for _, t := range lt.targets {
+			set[t.gid] = struct{}{}
+		}
 	}
 	return set
 }
 
-// findNewAppGoroutines returns all app-relevant goroutines currently alive in
-// snap whose unique monotonic ID was not present in startSet, sorted by ID.
-func findNewAppGoroutines(snap goroutineSnapshot, startSet map[uint64]struct{}, covered map[string]bool) []*goroutineInfo {
-	var out []*goroutineInfo
+// activeTestGoroutine is a goroutine still running work attributable to the
+// current test at END: either newly spawned since START, or a pre-existing
+// goroutine that transitioned out of its quiescent START baseline into active
+// app work.
+type activeTestGoroutine struct {
+	info    *goroutineInfo
+	idleKey string // mustExitIdleKey for newly spawned, or START idleKey for pre-existing
+}
+
+// findActiveTestGoroutines returns all goroutines currently executing work
+// started during the current test (both newly spawned app-relevant goroutines
+// and pre-existing goroutines that moved off their quiescent START baseline
+// into app code), sorted by ID.
+func findActiveTestGoroutines(snap goroutineSnapshot, startSet map[uint64]struct{}, startIdle map[uint64]string, covered map[string]bool, ignore []string) []activeTestGoroutine {
+	alreadyLingering := lingeringGidSet()
+	var out []activeTestGoroutine
 	for id, g := range snap.all {
-		if _, existed := startSet[id]; existed {
+		if isSDKGoroutine(g, snap.selfID) {
 			continue
 		}
-		if !isAppRelevantGoroutine(g, snap.selfID, covered) {
+		if _, existed := startSet[id]; !existed {
+			if !isAppRelevantGoroutineWithIgnore(g, snap.selfID, covered, ignore) {
+				continue
+			}
+			out = append(out, activeTestGoroutine{info: g, idleKey: mustExitIdleKey})
 			continue
 		}
-		out = append(out, g)
+		if _, busy := alreadyLingering[id]; busy {
+			continue
+		}
+		idleKey, tracked := startIdle[id]
+		if !tracked {
+			continue
+		}
+		curKey := goroutineStateKey(g, snap.selfID, covered, ignore)
+		if curKey != "" && curKey != idleKey {
+			out = append(out, activeTestGoroutine{info: g, idleKey: idleKey})
+		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].id < out[j].id })
+	sort.Slice(out, func(i, j int) bool { return out[i].info.id < out[j].info.id })
 	return out
 }
 
@@ -477,16 +718,16 @@ func describeAppGoroutine(g *goroutineInfo, covered map[string]bool) string {
 	return "goroutine"
 }
 
-// summarizeGoroutineNames returns sorted, unique descriptive function names
-// for gs, capped at maxPartialNames plus "+N".
-func summarizeGoroutineNames(gs []*goroutineInfo, covered map[string]bool) []string {
+// summarizeActiveNames returns sorted, unique descriptive function names for
+// active lingering goroutines, capped at maxPartialNames plus "+N".
+func summarizeActiveNames(gs []activeTestGoroutine, covered map[string]bool) []string {
 	if len(gs) == 0 {
 		return nil
 	}
 	seen := make(map[string]struct{}, len(gs))
 	names := make([]string, 0, len(gs))
-	for _, g := range gs {
-		name := describeAppGoroutine(g, covered)
+	for _, ag := range gs {
+		name := describeAppGoroutine(ag.info, covered)
 		if _, dup := seen[name]; dup {
 			continue
 		}
@@ -501,59 +742,191 @@ func summarizeGoroutineNames(gs []*goroutineInfo, covered map[string]bool) []str
 	return names
 }
 
-// addLingeringTail records a test whose window was cut with lingering
-// goroutines, keeping lingeringTails bounded to maxLingeringTails entries.
+// logLingeringOnce logs a one-time diagnostic per lingering goroutine function
+// name so operators can spot permanent lazy-init goroutines immediately.
 // Called with controlMu held.
-func addLingeringTail(testID string, gids []uint64, names []string) {
-	if len(gids) == 0 {
+func logLingeringOnce(testID string, names []string) {
+	var fresh []string
+	for _, n := range names {
+		if strings.HasPrefix(n, "+") {
+			continue
+		}
+		if !saidLingering[n] {
+			saidLingering[n] = true
+			fresh = append(fresh, n)
+		}
+	}
+	if len(fresh) == 0 {
 		return
 	}
-	// If testID already has an entry (e.g. re-run of the same ID), merge gids.
+	log.Printf("[keploy coverage] test %s ended with lingering app goroutine(s) %v (marking windowCut=true; tune %s, %s, or %s=off if intentional)",
+		testID, fresh, envEndWaitMS, envIgnoreGoroutines, envGoroutineTracking)
+}
+
+// addLingeringTail records a test whose window was cut with lingering
+// goroutine targets. When maxLingeringTails is reached, overflow targets are
+// merged into a bounded catch-all "overflow" entry instead of silently
+// dropping live lingering goroutines. Called with controlMu held.
+func addLingeringTail(testID string, targets []lingeringTarget) {
+	if len(targets) == 0 {
+		return
+	}
 	for _, lt := range lingeringTails {
 		if lt.testID == testID {
-			have := make(map[uint64]struct{}, len(lt.gids))
-			for _, id := range lt.gids {
-				have[id] = struct{}{}
-			}
-			for _, id := range gids {
-				if _, ok := have[id]; !ok {
-					lt.gids = append(lt.gids, id)
-					have[id] = struct{}{}
-				}
-			}
-			lt.names = names
+			mergeTargets(lt, targets, 0)
 			return
 		}
 	}
 	if len(lingeringTails) >= maxLingeringTails {
-		lingeringTails = append(lingeringTails[:0], lingeringTails[len(lingeringTails)-maxLingeringTails+1:]...)
+		// Merge the oldest non-overflow entry into an "overflow" catch-all so
+		// live goroutines are never silently dropped when the cap is hit.
+		var overflow *lingeringTail
+		for _, lt := range lingeringTails {
+			if lt.testID == "overflow" {
+				overflow = lt
+				break
+			}
+		}
+		if overflow == nil {
+			overflow = &lingeringTail{testID: "overflow"}
+			mergeTargets(overflow, lingeringTails[0].targets, maxOverflowTailGids)
+			lingeringTails[0] = overflow
+		} else if len(lingeringTails) > 1 {
+			dropIdx := 0
+			if lingeringTails[0] == overflow {
+				dropIdx = 1
+			}
+			mergeTargets(overflow, lingeringTails[dropIdx].targets, maxOverflowTailGids)
+			lingeringTails = append(lingeringTails[:dropIdx], lingeringTails[dropIdx+1:]...)
+		}
+		if len(lingeringTails) >= maxLingeringTails {
+			// Still at cap because index 0 became overflow; merge index 1 too.
+			if len(lingeringTails) > 1 {
+				mergeTargets(overflow, lingeringTails[1].targets, maxOverflowTailGids)
+				lingeringTails = append(lingeringTails[:1], lingeringTails[2:]...)
+			}
+		}
 	}
-	gidsCopy := make([]uint64, len(gids))
-	copy(gidsCopy, gids)
+	copied := make([]lingeringTarget, len(targets))
+	copy(copied, targets)
 	lingeringTails = append(lingeringTails, &lingeringTail{
-		testID: testID,
-		gids:   gidsCopy,
-		names:  names,
+		testID:  testID,
+		targets: copied,
 	})
 }
 
-// pruneLingeringTails removes exited goroutine IDs from lingeringTails and
-// drops any entry whose goroutines have all exited. Called with controlMu held.
-func pruneLingeringTails(snap goroutineSnapshot) {
+func mergeTargets(dst *lingeringTail, add []lingeringTarget, maxCap int) {
+	have := make(map[uint64]struct{}, len(dst.targets))
+	for _, t := range dst.targets {
+		have[t.gid] = struct{}{}
+	}
+	for _, t := range add {
+		if _, ok := have[t.gid]; ok {
+			continue
+		}
+		if maxCap > 0 && len(dst.targets) >= maxCap {
+			return
+		}
+		dst.targets = append(dst.targets, t)
+		have[t.gid] = struct{}{}
+	}
+}
+
+// resolveTruncatedCutWindows resolves any prior truncated END snapshots once a
+// complete (non-truncated) snapshot is observed, adopting any still-alive app
+// goroutines that were not present at the truncated test's START. Called with
+// controlMu held.
+func resolveTruncatedCutWindows(snap goroutineSnapshot, covered map[string]bool, ignore []string) {
+	if snap.truncated || len(pendingTruncatedCuts) == 0 {
+		return
+	}
+	for _, tc := range pendingTruncatedCuts {
+		var targets []lingeringTarget
+		for id, g := range snap.all {
+			if _, existed := tc.startGids[id]; existed {
+				continue
+			}
+			if !isAppRelevantGoroutineWithIgnore(g, snap.selfID, covered, ignore) {
+				continue
+			}
+			targets = append(targets, lingeringTarget{gid: id, idleKey: mustExitIdleKey})
+		}
+		if len(targets) > 0 {
+			addLingeringTail(tc.testID, targets)
+		}
+	}
+	pendingTruncatedCuts = nil
+}
+
+// adoptLingeringChildren inspects every live goroutine in snap whose parent
+// goroutine ID (from "created by X in goroutine N", Go 1.21+) belongs to a
+// tracked lingeringTail and adopts the child into that same tail BEFORE
+// dead parents are pruned. Runs to a fixed point so multi-hop child chains
+// (G1 -> G2 -> G3) spawned between snapshots stay tracked even after G1 exits.
+// Called with controlMu held.
+func adoptLingeringChildren(snap goroutineSnapshot) {
 	if len(lingeringTails) == 0 {
 		return
 	}
-	w := 0
+	ownerByGid := make(map[uint64]*lingeringTail)
 	for _, lt := range lingeringTails {
-		gw := 0
-		for _, id := range lt.gids {
-			if _, alive := snap.all[id]; alive {
-				lt.gids[gw] = id
-				gw++
+		for _, t := range lt.targets {
+			ownerByGid[t.gid] = lt
+		}
+	}
+	for {
+		adopted := false
+		for id, g := range snap.all {
+			if g.createdByGoid == 0 || isSDKGoroutine(g, snap.selfID) {
+				continue
+			}
+			if _, already := ownerByGid[id]; already {
+				continue
+			}
+			if parentTail := ownerByGid[g.createdByGoid]; parentTail != nil {
+				parentTail.targets = append(parentTail.targets, lingeringTarget{
+					gid:     id,
+					idleKey: mustExitIdleKey,
+				})
+				ownerByGid[id] = parentTail
+				adopted = true
 			}
 		}
-		lt.gids = lt.gids[:gw]
-		if len(lt.gids) > 0 {
+		if !adopted {
+			break
+		}
+	}
+}
+
+// pruneLingeringTails adopts any live children of lingering goroutines first,
+// then removes targets whose goroutines have exited or (for pre-existing
+// worker/handler goroutines) returned to their quiescent START idle state.
+// Called with controlMu held.
+func pruneLingeringTails(snap goroutineSnapshot, covered map[string]bool, ignore []string) {
+	if len(lingeringTails) == 0 {
+		return
+	}
+	adoptLingeringChildren(snap)
+	w := 0
+	for _, lt := range lingeringTails {
+		tw := 0
+		for _, t := range lt.targets {
+			g, alive := snap.all[t.gid]
+			if !alive {
+				continue
+			}
+			if t.idleKey != mustExitIdleKey {
+				curKey := goroutineStateKey(g, snap.selfID, covered, ignore)
+				if curKey == "" || curKey == t.idleKey {
+					// Pre-existing worker/handler returned to idle state.
+					continue
+				}
+			}
+			lt.targets[tw] = t
+			tw++
+		}
+		lt.targets = lt.targets[:tw]
+		if len(lt.targets) > 0 {
 			lingeringTails[w] = lt
 			w++
 		}
@@ -565,11 +938,12 @@ func pruneLingeringTails(snap goroutineSnapshot) {
 }
 
 // collectStartContamination computes the contamination markers for a newly
-// starting test from any unclosed previous window, an immediately preceding
-// cut window, and any still-alive lingering goroutines from earlier cut
-// windows. It also prunes exited lingering goroutines and clears
-// prevWindowCutTestID. Called with controlMu held after clearCounters succeeds.
-func collectStartContamination(unclosedID string, snap goroutineSnapshot, haveSnap bool) []string {
+// starting test from any unclosed previous window, truncated START, immediately
+// preceding cut window, and any still-active lingering goroutines from earlier
+// cut windows. It also resolves pending truncated cuts, adopts children, prunes
+// finished lingering goroutines, and clears prevWindowCutTestID. Called with
+// controlMu held after clearCounters succeeds.
+func collectStartContamination(unclosedID string, snap goroutineSnapshot, haveSnap bool, covered map[string]bool, ignore []string) []string {
 	var reasons []string
 	seen := map[string]struct{}{}
 	add := func(r string) {
@@ -582,35 +956,41 @@ func collectStartContamination(unclosedID string, snap goroutineSnapshot, haveSn
 	if unclosedID != "" {
 		add("unclosed:" + unclosedID)
 	}
+	if haveSnap && snap.truncated {
+		add("stack-truncated")
+	}
 	if prevWindowCutTestID != "" {
 		add("tail:" + prevWindowCutTestID)
 		prevWindowCutTestID = ""
 	}
 	if haveSnap && !snap.truncated {
-		pruneLingeringTails(snap)
+		resolveTruncatedCutWindows(snap, covered, ignore)
+		pruneLingeringTails(snap, covered, ignore)
 	}
-	tailCount := 0
-	extraTails := 0
+	for _, tc := range pendingTruncatedCuts {
+		add("tail:" + tc.testID)
+	}
 	for _, lt := range lingeringTails {
-		r := "tail:" + lt.testID
-		if _, dup := seen[r]; dup {
-			continue
-		}
-		if tailCount < maxPartialNames {
-			add(r)
-			tailCount++
-		} else {
-			extraTails++
-		}
+		add("tail:" + lt.testID)
 	}
-	if extraTails > 0 {
-		reasons = append(reasons, "+"+strconv.Itoa(extraTails))
-	}
-	return reasons
+	return capContaminated(reasons)
 }
 
-// mergeContaminated combines start-time contamination markers (unclosed/tail)
-// with between-tests overlap markers without allocating on the common clean path.
+// capContaminated caps a contamination slice cleanly at maxPartialNames items
+// plus a single "+N" summary entry (avoiding multiple "+N" suffixes).
+func capContaminated(items []string) []string {
+	if len(items) <= maxPartialNames {
+		return items
+	}
+	out := make([]string, maxPartialNames+1)
+	copy(out, items[:maxPartialNames])
+	out[maxPartialNames] = "+" + strconv.Itoa(len(items)-maxPartialNames)
+	return out
+}
+
+// mergeContaminated combines start-time contamination markers (unclosed/tail/
+// stack-truncated) with between-tests overlap markers without allocating on the
+// common clean path, ensuring at most one trailing "+N" summary entry.
 func mergeContaminated(startMarks, gapMarks []string) []string {
 	if len(startMarks) == 0 {
 		return gapMarks
@@ -620,19 +1000,42 @@ func mergeContaminated(startMarks, gapMarks []string) []string {
 		copy(out, startMarks)
 		return out
 	}
-	out := make([]string, 0, len(startMarks)+len(gapMarks))
-	out = append(out, startMarks...)
-	out = append(out, gapMarks...)
-	return out
+	var base []string
+	extra := 0
+	collect := func(src []string) {
+		for _, s := range src {
+			if strings.HasPrefix(s, "+") {
+				if n, err := strconv.Atoi(s[1:]); err == nil && n > 0 {
+					extra += n
+					continue
+				}
+			}
+			base = append(base, s)
+		}
+	}
+	collect(startMarks)
+	collect(gapMarks)
+	if len(base) > maxPartialNames {
+		extra += len(base) - maxPartialNames
+		base = base[:maxPartialNames]
+	}
+	if extra > 0 {
+		base = append(base, "+"+strconv.Itoa(extra))
+	}
+	return base
 }
 
 // resetGoroutineState clears all goroutine-tail tracking state. Used by tests.
 func resetGoroutineState() {
 	activeTracking = false
+	activeTruncatedStart = false
 	startGids = nil
+	startIdleStates = nil
 	activeContaminated = nil
 	lingeringTails = nil
 	prevWindowCutTestID = ""
+	pendingTruncatedCuts = nil
+	saidLingering = map[string]bool{}
 	pendingEndWindowCut = false
 	pendingEndLingering = nil
 	pendingEndContaminated = nil

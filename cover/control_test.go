@@ -229,7 +229,7 @@ func resetGaps(t *testing.T) {
 
 // TestEveryCommandIsAnswered pins the SDK's side of the control socket: every
 // command it reads gets one line before the close, ACK for a command taken and
-// IGNORED for one not taken, each with proto=2, so Keploy can read a close
+// IGNORED for one not taken, each with proto=3, so Keploy can read a close
 // with no answer as a command not taken.
 func TestEveryCommandIsAnswered(t *testing.T) {
 	failed := errors.New("failed")

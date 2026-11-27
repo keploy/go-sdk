@@ -61,19 +61,27 @@
 // control command replies with "ACK proto=3 [bg=<token>] caps=..." declaring
 // live runtime honesty capabilities (windowCut, contaminated, classMismatch,
 // background, asyncExecutors, listenerContamination), compatible with proto>=2
-// collectors. At each START, the hook snapshots live goroutine IDs via
-// runtime.Stack (zero overhead when unarmed or when
-// KEPLOY_GO_GOROUTINE_TRACKING=off). At END, it checks for newly-spawned
-// app-relevant goroutines (excluding go-sdk's own goroutines and idle stdlib
-// keep-alive/housekeeping goroutines), polling up to KEPLOY_GO_END_WAIT_MS
+// collectors. At each START, the hook snapshots live goroutines and quiescent
+// pre-existing app worker baselines via runtime.Stack (zero overhead when
+// unarmed or when KEPLOY_GO_GOROUTINE_TRACKING=off). At END, it checks for
+// newly-spawned app-relevant goroutines AND pre-existing app workers/handlers
+// still off their quiescent START baseline (excluding go-sdk's own goroutines,
+// idle stdlib keep-alive/housekeeping goroutines, and any patterns listed in
+// KEPLOY_GO_IGNORE_GOROUTINES), polling adaptively up to KEPLOY_GO_END_WAIT_MS
 // (default 200ms, max 2000ms; 0 checks immediately) for them to drain. If any
-// remain alive when the wait expires, the test record carries "windowCut":true
-// and "lingeringGoroutines", subsequent tests while those goroutines remain
-// alive (plus the immediate next test) carry "contaminated":["tail:<test>"],
-// and any BACKGROUND record emitted for a gap after a cut window carries
-// "afterCut":true (and does not pollute everGap) so recurring async tails can
-// never be absorbed into calibrated stable background. A START arriving without
-// a preceding END marks the new test with "contaminated":["unclosed:<test>"].
+// remain active when the wait expires, the test record carries "windowCut":true
+// and "lingeringGoroutines", subsequent tests while those goroutines (or any
+// child goroutines they spawn, adopted via Go 1.21+ "created by ... in
+// goroutine N") remain active (plus the immediate next test) carry
+// "contaminated":["tail:<test>"] with overlapLinesByFile omitted, and any
+// BACKGROUND record emitted for a gap after a cut window carries
+// "afterCut":true with an empty executedLinesByFile (and does not pollute
+// everGap) so neither v3 nor older v2 collectors can absorb recurring async
+// tails into calibrated stable background. A START arriving without a preceding
+// END marks the new test with "contaminated":["unclosed:<test>"]. Scope note:
+// stack snapshots cannot observe a child goroutine that is both spawned and
+// exits strictly between two snapshots, nor a dormant time.AfterFunc timer that
+// has not yet fired by END.
 //
 // Between tests. The counters are reset at each START and again after each
 // END, so every window is either one test's or a gap between two. A gap's

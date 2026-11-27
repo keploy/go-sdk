@@ -768,8 +768,8 @@ func (c *ktb1Collector) handle(conn net.Conn, raw []byte) {
 }
 
 // TestTableCommand_KTB1FramingMultiFrameAndErrors verifies:
-//   - IGNORED proto=2 <reason> when meta is unavailable or has 0 first-party files
-//   - ACK proto=2 immediately + async multi-frame KTB1 streaming with SHA-256 verification
+//   - IGNORED proto=3 <reason> when meta is unavailable or has 0 first-party files
+//   - ACK proto=3 caps=... immediately + async multi-frame KTB1 streaming with SHA-256 verification
 //   - clean abort on non-OK reply (no further frames sent)
 //   - concurrent TABLE asks coalesce cleanly without interleaving frames
 func TestTableCommand_KTB1FramingMultiFrameAndErrors(t *testing.T) {

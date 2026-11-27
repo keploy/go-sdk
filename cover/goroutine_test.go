@@ -21,7 +21,7 @@ func TestParseGoroutineStacks(t *testing.T) {
 		"created by " + ownPkgPath + ".serveControl in goroutine 6",
 		"\t/src/cover/hook.go:165 +0x90",
 		"",
-		"goroutine 42 [sleep]:\r",
+		"goroutine 42 [sleep, 2 minutes]:\r",
 		"time.Sleep(0x8f0d180)\r",
 		"\t/usr/local/go/src/runtime/time.go:200 +0x105\r",
 		"example.com/svc/orders.(*Engine[net/http.Request]).CheckFraud.func1(0xc000123456)\r",
@@ -43,7 +43,7 @@ func TestParseGoroutineStacks(t *testing.T) {
 		"created by net/http.(*Server).Serve",
 		"\t/usr/local/go/src/net/http/server.go:3285 +0x4b4",
 		"",
-		"goroutine 77 [chan receive]:",
+		"goroutine 77 [chan receive, 5 minutes]:",
 		"example.com/app%2ev1/worker.Run(0x1)",
 		"\t/app/worker.go:12 +0x10",
 		"created by example.com/app%2ev1/api.(*Handler).Post in goroutine 35",
@@ -59,6 +59,12 @@ func TestParseGoroutineStacks(t *testing.T) {
 	if g42 == nil {
 		t.Fatal("missing goroutine 42")
 	}
+	if g42.baseStatus != "sleep" {
+		t.Fatalf("g42 baseStatus = %q, want sleep (duration stripped)", g42.baseStatus)
+	}
+	if g42.topLine != "/usr/local/go/src/runtime/time.go:200" {
+		t.Fatalf("g42 topLine = %q", g42.topLine)
+	}
 	wantFrames42 := []string{"time.Sleep", "example.com/svc/orders.(*Engine[net/http.Request]).CheckFraud.func1"}
 	wantPkgs42 := []string{"time", "example.com/svc/orders"}
 	if !reflect.DeepEqual(g42.frames, wantFrames42) {
@@ -67,17 +73,19 @@ func TestParseGoroutineStacks(t *testing.T) {
 	if !reflect.DeepEqual(g42.framePkgs, wantPkgs42) {
 		t.Fatalf("g42 framePkgs = %v, want %v", g42.framePkgs, wantPkgs42)
 	}
-	if g42.createdByFn != "main.handleOrder" || g42.createdByPkg != "main" {
-		t.Fatalf("g42 createdBy = (%q, %q), want (main.handleOrder, main) [ancestor must not overwrite]", g42.createdByFn, g42.createdByPkg)
+	if g42.createdByFn != "main.handleOrder" || g42.createdByPkg != "main" || g42.createdByGoid != 35 {
+		t.Fatalf("g42 createdBy = (%q, %q, %d), want (main.handleOrder, main, 35) [ancestor must not overwrite]",
+			g42.createdByFn, g42.createdByPkg, g42.createdByGoid)
 	}
 
 	g55 := snap.all[55]
-	if g55 == nil || g55.createdByFn != "net/http.(*Server).Serve" || g55.createdByPkg != "net/http" {
+	if g55 == nil || g55.createdByFn != "net/http.(*Server).Serve" || g55.createdByPkg != "net/http" || g55.createdByGoid != 0 {
 		t.Fatalf("g55 pre-1.21 createdBy parsed wrong: %+v", g55)
 	}
 
 	g77 := snap.all[77]
-	if g77 == nil || g77.framePkgs[0] != "example.com/app.v1/worker" || g77.createdByPkg != "example.com/app.v1/api" {
+	if g77 == nil || g77.baseStatus != "chan receive" || g77.topLine != "/app/worker.go:12" ||
+		g77.framePkgs[0] != "example.com/app.v1/worker" || g77.createdByPkg != "example.com/app.v1/api" || g77.createdByGoid != 35 {
 		t.Fatalf("g77 percent-escaped pkg parsed wrong: %+v", g77)
 	}
 }
@@ -92,6 +100,7 @@ func TestIsAppRelevantGoroutine(t *testing.T) {
 		name    string
 		g       *goroutineInfo
 		covered map[string]bool
+		ignore  []string
 		want    bool
 	}{
 		{
@@ -137,6 +146,18 @@ func TestIsAppRelevantGoroutine(t *testing.T) {
 			want:    false,
 		},
 		{
+			name:    "prod covered mode excludes pure third-party goroutine with no app frames",
+			g:       &goroutineInfo{id: 34, frames: []string{"github.com/segmentio/kafka-go.(*Writer).run"}, framePkgs: []string{"github.com/segmentio/kafka-go"}, createdByFn: "github.com/segmentio/kafka-go.NewWriter", createdByPkg: "github.com/segmentio/kafka-go"},
+			covered: covered,
+			want:    false,
+		},
+		{
+			name:    "prod covered mode catches third-party goroutine executing app callback",
+			g:       &goroutineInfo{id: 35, frames: []string{"example.com/app/db.OnComplete", "github.com/segmentio/kafka-go.(*Writer).run"}, framePkgs: []string{"example.com/app/db", "github.com/segmentio/kafka-go"}, createdByFn: "github.com/segmentio/kafka-go.NewWriter", createdByPkg: "github.com/segmentio/kafka-go"},
+			covered: covered,
+			want:    true,
+		},
+		{
 			name:    "app goroutine blocked in net/http caught via app frame and createdBy",
 			g:       &goroutineInfo{id: 40, frames: []string{"internal/poll.runtime_pollWait", "net/http.(*Client).Do", "main.fraudAlert"}, framePkgs: []string{"internal/poll", "net/http", "main"}, createdByFn: "main.handleOrder", createdByPkg: "main"},
 			covered: covered,
@@ -155,6 +176,13 @@ func TestIsAppRelevantGoroutine(t *testing.T) {
 			want:    true,
 		},
 		{
+			name:    "explicit ignore pattern excludes matching app goroutine",
+			g:       &goroutineInfo{id: 43, frames: []string{"main.lazyMetricsLoop"}, framePkgs: []string{"main"}, createdByFn: "main.initMetrics", createdByPkg: "main"},
+			covered: covered,
+			ignore:  []string{"lazyMetricsLoop"},
+			want:    false,
+		},
+		{
 			name:    "fallback mode (covered=nil) excludes stdlib and http2",
 			g:       &goroutineInfo{id: 50, frames: []string{"golang.org/x/net/http2.(*serverConn).serve"}, framePkgs: []string{"golang.org/x/net/http2"}, createdByFn: "net/http.(*Server).Serve", createdByPkg: "net/http"},
 			covered: nil,
@@ -170,7 +198,7 @@ func TestIsAppRelevantGoroutine(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := isAppRelevantGoroutine(tc.g, 19, tc.covered)
+			got := isAppRelevantGoroutineWithIgnore(tc.g, 19, tc.covered, tc.ignore)
 			if got != tc.want {
 				t.Fatalf("isAppRelevantGoroutine = %v, want %v", got, tc.want)
 			}
@@ -208,11 +236,15 @@ func TestCapsStringAndProto3BackwardCompat(t *testing.T) {
 		t.Fatalf("inactive caps = %q, want %q", got, wantInactive)
 	}
 
-	// Per-func granularity (non-block coverage) disables windowCut and asyncExecutors.
+	// Per-func granularity (non-block coverage) disables windowCut, asyncExecutors,
+	// AND runtime goroutine tracking consistently.
 	meta = &metaFile{mode: ctrModeAtomic, granularity: ctrGranularityPerFunc}
 	wantPerFunc := "windowCut=false,contaminated=true,classMismatch=false,background=true,asyncExecutors=false,listenerContamination=false"
 	if got := capsString(true); got != wantPerFunc {
 		t.Fatalf("per-func caps = %q, want %q", got, wantPerFunc)
+	}
+	if goroutineTrackingActive() {
+		t.Fatal("goroutineTrackingActive() = true under per-func granularity, want false")
 	}
 	meta = nil
 
@@ -245,7 +277,7 @@ func TestCapsStringAndProto3BackwardCompat(t *testing.T) {
 		{replyIgnored, false, "", false},
 	} {
 		ok, proto, bg, hasBG := parseLegacyProto2(tc.reply)
-		if ok != tc.wantOK || proto < 2 || proto != 3 || bg != tc.wantBG || hasBG != tc.wantHas {
+		if ok != tc.wantOK || proto != 3 || bg != tc.wantBG || hasBG != tc.wantHas {
 			t.Fatalf("legacy parse(%q) = (ok=%v proto=%d bg=%q hasBG=%v), want (ok=%v proto=3 bg=%q hasBG=%v)",
 				tc.reply, ok, proto, bg, hasBG, tc.wantOK, tc.wantBG, tc.wantHas)
 		}
@@ -301,9 +333,10 @@ func TestGoroutineTrackingKillSwitchDoesNotSnapshot(t *testing.T) {
 }
 
 func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
-	t.Run("unclosed START->START marks next window contaminated", func(t *testing.T) {
+	t.Run("unclosed START->START marks next window contaminated and omits overlapLinesByFile", func(t *testing.T) {
 		t.Setenv(envEndWaitMS, "0")
-		h := newGapHarness(t, lines(appFile, 3))
+		h := newGapHarness(t, map[string][]int{appFile: {3}, workerFile: {7}})
+		everGap[workerFile] = map[int]struct{}{7: {}}
 		snapshotGoroutines = func() goroutineSnapshot {
 			return goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}}
 		}
@@ -311,9 +344,13 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 		// No END set-0/test-1 -> unclosed!
 		h.do("START set-0/test-2", replyStartUnasked)
 		h.do("END set-0/test-2", replyTaken)
-		got, _ := h.test("set-0/test-2")["contaminated"].([]interface{})
-		if !reflect.DeepEqual(got, []interface{}{"unclosed:set-0/test-1"}) {
-			t.Fatalf("test-2 contaminated = %v, want [unclosed:set-0/test-1]", got)
+		rec2 := h.test("set-0/test-2")
+		got, _ := rec2["contaminated"].([]interface{})
+		if !reflect.DeepEqual(got, []interface{}{"unclosed:set-0/test-1", "between-tests:" + workerFile}) {
+			t.Fatalf("test-2 contaminated = %v, want [unclosed:set-0/test-1 between-tests:%s]", got, workerFile)
+		}
+		if _, hasOverlap := rec2["overlapLinesByFile"]; hasOverlap {
+			t.Fatalf("test-2 with unclosed mark must omit overlapLinesByFile so confirmBetweenTests cannot trust it: %v", rec2)
 		}
 	})
 
@@ -325,10 +362,9 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 		snapshotGoroutines = func() goroutineSnapshot { return cur }
 
 		h.do("START set-0/T1", replyStartAskedBy("r1"))
-		// T1 spawns lingering goroutine 99.
 		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{
 			1:  {id: 1},
-			99: {id: 99, frames: []string{"main.fraudAlert"}, framePkgs: []string{"main"}, createdByFn: "main.handle", createdByPkg: "main"},
+			99: {id: 99, baseStatus: "sleep", frames: []string{"main.fraudAlert"}, framePkgs: []string{"main"}, createdByFn: "main.handle", createdByPkg: "main"},
 		}}
 		h.do("END set-0/T1", replyTaken)
 		t1 := h.test("set-0/T1")
@@ -344,7 +380,7 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 		h.run("set-0/T2")
 		t2 := h.test("set-0/T2")
 		if !reflect.DeepEqual(t2["contaminated"], []interface{}{"tail:set-0/T1"}) {
-			t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1] (immediate next test after cut END)", t2["contaminated"])
+			t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", t2["contaminated"])
 		}
 		if _, hasCut := t2["windowCut"]; hasCut {
 			t.Fatalf("T2 unexpectedly marked windowCut: %v", t2)
@@ -361,44 +397,202 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 		}
 	})
 
-	t.Run("stack truncation fails closed", func(t *testing.T) {
+	t.Run("B1 child goroutine spawned in gap after parent exits stays tracked", func(t *testing.T) {
 		t.Setenv(envEndWaitMS, "0")
-		h := newGapHarness(t, lines(appFile, 3), none(), lines(appFile, 4))
+		h := newGapHarness(t, lines(appFile, 3), none(), lines(appFile, 4), lines(workerFile, 9), lines(appFile, 5), none(), lines(appFile, 6))
+		h.ask("r1")
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}}
+		snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+		// T1 spawns G1 (99) -> cut.
+		h.do("START set-0/T1", replyStartAskedBy("r1"))
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{
+			1:  {id: 1},
+			99: {id: 99, baseStatus: "sleep", frames: []string{"main.fraudAlert"}, framePkgs: []string{"main"}, createdByFn: "main.handle", createdByPkg: "main"},
+		}}
+		h.do("END set-0/T1", replyTaken)
+
+		// T2 runs while G1 is alive -> contaminated tail:T1.
+		h.run("set-0/T2")
+		if !reflect.DeepEqual(h.test("set-0/T2")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T2")["contaminated"])
+		}
+
+		// In gap T2->T3, G1 spawns child G2 (100, createdByGoid=99) and G1 EXITS!
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{
+			1:   {id: 1},
+			100: {id: 100, baseStatus: "sleep", frames: []string{"main.publishAlert"}, framePkgs: []string{"main"}, createdByFn: "main.fraudAlert", createdByPkg: "main", createdByGoid: 99},
+		}}
+		h.do("START set-0/T3", replyStartAskedBy("r1"))
+		// G2 exits during T3.
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}}
+		h.do("END set-0/T3", replyTaken)
+
+		if !reflect.DeepEqual(h.test("set-0/T3")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("B1 failed: T3 contaminated = %v, want [tail:set-0/T1] via adopted child G2", h.test("set-0/T3")["contaminated"])
+		}
+		// Gap T2->T3 must be afterCut with empty executedLinesByFile!
+		bgs := h.backgrounds()
+		if len(bgs) != 1 || bgs[0]["afterCut"] != true {
+			t.Fatalf("B1 gap background = %v, want afterCut:true", bgs)
+		}
+		if linesMap, _ := bgs[0]["executedLinesByFile"].(map[string]interface{}); len(linesMap) != 0 {
+			t.Fatalf("afterCut background must send empty executedLinesByFile for v2 collector safety: %v", bgs[0])
+		}
+
+		// T4 is clean after G2 exited!
+		h.run("set-0/T4")
+		if _, hasCont := h.test("set-0/T4")["contaminated"]; hasCont {
+			t.Fatalf("T4 should be clean after G2 exited: %v", h.test("set-0/T4"))
+		}
+	})
+
+	t.Run("B2 pre-existing worker pool job detected via quiescent START baseline", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		h := newGapHarness(t, lines(appFile, 3), none(), lines(appFile, 4), none(), lines(appFile, 5))
+		idleWorker := &goroutineInfo{
+			id: 14, baseStatus: "chan receive", topLine: "/app/worker.go:20",
+			frames: []string{"main.poolWorker"}, framePkgs: []string{"main"},
+			createdByFn: "main.init", createdByPkg: "main",
+		}
+		busyWorker := &goroutineInfo{
+			id: 14, baseStatus: "sleep", topLine: "/usr/local/go/src/runtime/time.go:200",
+			frames: []string{"time.Sleep", "main.processJob", "main.poolWorker"}, framePkgs: []string{"time", "main", "main"},
+			createdByFn: "main.init", createdByPkg: "main",
+		}
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 14: idleWorker}}
+		snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+		// T1 dispatches a job to pre-existing worker 14; still busy at END T1.
+		h.do("START set-0/T1", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 14: busyWorker}}
+		h.do("END set-0/T1", replyTaken)
+		t1 := h.test("set-0/T1")
+		if t1["windowCut"] != true {
+			t.Fatalf("B2 failed: T1 windowCut = %v, want true for busy pool worker", t1["windowCut"])
+		}
+		if !reflect.DeepEqual(t1["lingeringGoroutines"], []interface{}{"main.processJob"}) {
+			t.Fatalf("T1 lingeringGoroutines = %v, want [main.processJob]", t1["lingeringGoroutines"])
+		}
+
+		// T2 runs while worker 14 is still busy, then worker returns to idle during T2.
+		h.do("START set-0/T2", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 14: idleWorker}}
+		h.do("END set-0/T2", replyTaken)
+		if !reflect.DeepEqual(h.test("set-0/T2")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T2")["contaminated"])
+		}
+
+		// T3 is clean once worker 14 returned to idle!
+		h.run("set-0/T3")
+		if _, hasCont := h.test("set-0/T3")["contaminated"]; hasCont {
+			t.Fatalf("T3 should be clean after pool worker returned to idle: %v", h.test("set-0/T3"))
+		}
+	})
+
+	t.Run("stack truncation at END resolves hidden goroutine on next complete snapshot", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		h := newGapHarness(t, lines(appFile, 3), none(), lines(appFile, 4), none(), lines(appFile, 5), none(), lines(appFile, 6))
 		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}}
 		snapshotGoroutines = func() goroutineSnapshot { return cur }
 
 		h.do("START set-0/T1", replyStartUnasked)
+		// END T1 is truncated and hides goroutine 500!
 		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}, truncated: true}
 		h.do("END set-0/T1", replyTaken)
-		t1 := h.test("set-0/T1")
-		if t1["windowCut"] != true {
-			t.Fatalf("truncated T1 windowCut = %v, want true", t1["windowCut"])
-		}
-		if !reflect.DeepEqual(t1["lingeringGoroutines"], []interface{}{"stack-truncated"}) {
-			t.Fatalf("truncated T1 lingeringGoroutines = %v, want [stack-truncated]", t1["lingeringGoroutines"])
+		if h.test("set-0/T1")["windowCut"] != true {
+			t.Fatalf("truncated T1 windowCut = %v, want true", h.test("set-0/T1")["windowCut"])
 		}
 
-		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}}
+		// At START T2, truncation cleared up and hidden goroutine 500 is now visible!
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{
+			1:   {id: 1},
+			500: {id: 500, baseStatus: "sleep", frames: []string{"main.hiddenLong"}, framePkgs: []string{"main"}, createdByFn: "main.handle", createdByPkg: "main"},
+		}}
 		h.run("set-0/T2")
 		if !reflect.DeepEqual(h.test("set-0/T2")["contaminated"], []interface{}{"tail:set-0/T1"}) {
-			t.Fatalf("T2 after truncated T1 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T2")["contaminated"])
+			t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T2")["contaminated"])
+		}
+
+		// At START T3, goroutine 500 is STILL alive -> T3 MUST STILL be contaminated!
+		h.do("START set-0/T3", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}}
+		h.do("END set-0/T3", replyTaken)
+		if !reflect.DeepEqual(h.test("set-0/T3")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("SF1 failed: T3 contaminated = %v, want [tail:set-0/T1] for goroutine hidden by truncated END T1", h.test("set-0/T3")["contaminated"])
+		}
+
+		// After goroutine 500 exits, T4 is clean!
+		h.run("set-0/T4")
+		if _, hasCont := h.test("set-0/T4")["contaminated"]; hasCont {
+			t.Fatalf("T4 should be clean after hidden goroutine exited: %v", h.test("set-0/T4"))
 		}
 	})
 
-	t.Run("lingeringTails and contaminated stay bounded under sustained leaks", func(t *testing.T) {
+	t.Run("truncated START fails closed without poisoning baseline", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		h := newGapHarness(t, lines(appFile, 3))
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}, truncated: true}
+		snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+		h.do("START set-0/T1", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}}
+		h.do("END set-0/T1", replyTaken)
+		t1 := h.test("set-0/T1")
+		if t1["windowCut"] != true {
+			t.Fatalf("truncated-START T1 windowCut = %v, want true", t1["windowCut"])
+		}
+		if !reflect.DeepEqual(t1["contaminated"], []interface{}{"stack-truncated"}) {
+			t.Fatalf("truncated-START T1 contaminated = %v, want [stack-truncated]", t1["contaminated"])
+		}
+	})
+
+	t.Run("lingeringTails overflow preserves live gids and mergeContaminated emits single +N", func(t *testing.T) {
 		resetGaps(t)
 		alive := map[uint64]*goroutineInfo{1: {id: 1}}
 		for i := 0; i < 80; i++ {
 			gid := uint64(100 + i)
 			alive[gid] = &goroutineInfo{id: gid}
-			addLingeringTail(fmt.Sprintf("set-0/T%d", i), []uint64{gid}, []string{"main.leak"})
+			addLingeringTail(fmt.Sprintf("set-0/T%d", i), []lingeringTarget{{gid: gid, idleKey: mustExitIdleKey}})
 		}
 		if len(lingeringTails) != maxLingeringTails {
 			t.Fatalf("len(lingeringTails) = %d, want capped at %d", len(lingeringTails), maxLingeringTails)
 		}
-		marks := collectStartContamination("", goroutineSnapshot{all: alive}, true)
-		if len(marks) != maxPartialNames+1 || !strings.HasPrefix(marks[maxPartialNames], "+") {
-			t.Fatalf("marks = %v, want %d tail entries + +N summary", marks, maxPartialNames)
+		// Verify earliest goroutine 100 was preserved in the "overflow" entry!
+		found100 := false
+		for _, lt := range lingeringTails {
+			if lt.testID == "overflow" {
+				for _, tgt := range lt.targets {
+					if tgt.gid == 100 {
+						found100 = true
+					}
+				}
+			}
+		}
+		if !found100 {
+			t.Fatal("oldest live goroutine 100 was dropped instead of merged into overflow catch-all")
+		}
+		startMarks := collectStartContamination("", goroutineSnapshot{all: alive}, true, nil, nil)
+		gapMarks := []string{"between-tests:a.go", "between-tests:b.go", "+4"}
+		merged := mergeContaminated(startMarks, gapMarks)
+		plusCount := 0
+		for _, m := range merged {
+			if strings.HasPrefix(m, "+") {
+				plusCount++
+			}
+		}
+		if plusCount != 1 || len(merged) != maxPartialNames+1 {
+			t.Fatalf("merged = %v, want exactly 8 entries + single +N summary", merged)
+		}
+	})
+
+	t.Run("maybeShrinkStackBuf releases oversized transient buffer", func(t *testing.T) {
+		old := stackBuf
+		t.Cleanup(func() { stackBuf = old })
+		stackBuf = make([]byte, 4<<20)
+		maybeShrinkStackBuf(16 << 10)
+		if len(stackBuf) >= stackShrinkThreshold {
+			t.Fatalf("stackBuf stayed at %d bytes after small snapshot, want shrunk below %d", len(stackBuf), stackShrinkThreshold)
 		}
 	})
 
@@ -411,7 +605,7 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 		if strings.Contains(string(clean), "afterCut") {
 			t.Fatalf("clean background unexpectedly contains afterCut: %s", clean)
 		}
-		cut, err := encodeBackgroundWithMeta("set-0/T1", "set-0/T2", map[string][]int{workerFile: {7}}, true)
+		cut, err := encodeBackgroundWithMeta("set-0/T1", "set-0/T2", map[string][]int{}, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -424,6 +618,9 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 		}
 		if dec["afterCut"] != true {
 			t.Fatalf("afterCut = %v, want true (%s)", dec["afterCut"], cut)
+		}
+		if ls, _ := dec["executedLinesByFile"].(map[string]interface{}); len(ls) != 0 {
+			t.Fatalf("afterCut executedLinesByFile = %v, want empty {}", ls)
 		}
 	})
 }
