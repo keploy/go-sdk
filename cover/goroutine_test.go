@@ -553,7 +553,7 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 		for i := 0; i < 80; i++ {
 			gid := uint64(100 + i)
 			alive[gid] = &goroutineInfo{id: gid}
-			addLingeringTail(fmt.Sprintf("set-0/T%d", i), []lingeringTarget{{gid: gid, idleKey: mustExitIdleKey}})
+			addLingeringTail(fmt.Sprintf("set-0/T%d", i), []lingeringTarget{{gid: gid, mustExit: true}}, nil)
 		}
 		if len(lingeringTails) != maxLingeringTails {
 			t.Fatalf("len(lingeringTails) = %d, want capped at %d", len(lingeringTails), maxLingeringTails)
@@ -583,6 +583,222 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 		}
 		if plusCount != 1 || len(merged) != maxPartialNames+1 {
 			t.Fatalf("merged = %v, want exactly 8 entries + single +N summary", merged)
+		}
+	})
+
+	t.Run("N1 adoption excludes pre-existing children, infra persistConn loops, and ignored goroutines", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		t.Setenv(envIgnoreGoroutines, "lazyIgnored")
+		h := newGapHarness(t, lines(appFile, 3), none(), lines(appFile, 4), none(), lines(appFile, 5))
+		meta = &metaFile{
+			mode:        ctrModeAtomic,
+			granularity: ctrGranularityPerBlk,
+			pkgs:        []metaPkg{{path: "example.com/app"}},
+		}
+		// Pre-existing keep-alive conn (55) previously spawned a sync.Once janitor (20)
+		// BEFORE START T1.
+		connIdle := &goroutineInfo{
+			id: 55, baseStatus: "IO wait", topLine: "/go/net/http/server.go:100",
+			frames: []string{"net/http.(*conn).serve"}, framePkgs: []string{"net/http"},
+			createdByFn: "net/http.(*Server).Serve", createdByPkg: "net/http",
+		}
+		connBusy := &goroutineInfo{
+			id: 55, baseStatus: "sleep", topLine: "/app/handler.go:40",
+			frames: []string{"main.slowFlush", "net/http.(*conn).serve"}, framePkgs: []string{"main", "net/http"},
+			createdByFn: "net/http.(*Server).Serve", createdByPkg: "net/http",
+		}
+		preExistingJanitor := &goroutineInfo{
+			id: 20, baseStatus: "sleep", topLine: "/app/cache.go:10",
+			frames: []string{"main.cacheJanitor"}, framePkgs: []string{"main"},
+			createdByFn: "main.initCache", createdByPkg: "main", createdByGoid: 55,
+		}
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 55: connIdle, 20: preExistingJanitor}}
+		snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+		// T1: conn 55 stays inside main.slowFlush past END_WAIT -> cut!
+		h.do("START set-0/T1", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 55: connBusy, 20: preExistingJanitor}}
+		h.do("END set-0/T1", replyTaken)
+		if h.test("set-0/T1")["windowCut"] != true {
+			t.Fatalf("T1 windowCut = %v, want true", h.test("set-0/T1")["windowCut"])
+		}
+		// T1 itself carries contaminated:["window-cut"] for older v2 collector safety!
+		if !reflect.DeepEqual(h.test("set-0/T1")["contaminated"], []interface{}{"window-cut"}) {
+			t.Fatalf("N4: T1 contaminated = %v, want [window-cut]", h.test("set-0/T1")["contaminated"])
+		}
+
+		// Before START T2: conn 55 returns to idle, and two non-adoptable children
+		// exist with createdByGoid=55:
+		//  - preExistingJanitor (gid 20, existed before T1 cut!)
+		//  - persistConn readLoop (gid 200, stdlib net/http infra!)
+		//  - lazyIgnored (gid 201, matched by KEPLOY_GO_IGNORE_GOROUTINES!)
+		persistLoop := &goroutineInfo{
+			id: 200, baseStatus: "IO wait", topLine: "/go/net/http/transport.go:200",
+			frames: []string{"net/http.(*persistConn).readLoop"}, framePkgs: []string{"net/http"},
+			createdByFn: "net/http.(*Transport).dialConn", createdByPkg: "net/http", createdByGoid: 55,
+		}
+		ignoredChild := &goroutineInfo{
+			id: 201, baseStatus: "sleep", topLine: "/app/metrics.go:5",
+			frames: []string{"main.lazyIgnored"}, framePkgs: []string{"main"},
+			createdByFn: "main.slowFlush", createdByPkg: "main", createdByGoid: 55,
+		}
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{
+			1: {id: 1}, 55: connIdle, 20: preExistingJanitor, 200: persistLoop, 201: ignoredChild,
+		}}
+		h.run("set-0/T2")
+		// Immediate T2 gets tail:T1 (boundary guarantee), and conn 55 + all 3 children clear!
+		if !reflect.DeepEqual(h.test("set-0/T2")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T2")["contaminated"])
+		}
+
+		// T3 MUST be 100% clean (none of gid 20, 200, 201 were falsely adopted!).
+		h.run("set-0/T3")
+		if _, hasCont := h.test("set-0/T3")["contaminated"]; hasCont {
+			t.Fatalf("N1 failed: T3 falsely contaminated by non-adoptable child: %v", h.test("set-0/T3"))
+		}
+	})
+
+	t.Run("N2 new keep-alive conn.serve clears once handler returns instead of sticking as must-exit", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		h := newGapHarness(t, lines(appFile, 3), none(), lines(appFile, 4), none(), lines(appFile, 5))
+		meta = &metaFile{
+			mode:        ctrModeAtomic,
+			granularity: ctrGranularityPerBlk,
+			pkgs:        []metaPkg{{path: "example.com/app"}},
+		}
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}}
+		snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+		// T1 opens a NEW keep-alive conn (gid 88, created by net/http.(*Server).Serve)
+		// whose handler is still running main.slowFlush at END T1.
+		h.do("START set-0/T1", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{
+			1: {id: 1},
+			88: {
+				id: 88, baseStatus: "sleep", topLine: "/app/handler.go:40",
+				frames: []string{"main.slowFlush", "net/http.(*conn).serve"}, framePkgs: []string{"main", "net/http"},
+				createdByFn: "net/http.(*Server).Serve", createdByPkg: "net/http",
+			},
+		}}
+		h.do("END set-0/T1", replyTaken)
+		if h.test("set-0/T1")["windowCut"] != true {
+			t.Fatalf("T1 windowCut = %v, want true", h.test("set-0/T1")["windowCut"])
+		}
+
+		// Handler finishes; conn 88 stays alive idle on keep-alive (NO app frames!).
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{
+			1: {id: 1},
+			88: {
+				id: 88, baseStatus: "IO wait", topLine: "/go/net/http/server.go:100",
+				frames: []string{"net/http.(*conn).readRequest", "net/http.(*conn).serve"}, framePkgs: []string{"net/http", "net/http"},
+				createdByFn: "net/http.(*Server).Serve", createdByPkg: "net/http",
+			},
+		}}
+		h.run("set-0/T2")
+		h.run("set-0/T3")
+		if _, hasCont := h.test("set-0/T3")["contaminated"]; hasCont {
+			t.Fatalf("N2 failed: idle keep-alive conn 88 stuck as must-exit on T3: %v", h.test("set-0/T3"))
+		}
+	})
+
+	t.Run("N3 startup-backoff consumer re-baselines cleanly after settling in steady-state IO wait", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		h := newGapHarness(t, lines(appFile, 3), none(), lines(appFile, 4), none(), lines(appFile, 5), none(), lines(appFile, 6))
+		backoff := &goroutineInfo{
+			id: 15, baseStatus: "sleep", topLine: "/app/consumer.go:12",
+			frames: []string{"time.Sleep", "main.consumerLoop"}, framePkgs: []string{"time", "main"},
+			createdByFn: "main.main", createdByPkg: "main",
+		}
+		steady := &goroutineInfo{
+			id: 15, baseStatus: "IO wait", topLine: "/app/consumer.go:25",
+			frames: []string{"internal/poll.runtime_pollWait", "main.consume", "main.consumerLoop"}, framePkgs: []string{"internal/poll", "main", "main"},
+			createdByFn: "main.main", createdByPkg: "main",
+		}
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: backoff}}
+		snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+		// T1 starts while consumer is in backoff Sleep; consumer connects into steady IO wait.
+		h.do("START set-0/T1", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: steady}}
+		h.do("END set-0/T1", replyTaken)
+		if h.test("set-0/T1")["windowCut"] != true {
+			t.Fatalf("T1 windowCut = %v, want true", h.test("set-0/T1")["windowCut"])
+		}
+
+		// T2: steady IO wait (streak 1 -> still marked tail:T1).
+		h.run("set-0/T2")
+		if !reflect.DeepEqual(h.test("set-0/T2")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T2")["contaminated"])
+		}
+
+		// T3: STILL at steady IO wait (streak 2 -> re-baselined & cleared!).
+		h.run("set-0/T3")
+		if _, hasCont := h.test("set-0/T3")["contaminated"]; hasCont {
+			t.Fatalf("N3 failed: startup-backoff consumer stuck forever on T3: %v", h.test("set-0/T3"))
+		}
+	})
+
+	t.Run("N4 windowCut omits overlapLinesByFile and carries window-cut mark for v2 collectors", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		h := newGapHarness(t, map[string][]int{appFile: {3}, workerFile: {7}})
+		everGap[workerFile] = map[int]struct{}{7: {}}
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}}
+		snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+		h.do("START set-0/T1", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{
+			1:  {id: 1},
+			99: {id: 99, baseStatus: "sleep", frames: []string{"main.fraudAlert"}, framePkgs: []string{"main"}, createdByFn: "main.handle", createdByPkg: "main"},
+		}}
+		h.do("END set-0/T1", replyTaken)
+		t1 := h.test("set-0/T1")
+		if t1["windowCut"] != true {
+			t.Fatalf("T1 windowCut = %v, want true", t1["windowCut"])
+		}
+		if _, hasOverlap := t1["overlapLinesByFile"]; hasOverlap {
+			t.Fatalf("N4 failed: windowCut test T1 must omit overlapLinesByFile: %v", t1)
+		}
+		if !reflect.DeepEqual(t1["contaminated"], []interface{}{"window-cut", "between-tests:" + workerFile}) {
+			t.Fatalf("N4 failed: T1 contaminated = %v, want [window-cut between-tests:%s]", t1["contaminated"], workerFile)
+		}
+	})
+
+	t.Run("N5 truncated START stays fail-closed past T+1 until hidden goroutine exits", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		h := newGapHarness(t, lines(appFile, 3), none(), lines(appFile, 4), none(), lines(appFile, 5), none(), lines(appFile, 6), none(), lines(appFile, 7))
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}}
+		snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+		// T0 establishes lastCompleteGids = {1}.
+		h.run("set-0/T0")
+
+		// START T1 is truncated, and T1 spawns goroutine 777!
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}, truncated: true}
+		h.do("START set-0/T1", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{
+			1:   {id: 1},
+			777: {id: 777, baseStatus: "sleep", frames: []string{"main.hiddenFromTruncStart"}, framePkgs: []string{"main"}, createdByFn: "main.handle", createdByPkg: "main"},
+		}}
+		h.do("END set-0/T1", replyTaken)
+
+		// T2 starts with complete snapshot -> resolves 777 into T1's tail!
+		h.run("set-0/T2")
+		if !reflect.DeepEqual(h.test("set-0/T2")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T2")["contaminated"])
+		}
+
+		// T3 starts while 777 is STILL alive -> MUST still be contaminated!
+		h.do("START set-0/T3", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}}
+		h.do("END set-0/T3", replyTaken)
+		if !reflect.DeepEqual(h.test("set-0/T3")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("N5 failed: T3 contaminated = %v, want [tail:set-0/T1] while 777 is alive", h.test("set-0/T3")["contaminated"])
+		}
+
+		// T4 is clean after 777 exited!
+		h.run("set-0/T4")
+		if _, hasCont := h.test("set-0/T4")["contaminated"]; hasCont {
+			t.Fatalf("T4 should be clean after 777 exited: %v", h.test("set-0/T4"))
 		}
 	})
 

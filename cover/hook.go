@@ -409,13 +409,17 @@ func runTestCommand(command string) string {
 			haveSnap = true
 		}
 		unclosedID := currentTestID
-		if unclosedID != "" && activeTracking && haveSnap && startGids != nil {
-			if curSnap.truncated {
+		if unclosedID != "" && activeTracking && haveSnap {
+			if curSnap.truncated || activeTruncatedStart || startGids == nil {
 				// Fail closed on stack truncation during unclosed window.
 				prevWindowCutTestID = unclosedID
+				base := startGids
+				if base == nil {
+					base = buildTruncatedStartUnion(curSnap)
+				}
 				pendingTruncatedCuts = append(pendingTruncatedCuts, truncatedCutWindow{
 					testID:    unclosedID,
-					startGids: startGids,
+					startGids: base,
 				})
 				if len(pendingTruncatedCuts) > maxLingeringTails {
 					pendingTruncatedCuts = pendingTruncatedCuts[len(pendingTruncatedCuts)-maxLingeringTails:]
@@ -423,9 +427,9 @@ func runTestCommand(command string) string {
 			} else if alive := findActiveTestGoroutines(curSnap, startGids, startIdleStates, covered, ignore); len(alive) > 0 {
 				targets := make([]lingeringTarget, len(alive))
 				for i, ag := range alive {
-					targets[i] = lingeringTarget{gid: ag.info.id, idleKey: ag.idleKey}
+					targets[i] = lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig}
 				}
-				addLingeringTail(unclosedID, targets)
+				addLingeringTail(unclosedID, targets, captureKnownGidsExcluding(curSnap, targets))
 			}
 		}
 		// Compute whether the gap since prevTestID followed a cut window or ran
@@ -458,10 +462,11 @@ func runTestCommand(command string) string {
 		if tracking {
 			activeTracking = true
 			if curSnap.truncated {
-				// Do not store an incomplete baseline on truncated START; END
-				// will fail closed until a complete snapshot is observed.
+				// Record the union of the last complete baseline and visible
+				// gids so END can register a pending truncated cut window that
+				// resolves hidden goroutines on the next complete snapshot.
 				activeTruncatedStart = true
-				startGids = nil
+				startGids = buildTruncatedStartUnion(curSnap)
 				startIdleStates = nil
 			} else {
 				activeTruncatedStart = false
@@ -501,14 +506,26 @@ func runTestCommand(command string) string {
 				windowCut = true
 				lingeringNames = []string{"stack-truncated"}
 				prevWindowCutTestID = id
+				// Fail closed beyond T+1: retain the pre-truncation union
+				// baseline so the next complete snapshot adopts any goroutine
+				// spawned during this truncated-START test.
+				pendingTruncatedCuts = append(pendingTruncatedCuts, truncatedCutWindow{
+					testID:    id,
+					startGids: testStartGids,
+				})
+				if len(pendingTruncatedCuts) > maxLingeringTails {
+					pendingTruncatedCuts = pendingTruncatedCuts[len(pendingTruncatedCuts)-maxLingeringTails:]
+				}
 			} else {
 				waitDur := endWaitDuration()
 				snap := snapshotGoroutines()
 				active := findActiveTestGoroutines(snap, testStartGids, testStartIdle, covered, ignore)
-				if (len(active) > 0 || snap.truncated) && waitDur > 0 {
+				// Never burn END_WAIT repeating stop-the-world 16 MiB dumps when
+				// already truncated; only poll while !snap.truncated && len(active) > 0.
+				if !snap.truncated && len(active) > 0 && waitDur > 0 {
 					deadline := time.Now().Add(waitDur)
 					poll := endWaitPollMin
-					for len(active) > 0 || snap.truncated {
+					for !snap.truncated && len(active) > 0 {
 						rem := time.Until(deadline)
 						if rem <= 0 {
 							break
@@ -533,19 +550,24 @@ func runTestCommand(command string) string {
 				// tests are clean as soon as all lingering work finishes.
 				if !snap.truncated {
 					resolveTruncatedCutWindows(snap, covered, ignore)
-					pruneLingeringTails(snap, covered, ignore)
+					pruneLingeringTails(snap, covered, ignore, false)
+					// Refresh lastCompleteGids with non-SDK gids from this complete END.
+					complete := make(map[uint64]struct{}, len(snap.all))
+					for gid, g := range snap.all {
+						if !isSDKGoroutine(g, snap.selfID) {
+							complete[gid] = struct{}{}
+						}
+					}
+					lastCompleteGids = complete
 				}
 				if snap.truncated {
 					windowCut = true
-					// Keep any visible active goroutines from the truncated
-					// dump AND keep testStartGids so the next complete snapshot
-					// resolves anything past the 16 MiB cap.
 					if len(active) > 0 {
 						targets := make([]lingeringTarget, len(active))
 						for i, ag := range active {
-							targets[i] = lingeringTarget{gid: ag.info.id, idleKey: ag.idleKey}
+							targets[i] = lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig}
 						}
-						addLingeringTail(id, targets)
+						addLingeringTail(id, targets, captureKnownGidsExcluding(snap, targets))
 					}
 					pendingTruncatedCuts = append(pendingTruncatedCuts, truncatedCutWindow{
 						testID:    id,
@@ -560,10 +582,10 @@ func runTestCommand(command string) string {
 					windowCut = true
 					targets := make([]lingeringTarget, len(active))
 					for i, ag := range active {
-						targets[i] = lingeringTarget{gid: ag.info.id, idleKey: ag.idleKey}
+						targets[i] = lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig}
 					}
 					lingeringNames = summarizeActiveNames(active, covered)
-					addLingeringTail(id, targets)
+					addLingeringTail(id, targets, captureKnownGidsExcluding(snap, targets))
 					prevWindowCutTestID = id
 					logLingeringOnce(id, lingeringNames)
 				}
@@ -812,13 +834,20 @@ func reportCoverage(testID string) error {
 		log.Printf("[keploy coverage] test %s ran no measured line", testID)
 	}
 	gapPartial, overlap := overlapBy(lines)
-	if len(pendingEndContaminated) > 0 {
+	startMarks := pendingEndContaminated
+	if len(startMarks) > 0 || pendingEndWindowCut {
 		// Never emit overlapLinesByFile alongside start-time contamination
-		// (tail/unclosed/stack-truncated), so a collector's between-tests
-		// overlap confirmation cannot override an async-tail mark.
+		// (tail/unclosed/stack-truncated) or a windowCut test, so a collector's
+		// between-tests overlap confirmation cannot override it.
 		overlap = nil
 	}
-	partial := mergeContaminated(pendingEndContaminated, gapPartial)
+	if pendingEndWindowCut && len(startMarks) == 0 {
+		// Also mark contaminated:["window-cut"] when no start-time mark is
+		// already present so older proto=2 collectors (which ignore windowCut)
+		// fail closed on the cut test itself.
+		startMarks = []string{"window-cut"}
+	}
+	partial := mergeContaminated(startMarks, gapPartial)
 	data, err := encodeRecordWithMeta(testID, lines, blocks, partial, overlap, pendingEndWindowCut, pendingEndLingering)
 	if err != nil {
 		return err

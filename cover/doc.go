@@ -80,8 +80,11 @@
 // tails into calibrated stable background. A START arriving without a preceding
 // END marks the new test with "contaminated":["unclosed:<test>"]. Scope note:
 // stack snapshots cannot observe a child goroutine that is both spawned and
-// exits strictly between two snapshots, nor a dormant time.AfterFunc timer that
-// has not yet fired by END.
+// exits strictly between two snapshots (nor a grandchild orphaned when its
+// intermediate parent spawns and exits between snapshots), nor a dormant
+// time.AfterFunc timer that has not yet fired by END; parent-goid child
+// adoption relies on Go 1.21+ "created by ... in goroutine N" stack lines and
+// is inactive on Go 1.20 toolchains.
 //
 // Between tests. The counters are reset at each START and again after each
 // END, so every window is either one test's or a gap between two. A gap's

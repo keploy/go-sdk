@@ -58,9 +58,11 @@ func startWithEnv(t *testing.T, bin string, extraEnv ...string) app {
 const asyncAppExtra = `package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -223,8 +225,20 @@ func init() {
 		close(g.release)
 		if r.URL.Query().Get("wait") == "1" {
 			<-g.done
-			// Brief yield so the exiting goroutine finishes runtime teardown.
-			time.Sleep(15 * time.Millisecond)
+			// Poll runtime.Stack until the released worker has fully exited
+			// (or returned to idle <-poolJobs), avoiding sleep-based races.
+			fn := r.URL.Query().Get("fn")
+			if fn != "" {
+				buf := make([]byte, 128<<10)
+				needle := []byte(fn)
+				for i := 0; i < 200; i++ {
+					n := runtime.Stack(buf, true)
+					if !bytes.Contains(buf[:n], needle) {
+						break
+					}
+					time.Sleep(2 * time.Millisecond)
+				}
+			}
 		}
 		fmt.Fprint(w, "released")
 	})
@@ -348,7 +362,7 @@ func TestRealGoApp_P6FraudAlertGoroutineTailAcrossCleanGap(t *testing.T) {
 		t.Fatalf("START T6: %q", got)
 	}
 	get(t, a, "/orders?id=6")
-	get(t, a, "/release?gate=p6&wait=1")
+	get(t, a, "/release?gate=p6&wait=1&fn=fraudAlert")
 	if got := send(t, k.sock, "END set-0/T6"); got != replyTaken {
 		t.Fatalf("END T6: %q", got)
 	}
@@ -523,7 +537,7 @@ func TestRealGoApp_MultiWindowLingeringGoroutine(t *testing.T) {
 	}
 
 	// Deterministically release T1's goroutine and wait for it to finish before T4!
-	get(t, a, "/release?gate=multi&wait=1")
+	get(t, a, "/release?gate=multi&wait=1&fn=gatedWork")
 
 	rec4 := measure(t, k, a, "set-0/T4", "/twin?n=4")
 	if _, hasCut := rec4["windowCut"]; hasCut {
@@ -574,7 +588,7 @@ func TestRealGoApp_B1ChildSpawnedInGapStaysTracked(t *testing.T) {
 	}
 
 	// In gap T2->T3: release parent "p1" -> parent spawns child (blocked on "c1") and EXITS!
-	get(t, a, "/release?gate=p1&wait=1")
+	get(t, a, "/release?gate=p1&wait=1&fn=parentSpawnsChildAndExits")
 
 	// T3 starts: parent is DEAD, child is ALIVE -> child MUST be adopted into T1's tail!
 	if got := send(t, k.sock, "START set-0/T3"); got != replyStartAskedBy("b1") {
@@ -582,7 +596,7 @@ func TestRealGoApp_B1ChildSpawnedInGapStaysTracked(t *testing.T) {
 	}
 	get(t, a, "/twin?n=3")
 	// Release child INSIDE T3 so child executes childHits.Add(1) inside T3 and exits!
-	get(t, a, "/release?gate=c1&wait=1")
+	get(t, a, "/release?gate=c1&wait=1&fn=publishChildAlert")
 	if got := send(t, k.sock, "END set-0/T3"); got != replyTaken {
 		t.Fatalf("END T3: %q", got)
 	}
@@ -649,7 +663,7 @@ func TestRealGoApp_B2PreExistingWorkerPoolTailDetected(t *testing.T) {
 		t.Fatalf("START T2: %q", got)
 	}
 	get(t, a, "/twin?n=2")
-	get(t, a, "/release?gate=pool1&wait=1")
+	get(t, a, "/release?gate=pool1&wait=1&fn=poolProcess")
 	if got := send(t, k.sock, "END set-0/T2"); got != replyTaken {
 		t.Fatalf("END T2: %q", got)
 	}
@@ -720,7 +734,7 @@ func TestRealGoApp_P7RecurringAsyncTailsNeverPolluteBackground(t *testing.T) {
 		t.Fatalf("T1 windowCut = %v, want true", rec1["windowCut"])
 	}
 	// Deterministically release T1's notifyAsync INSIDE gap T1->T2.
-	get(t, a, "/release?gate=n1&wait=1")
+	get(t, a, "/release?gate=n1&wait=1&fn=notifyAsync")
 
 	// T2: also spawns notifyAsync blocked on "n2".
 	if got := send(t, k.sock, "START set-0/T2"); got != replyStartAskedBy("p7") {
@@ -738,7 +752,7 @@ func TestRealGoApp_P7RecurringAsyncTailsNeverPolluteBackground(t *testing.T) {
 		t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", rec2["contaminated"])
 	}
 	// Deterministically release T2's notifyAsync INSIDE gap T2->T3.
-	get(t, a, "/release?gate=n2&wait=1")
+	get(t, a, "/release?gate=n2&wait=1&fn=notifyAsync")
 
 	// T3: synchronous twin (immediately after cut T2 -> contaminated:["tail:set-0/T2"]).
 	if got := send(t, k.sock, "START set-0/T3"); got != replyStartAskedBy("p7") {
