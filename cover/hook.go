@@ -641,6 +641,7 @@ func runTestCommand(command string) string {
 					var targets []lingeringTarget
 					for _, ag := range active {
 						if ag.alreadyAtIdle {
+							armMarkOnlyWatch(id, ag, snap)
 							continue
 						}
 						targets = append(targets, lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig})
@@ -648,9 +649,9 @@ func runTestCommand(command string) string {
 					lingeringNames = summarizeActiveNames(active, covered)
 					if len(targets) > 0 {
 						addLingeringTail(id, targets, capturePreExistingChildren(snap, targets, testStartGids))
+						logLingeringOnce(id, lingeringNames)
 					}
 					prevWindowCutTestID = id
-					logLingeringOnce(id, lingeringNames)
 				}
 			}
 		}

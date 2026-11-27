@@ -2404,7 +2404,7 @@ func TestRealGoApp_ShallowerMidJobWorkerBaselineAndNoPersistentTaint(t *testing.
 		}
 	})
 
-	t.Run("re-parked-gap-job-after-N-never-poisons-established-Pop-baseline", func(t *testing.T) {
+	t.Run("re-parked-gap-job-after-N-catches-N1-and-N2-without-cutting-N3", func(t *testing.T) {
 		k := newKeploySide(t)
 		bin := buildDeltaProbeApp(t, k)
 		a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=30")
@@ -2461,6 +2461,90 @@ func TestRealGoApp_ShallowerMidJobWorkerBaselineAndNoPersistentTaint(t *testing.
 		for i := 4; i <= 8; i++ {
 			id := fmt.Sprintf("set-0/N%d", i)
 			rec := measure(t, k, a, id, "/plain")
+			if _, hasCut := rec["windowCut"]; hasCut {
+				t.Fatalf("%s unexpectedly marked windowCut: %v", id, rec)
+			}
+			if _, hasCont := rec["contaminated"]; hasCont {
+				t.Fatalf("%s unexpectedly marked contaminated: %v", id, rec)
+			}
+		}
+	})
+
+	t.Run("first-seen-mid-job-re-parked-at-END-protects-gap-BACKGROUND", func(t *testing.T) {
+		k := newKeploySide(t)
+		bin := buildDeltaProbeApp(t, k)
+		a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=30")
+		if got := send(t, k.sock, backgroundAsk+" sfa"); got != replyTaken {
+			t.Fatalf("BACKGROUND: %q", got)
+		}
+
+		runBG := func(id, path string) (map[string]any, []map[string]any) {
+			t.Helper()
+			if got := send(t, k.sock, "START "+id); got != replyStartAskedBy("sfa") {
+				t.Fatalf("START %s: %q", id, got)
+			}
+			getOK(t, a, path)
+			if got := send(t, k.sock, "END "+id); got != replyTaken {
+				t.Fatalf("END %s: %q", id, got)
+			}
+			var bgs []map[string]any
+			for {
+				r := readNextRecord(t, k, a)
+				if r["kind"] == "background" {
+					bgs = append(bgs, r)
+					continue
+				}
+				if r["id"] != id {
+					t.Fatalf("got record %v, want id %s", r, id)
+				}
+				return r, bgs
+			}
+		}
+
+		// 1-2. Worker is ALREADY mid-job (g0 in asynclib.Call) at its VERY FIRST START (T0).
+		getOK(t, a, "/shallow-job?kind=bg&gate=g0")
+		_, _ = runBG("set-0/T0", "/plain")
+
+		// 3. Gap: g0 finishes, worker returns to Pop.
+		getOK(t, a, "/shallow-open?gate=g0")
+
+		// 4. T1: starts at Pop (drifted from T0's D), parks fraud job g1 back at D -> windowCut + markOnly watch on D!
+		rec1, _ := runBG("set-0/T1", "/shallow-job?kind=fraud&gate=g1")
+		if rec1["windowCut"] != true {
+			t.Fatalf("T1 windowCut = %v, want true", rec1["windowCut"])
+		}
+
+		// 5. T2: plain while g1 is still parked at D -> tail:set-0/T1, markOnly watch stays armed.
+		rec2, _ := runBG("set-0/T2", "/plain")
+		assertTailOnlyOrBetweenTests(t, "T2", rec2, "tail:set-0/T1")
+
+		// 6. Gap T2->T3: g1 opens, running shallowFraud.Add(1) and returning worker to Pop!
+		getOK(t, a, "/shallow-open?gate=g1")
+
+		// 7. START T3: markOnly watch MUST fire -> gap T2->T3 BACKGROUND MUST be afterCut:true
+		// with empty executedLinesByFile (never leaking T1's fraud line into clean BACKGROUND),
+		// and T3 carries tail:set-0/T1.
+		rec3, bgs3 := runBG("set-0/T3", "/plain")
+		if len(bgs3) == 0 {
+			t.Fatalf("expected afterCut BACKGROUND record for gap T2->T3, got 0")
+		}
+		for _, bg := range bgs3 {
+			if bg["afterCut"] != true {
+				t.Fatalf("gap T2->T3 BACKGROUND leaked T1 fraud tail as clean: %v", bg)
+			}
+			if ls := linesOfRecord(t, bg); len(ls) != 0 {
+				t.Fatalf("gap T2->T3 afterCut BACKGROUND must have empty executedLinesByFile: %v", ls)
+			}
+		}
+		if !strings.Contains(fmt.Sprint(rec3["contaminated"]), "tail:set-0/T1") {
+			t.Fatalf("T3 contaminated = %v, missing tail:set-0/T1", rec3["contaminated"])
+		}
+
+		// 8. T5..T9: worker settles at Pop -> ALL CLEAN!
+		_, _ = runBG("set-0/T4", "/plain")
+		for i := 5; i <= 9; i++ {
+			id := fmt.Sprintf("set-0/T%d", i)
+			rec, _ := runBG(id, "/plain")
 			if _, hasCut := rec["windowCut"]; hasCut {
 				t.Fatalf("%s unexpectedly marked windowCut: %v", id, rec)
 			}

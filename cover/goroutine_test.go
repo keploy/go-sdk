@@ -1488,7 +1488,8 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 			}
 		})
 
-		t.Run("runnable at START with prior quiescent baseline fails closed even when returning to idle before END", func(t *testing.T) {
+		t.Run("runnable at START with prior quiescent baseline fails closed even when returning to idle before END without burning END_WAIT", func(t *testing.T) {
+			t.Setenv(envEndWaitMS, "200")
 			h := newGapHarness(t, lines(appFile, 3), none(), lines(appFile, 4), none(), lines(appFile, 5), none(), lines(appFile, 6))
 			idle := &goroutineInfo{
 				id: 33, baseStatus: "chan receive", topLine: "/app/worker.go:10",
@@ -1501,17 +1502,30 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 				createdByFn: "main.init", createdByPkg: "main",
 			}
 			cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 33: idle}}
-			snapshotGoroutines = func() goroutineSnapshot { return cur }
+			snapCalls := 0
+			snapshotGoroutines = func() goroutineSnapshot {
+				snapCalls++
+				return cur
+			}
 			h.run("set-0/T0")
 
 			// START T1 catches goroutine 33 runnable on gap work; it finishes and returns to idle before END T1.
-			// T1 MUST fail closed (windowCut:true) so the gap job's remaining lines are never trusted as T1's.
+			// T1 MUST fail closed (windowCut:true) naming the START frame (main.handleMsg),
+			// and MUST NOT burn END_WAIT polling for a goroutine already back at idle!
 			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 33: running}}
 			h.do("START set-0/T1", replyStartUnasked)
 			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 33: idle}}
+			snapCalls = 0
 			h.do("END set-0/T1", replyTaken)
-			if h.test("set-0/T1")["windowCut"] != true {
-				t.Fatalf("T1 missed worker runnable at START that returned to idle before END: %v", h.test("set-0/T1"))
+			if snapCalls != 1 {
+				t.Fatalf("END T1 polled %d snapshots for an already-idle drifted goroutine, want 1 (skip END_WAIT)", snapCalls)
+			}
+			t1 := h.test("set-0/T1")
+			if t1["windowCut"] != true {
+				t.Fatalf("T1 missed worker runnable at START that returned to idle before END: %v", t1)
+			}
+			if !reflect.DeepEqual(t1["lingeringGoroutines"], []interface{}{"main.handleMsg"}) {
+				t.Fatalf("T1 lingeringGoroutines = %v, want [main.handleMsg] (START active frame)", t1["lingeringGoroutines"])
 			}
 
 			// T2 gets boundary tail:T1 (no false windowCut), and T3 is clean!
@@ -1525,6 +1539,58 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 			h.run("set-0/T3")
 			if _, hasCont := h.test("set-0/T3")["contaminated"]; hasCont {
 				t.Fatalf("T3 should be clean after returning to prior idle: %v", h.test("set-0/T3"))
+			}
+		})
+
+		t.Run("drifted goroutine that exits during window still cuts window without burning END_WAIT", func(t *testing.T) {
+			t.Setenv(envEndWaitMS, "200")
+			h := newGapHarness(t, lines(appFile, 3), none(), lines(appFile, 4), none(), lines(appFile, 5), none(), lines(appFile, 6))
+			waiting := &goroutineInfo{
+				id: 34, baseStatus: "chan receive", topLine: "/app/cache.go:10",
+				frames: []string{"main.cacheWarmer"}, framePkgs: []string{"main"}, frameLines: []string{"/app/cache.go:10"},
+				createdByFn: "main.init", createdByPkg: "main",
+			}
+			warming := &goroutineInfo{
+				id: 34, baseStatus: "runnable", topLine: "/app/cache.go:25",
+				frames: []string{"main.warmCache", "main.cacheWarmer"}, framePkgs: []string{"main", "main"}, frameLines: []string{"/app/cache.go:25", "/app/cache.go:12"},
+				createdByFn: "main.init", createdByPkg: "main",
+			}
+			cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 34: waiting}}
+			snapCalls := 0
+			snapshotGoroutines = func() goroutineSnapshot {
+				snapCalls++
+				return cur
+			}
+			h.run("set-0/T0")
+
+			// START T1 catches goroutine 34 running warmCache; it finishes and EXITS before END T1!
+			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 34: warming}}
+			h.do("START set-0/T1", replyStartUnasked)
+			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}}
+			snapCalls = 0
+			h.do("END set-0/T1", replyTaken)
+			if snapCalls != 1 {
+				t.Fatalf("END T1 polled %d snapshots for an exited drifted goroutine, want 1", snapCalls)
+			}
+			t1 := h.test("set-0/T1")
+			if t1["windowCut"] != true {
+				t.Fatalf("T1 missed drifted goroutine that exited during window: %v", t1)
+			}
+			if !reflect.DeepEqual(t1["lingeringGoroutines"], []interface{}{"main.warmCache"}) {
+				t.Fatalf("T1 lingeringGoroutines = %v, want [main.warmCache]", t1["lingeringGoroutines"])
+			}
+
+			// T2 gets boundary tail:T1 (no windowCut), and T3 is clean!
+			h.run("set-0/T2")
+			if !reflect.DeepEqual(h.test("set-0/T2")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+				t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T2")["contaminated"])
+			}
+			if _, hasCut := h.test("set-0/T2")["windowCut"]; hasCut {
+				t.Fatalf("T2 unexpectedly marked windowCut: %v", h.test("set-0/T2"))
+			}
+			h.run("set-0/T3")
+			if _, hasCont := h.test("set-0/T3")["contaminated"]; hasCont {
+				t.Fatalf("T3 should be clean after exited drifted goroutine: %v", h.test("set-0/T3"))
 			}
 		})
 
