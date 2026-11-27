@@ -75,7 +75,9 @@
 // app worker baselines via runtime.Stack (zero overhead when unarmed or when
 // KEPLOY_GO_GOROUTINE_TRACKING=off), preserving each goroutine's established
 // idle signature so a worker caught mid-job at START fails closed instead of
-// adopting the mid-job stack as idle. At END, it checks for newly-spawned
+// adopting the mid-job stack as idle (failing closed on a mid-job START
+// requires a prior idle START in history; a worker already mid-job at the very
+// first START it is seen at has no prior idle history). At END, it checks for newly-spawned
 // app-relevant goroutines AND pre-existing app workers/handlers still off
 // their quiescent idle baseline (excluding go-sdk's own goroutines, idle
 // stdlib keep-alive/housekeeping goroutines including idle HTTP keep-alive
@@ -88,8 +90,7 @@
 // KEPLOY_GO_IGNORE_GOROUTINES filters parsed stacks only), the test record
 // carries "windowCut":true, "lingeringGoroutines", and
 // "contaminated":["window-cut"] (when no start-time contamination mark is
-// already present, so collectors reading contaminated still fail closed;
-// k8s-proxy requires R1 to decode windowCut/contaminated) with
+// already present, so collectors reading contaminated still fail closed) with
 // overlapLinesByFile omitted. Subsequent tests carry
 // "contaminated":["tail:<test>"] (with overlapLinesByFile omitted) on the
 // immediate next test and while any lingering goroutine (or newly-spawned
@@ -97,24 +98,24 @@
 // remains active without settling onto a resume watch.
 //
 // Pre-existing goroutines that transition to a different quiescent steady
-// state no deeper than their baseline app-frame depth, as well as lazily
-// started non-HTTP background goroutines parked in a non-sleep event wait
-// (such as a sync.Once janitor or a lazily dialed third-party client over a
-// wrapped net.Conn), move onto a one-time resume watch (bounded at 512 active
-// watches) once stably parked at the same quiescent signature across
-// consecutive windows (START -> END -> START, after birth test T1 was cut and
-// T2 was tainted tail:T1). Subsequent tests run clean while the watched
-// goroutine stays parked, and the gap or test in which any snapshot (including
-// intermediate END_WAIT polls) observes it awake, exiting, or spawning a child
-// is marked with afterCut / "tail:<test>" (re-attaching if still active).
-// Stuck HTTP handlers (net/http, x/net/http2, ServeHTTP, RoundTrip) are never
-// re-baselined. Any BACKGROUND record emitted for a gap after a cut window
-// carries "afterCut":true with an empty executedLinesByFile (and does not
-// pollute everGap) so collectors never absorb recurring async tails into
-// calibrated stable background. A START arriving without a preceding END marks
-// the new test with "contaminated":["unclosed:<test>"].
+// state, as well as lazily started non-HTTP background goroutines parked in a
+// quiescent wait (such as a sync.Once ticker, channel, or time.Sleep janitor,
+// or a lazily dialed third-party client over a wrapped net.Conn), move onto a
+// one-time resume watch (bounded at 512 active watches) once stably parked at
+// the same quiescent signature across consecutive windows (START -> END ->
+// START, after birth test T1 was cut and T2 was tainted tail:T1). Subsequent
+// tests run clean while the watched goroutine stays parked, and the gap or
+// test in which any snapshot (including intermediate END_WAIT polls) observes
+// it awake, exiting, or spawning a child is marked with afterCut /
+// "tail:<test>" (re-attaching if still active). Stuck HTTP handlers (net/http,
+// x/net/http2, ServeHTTP, RoundTrip) are never re-baselined. Any BACKGROUND
+// record emitted for a gap after a cut window carries "afterCut":true with an
+// empty executedLinesByFile (and does not pollute everGap) so collectors never
+// absorb recurring async tails into calibrated stable background. A START
+// arriving without a preceding END marks the new test with
+// "contaminated":["unclosed:<test>"].
 //
-// Scope limits (why asyncExecutors=false in R1): runtime.Stack snapshots
+// Scope limits (why asyncExecutors=false): runtime.Stack snapshots
 // cannot detect (a) work handed off to library-owned third-party async
 // writers/producers (such as kafka-go Writer{Async:true, Completion} or sarama
 // AsyncProducer) whose goroutines park solely in uncovered library frames
@@ -122,16 +123,16 @@
 // have not yet fired by END (no goroutine exists yet), or (c) pre-existing app
 // batchers/debouncers that dequeue work and re-park at the exact same idle
 // signature before END. Likewise, a test-spawned periodic loop parked on a
-// channel/select timer (for example select{case <-time.After(d):}) settles
-// onto a resume watch after two windows (T1 cut, T2 tail:T1), so a later tick
-// that runs and re-parks at the same signature strictly between two snapshots
-// is not observed; snapshots also cannot observe a child goroutine or watched
-// wakeup that starts and returns/exits strictly between two snapshots (nor a
-// grandchild orphaned when its intermediate parent spawns and exits between
-// snapshots), nor work queued in a channel buffer for a busy pre-existing
-// worker until dequeued; parent-goid child adoption relies on Go 1.21+
-// "created by ... in goroutine N" stack lines (windowCut=false on Go < 1.21
-// toolchains).
+// channel/select timer or time.Sleep (for example select{case <-time.After(d):}
+// or for{time.Sleep(d); ...}) settles onto a resume watch after two windows
+// (T1 cut, T2 tail:T1), so a later tick that runs and re-parks at the same
+// signature strictly between two snapshots is not observed; snapshots also
+// cannot observe a child goroutine or watched wakeup that starts and
+// returns/exits strictly between two snapshots (nor a grandchild orphaned when
+// its intermediate parent spawns and exits between snapshots), nor work queued
+// in a channel buffer for a busy pre-existing worker until dequeued;
+// parent-goid child adoption relies on Go 1.21+ "created by ... in goroutine N"
+// stack lines (windowCut=false on Go < 1.21 toolchains).
 //
 // Between tests. The counters are reset at each START and again after each
 // END, so every window is either one test's or a gap between two. A gap's

@@ -433,8 +433,9 @@ func runTestCommand(command string) string {
 		// the gap/unclosed window marks the gap afterCut=true and re-attaches
 		// cleanly without being duplicated into two tails.
 		var firedWatches []string
+		var skipStreak map[uint64]struct{}
 		if haveSnap && !curSnap.truncated {
-			firedWatches, _ = checkResumeWatches(curSnap, startIdleStates, covered, ignore)
+			firedWatches, _, skipStreak = checkResumeWatches(curSnap, startIdleStates, covered, ignore)
 		}
 		unclosedID := currentTestID
 		if unclosedID != "" && activeTracking && haveSnap {
@@ -456,6 +457,10 @@ func runTestCommand(command string) string {
 				targets := make([]lingeringTarget, len(alive))
 				for i, ag := range alive {
 					targets[i] = lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig}
+					if skipStreak == nil {
+						skipStreak = make(map[uint64]struct{}, len(alive))
+					}
+					skipStreak[ag.info.id] = struct{}{}
 				}
 				addLingeringTail(unclosedID, targets, capturePreExistingChildren(curSnap, targets, startGids))
 			}
@@ -492,7 +497,7 @@ func runTestCommand(command string) string {
 			sayWhyNotMeasured(err)
 			return replyIgnored
 		}
-		activeContaminated = collectStartContamination(unclosedID, curSnap, haveSnap, firedWatches, covered, ignore)
+		activeContaminated = collectStartContamination(unclosedID, curSnap, haveSnap, firedWatches, skipStreak, covered, ignore)
 		if tracking {
 			activeTracking = true
 			if curSnap.truncated {
@@ -593,7 +598,7 @@ func runTestCommand(command string) string {
 				// END snapshot above).
 				if !snap.truncated {
 					resolveTruncatedCutWindows(snap, covered, ignore)
-					pruneLingeringTails(snap, covered, ignore, false)
+					pruneLingeringTails(snap, nil, covered, ignore, false)
 					// Refresh lastCompleteGids with non-SDK gids from this complete END.
 					complete := make(map[uint64]struct{}, len(snap.all))
 					for gid, g := range snap.all {

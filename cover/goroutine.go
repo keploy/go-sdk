@@ -74,6 +74,21 @@ type goroutineSig struct {
 	hash          uint64
 }
 
+// startBaseline records a pre-existing goroutine's START baseline. Normally
+// only idle is set (the quiescent idle signature to compare against at END).
+// When START observes a goroutine at a quiescent signature startSig that
+// differs from its established lastQuiescentSigs entry (idle), drifted is set
+// so END fails closed both when the goroutine stays at startSig (caught
+// mid-job at START, keeping idle as the return target) AND when it transitions
+// from startSig back to idle (when idle itself was a first-START mid-job
+// capture and startSig is the true idle, or when a gap job finished during the
+// window).
+type startBaseline struct {
+	idle     goroutineSig
+	startSig goroutineSig
+	drifted  bool
+}
+
 // lingeringTarget tracks one lingering goroutine belonging to a cut test.
 // When mustExit is true (goroutine created by app code), it remains active
 // until its monotonic goroutine ID disappears from runtime.Stack. Otherwise
@@ -132,7 +147,7 @@ var (
 	activeTracking       bool
 	activeTruncatedStart bool
 	startGids            map[uint64]struct{}
-	startIdleStates      map[uint64]goroutineSig
+	startIdleStates      map[uint64]startBaseline
 	lastCompleteGids     map[uint64]struct{}
 	lastQuiescentSigs    = map[uint64]goroutineSig{}
 	lingeringStreaks     = map[uint64]quiescentStreak{}
@@ -842,17 +857,20 @@ func goroutineStateSig(g *goroutineInfo, selfID uint64, covered map[string]bool,
 // is re-attached with its preserved preExistingChildren so post-wake children
 // are adopted normally by adoptLingeringChildren.
 //
+// checkResumeWatches checks every active one-time resumeWatch against snap.
 // Any non-mustExit watch that fires also returns its original idleSig in
 // firedOrigIdle so END polling can recognize when the goroutine returns to its
-// original idle state during the same test window. When activeIdle is non-nil
-// (an open test window's baseline at START->START or END) and the goroutine
-// has already returned to its original idle state, activeIdle[gid] is updated
-// alongside lastQuiescentSigs[gid] so neither END nor an unclosed START->START
-// check treats the return to original idle as a new tail. Called with
-// controlMu held.
-func checkResumeWatches(snap goroutineSnapshot, activeIdle map[uint64]goroutineSig, covered map[string]bool, ignore []string) ([]string, map[uint64]goroutineSig) {
+// original idle state during the same test window, and returns reattached with
+// every gid freshly re-attached to lingeringTails so START pruning does not
+// count the re-attach START itself as a re-baseline streak step. When
+// activeIdle is non-nil (an open test window's baseline at START->START or END)
+// and the goroutine has already returned to its original idle state,
+// activeIdle[gid] is updated alongside lastQuiescentSigs[gid] so neither END
+// nor an unclosed START->START check treats the return to original idle as a
+// new tail. Called with controlMu held.
+func checkResumeWatches(snap goroutineSnapshot, activeIdle map[uint64]startBaseline, covered map[string]bool, ignore []string) ([]string, map[uint64]goroutineSig, map[uint64]struct{}) {
 	if len(resumeWatches) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	// Pre-index whether any watched gid currently has a new app-relevant child
 	// (excluding pre-existing children and goroutines already tracked in lingeringTails).
@@ -879,6 +897,7 @@ func checkResumeWatches(snap goroutineSnapshot, activeIdle map[uint64]goroutineS
 
 	var triggered []string
 	var firedOrigIdle map[uint64]goroutineSig
+	var reattached map[uint64]struct{}
 	for gid, rw := range resumeWatches {
 		g, alive := snap.all[gid]
 		if !alive {
@@ -886,6 +905,10 @@ func checkResumeWatches(snap goroutineSnapshot, activeIdle map[uint64]goroutineS
 			delete(resumeWatches, gid)
 			if hasNewChild[gid] {
 				addLingeringTail(rw.testID, []lingeringTarget{rw.target}, rw.preExistingChildren)
+				if reattached == nil {
+					reattached = make(map[uint64]struct{})
+				}
+				reattached[gid] = struct{}{}
 			}
 			continue
 		}
@@ -912,20 +935,24 @@ func checkResumeWatches(snap goroutineSnapshot, activeIdle map[uint64]goroutineS
 				// cut/tail.
 				lastQuiescentSigs[gid] = curSig
 				if activeIdle != nil {
-					activeIdle[gid] = curSig
+					activeIdle[gid] = startBaseline{idle: curSig}
 				}
 			}
 			// Re-attach using the watch's preserved preExistingChildren (never
 			// re-capturing snap's live children, which include post-wake work!).
 			if (curSig.active && curSig != rw.target.idleSig) || spawnedChild {
 				addLingeringTail(rw.testID, []lingeringTarget{rw.target}, rw.preExistingChildren)
+				if reattached == nil {
+					reattached = make(map[uint64]struct{})
+				}
+				reattached[gid] = struct{}{}
 			}
 		}
 	}
 	if len(triggered) > 1 {
 		sort.Strings(triggered)
 	}
-	return triggered, firedOrigIdle
+	return triggered, firedOrigIdle, reattached
 }
 
 // snapshotStartBaseline captures the set of live non-SDK goroutine IDs and the
@@ -936,10 +963,10 @@ func checkResumeWatches(snap goroutineSnapshot, activeIdle map[uint64]goroutineS
 // never seen quiescent, an unparked-at-START baseline (status == "") that fails
 // closed at END whenever the goroutine still has app frames. It also updates
 // lastCompleteGids/lastQuiescentSigs and prunes dead gids.
-func snapshotStartBaseline(snap goroutineSnapshot, covered map[string]bool, ignore []string) (map[uint64]struct{}, map[uint64]goroutineSig) {
+func snapshotStartBaseline(snap goroutineSnapshot, covered map[string]bool, ignore []string) (map[uint64]struct{}, map[uint64]startBaseline) {
 	alreadyLingering := lingeringGidSet()
 	gids := make(map[uint64]struct{}, len(snap.all))
-	idle := make(map[uint64]goroutineSig, len(snap.all))
+	idle := make(map[uint64]startBaseline, len(snap.all))
 	for id, g := range snap.all {
 		if isSDKGoroutine(g, snap.selfID) {
 			continue
@@ -954,40 +981,40 @@ func snapshotStartBaseline(snap goroutineSnapshot, covered map[string]bool, igno
 			// readRequest, including wrapped net.Conn idle reads): baseline as
 			// zero sig so if it is still inside an app handler at END (e.g.
 			// after Flusher.Flush), END detects it.
-			idle[id] = goroutineSig{}
+			idle[id] = startBaseline{idle: goroutineSig{}}
 			lastQuiescentSigs[id] = goroutineSig{}
 		} else if isQuiescentStatus(g.baseStatus) {
 			// Pre-existing app worker goroutine waiting quiescently (e.g.
 			// blocked on <-jobsCh, select, syscall, sync.Mutex.Lock). Compare
 			// against its established quiescent idle signature in
-			// lastQuiescentSigs: if a known idle signature exists and differs
-			// from sig at equal or shallower app-frame depth (or non-app idle),
-			// the goroutine was caught mid-job at START (e.g. parked inside
-			// processJob on background/gap work). Fail closed by keeping the
-			// established idle signature instead of adopting the mid-job stack
-			// as idle. Only replace prevQ when sig is strictly shallower
-			// (meaning prevQ itself was an initial mid-job capture).
-			if prevQ, hadPrev := lastQuiescentSigs[id]; hadPrev && prevQ != sig &&
-				(!prevQ.active || sig.appFrameCount >= prevQ.appFrameCount) {
-				idle[id] = prevQ
+			// lastQuiescentSigs: whenever a different quiescent idle signature
+			// is already on record (whether deeper, equal, or shallower, or
+			// non-app idle), fail closed by preserving prevQ alongside sig
+			// (drifted=true) instead of adopting sig as idle. A goroutine that
+			// genuinely moved to a new steady state settles through the
+			// existing streak/resumeWatch path.
+			if prevQ, hadPrev := lastQuiescentSigs[id]; hadPrev && prevQ != sig {
+				idle[id] = startBaseline{idle: prevQ, startSig: sig, drifted: true}
 			} else {
-				idle[id] = sig
+				idle[id] = startBaseline{idle: sig}
 				lastQuiescentSigs[id] = sig
 			}
 		} else if prevQ, ok := lastQuiescentSigs[id]; ok {
 			// Pre-existing goroutine was unparked (e.g. runnable) at START,
 			// but has a prior quiescent baseline from an earlier complete START.
-			idle[id] = prevQ
+			idle[id] = startBaseline{idle: prevQ}
 		} else {
 			// Pre-existing goroutine was unparked at START with no prior
 			// quiescent baseline: record its app-frame depth with status == ""
 			// so END fails closed whenever the goroutine still has app frames
 			// (e.g. still runnable or parked mid-job at the same or deeper depth).
-			idle[id] = goroutineSig{
-				active:        true,
-				status:        "",
-				appFrameCount: sig.appFrameCount,
-				hash:          0,
+			idle[id] = startBaseline{
+				idle: goroutineSig{
+					active:        true,
+					status:        "",
+					appFrameCount: sig.appFrameCount,
+					hash:          0,
+				},
 			}
 		}
 	}
@@ -1034,14 +1061,14 @@ type activeTestGoroutine struct {
 // started during the current test (both newly spawned app-relevant goroutines
 // and pre-existing goroutines that moved off their quiescent START baseline
 // into app code), sorted by ID.
-func findActiveTestGoroutines(snap goroutineSnapshot, startSet map[uint64]struct{}, startIdle map[uint64]goroutineSig, covered map[string]bool, ignore []string) []activeTestGoroutine {
+func findActiveTestGoroutines(snap goroutineSnapshot, startSet map[uint64]struct{}, startIdle map[uint64]startBaseline, covered map[string]bool, ignore []string) []activeTestGoroutine {
 	return findActiveTestGoroutinesWithLingering(snap, startSet, startIdle, lingeringGidSet(), covered, ignore)
 }
 
 // findActiveTestGoroutinesWithLingering is findActiveTestGoroutines using a
 // pre-captured alreadyLingering set so mid-END watch re-attachments do not
 // hide active work from subsequent END_WAIT polls.
-func findActiveTestGoroutinesWithLingering(snap goroutineSnapshot, startSet map[uint64]struct{}, startIdle map[uint64]goroutineSig, alreadyLingering map[uint64]struct{}, covered map[string]bool, ignore []string) []activeTestGoroutine {
+func findActiveTestGoroutinesWithLingering(snap goroutineSnapshot, startSet map[uint64]struct{}, startIdle map[uint64]startBaseline, alreadyLingering map[uint64]struct{}, covered map[string]bool, ignore []string) []activeTestGoroutine {
 	var out []activeTestGoroutine
 	for id, g := range snap.all {
 		if isSDKGoroutine(g, snap.selfID) {
@@ -1065,7 +1092,7 @@ func findActiveTestGoroutinesWithLingering(snap goroutineSnapshot, startSet map[
 		if _, busy := alreadyLingering[id]; busy {
 			continue
 		}
-		idleSig, tracked := startIdle[id]
+		base, tracked := startIdle[id]
 		if !tracked {
 			continue
 		}
@@ -1073,11 +1100,30 @@ func findActiveTestGoroutinesWithLingering(snap goroutineSnapshot, startSet map[
 		if !curSig.active {
 			continue
 		}
-		if idleSig.status == "" || curSig != idleSig {
+		if base.drifted {
+			// START observed a quiescent state (base.startSig) differing from
+			// the established idle (base.idle). Fail closed for both outcomes:
+			//   - curSig == base.idle: goroutine moved from base.startSig to
+			//     base.idle during the window; return target is base.startSig
+			//     (or settles via resumeWatch if base.idle is the true idle).
+			//   - curSig != base.idle: goroutine is still off its established
+			//     idle (e.g. caught mid-job at START); return target is base.idle.
+			targetIdle := base.idle
+			if curSig == base.idle {
+				targetIdle = base.startSig
+			}
 			out = append(out, activeTestGoroutine{
 				info:     g,
 				mustExit: false,
-				idleSig:  idleSig,
+				idleSig:  targetIdle,
+			})
+			continue
+		}
+		if base.idle.status == "" || curSig != base.idle {
+			out = append(out, activeTestGoroutine{
+				info:     g,
+				mustExit: false,
+				idleSig:  base.idle,
 			})
 		}
 	}
@@ -1423,23 +1469,19 @@ func isHTTPHandlerGoroutine(g *goroutineInfo) bool {
 // resumeWatch when stably parked at curSig:
 //   - HTTP handler goroutines (net/http, x/net/http2, ServeHTTP, RoundTrip)
 //     are NEVER eligible, even if first observed mid-handler.
-//   - Pre-existing app goroutines (t.idleSig.active): only when no deeper than
-//     their START app-frame depth (so outboxPoller parked deeper in deliver is
-//     never re-baselined).
-//   - Lazily-started app goroutines (t.mustExit, e.g. sync.Once starting
-//     go janitor()) and lazily-started non-HTTP third-party goroutines with app
-//     frames (e.g. a lazily dialed gRPC client over an app-wrapped net.Conn):
-//     eligible when parked in a non-sleep event wait (chan/select/IO wait/sync,
-//     never time.Sleep), skipping the initial START on which a child was
-//     freshly adopted.
+//   - Any other active goroutine — pre-existing worker/consumer moving to a
+//     new steady state (including returning to a deeper real idle after a
+//     shallower first-START mid-job capture), lazily-started app goroutine
+//     (t.mustExit, e.g. sync.Once starting a ticker, channel, or time.Sleep
+//     janitor), or lazily-started non-HTTP third-party goroutine with app
+//     frames (e.g. a lazily dialed gRPC client over an app-wrapped net.Conn) —
+//     is eligible once stably parked in a quiescent wait state, skipping the
+//     initial START on which a child was freshly adopted.
 func canRebaselineTarget(t lingeringTarget, g *goroutineInfo, curSig goroutineSig, justAdopted bool) bool {
 	if !curSig.active || !isQuiescentStatus(g.baseStatus) || justAdopted || isHTTPHandlerGoroutine(g) {
 		return false
 	}
-	if !t.mustExit && t.idleSig.active {
-		return curSig.appFrameCount <= t.idleSig.appFrameCount
-	}
-	return g.baseStatus != "sleep"
+	return true
 }
 
 // resetBrokenLingeringStreaks clears any in-progress re-baseline streak whose
@@ -1474,8 +1516,8 @@ func resetBrokenLingeringStreaks(snap goroutineSnapshot, covered map[string]bool
 // either directly or on a later END_WAIT poll), and resets broken
 // lingeringStreaks against a single non-truncated END snapshot. Called with
 // controlMu held BEFORE findActiveTestGoroutinesWithLingering on each poll.
-func checkEndWatchesAndStreaks(snap goroutineSnapshot, testContaminated []string, testStartIdle map[uint64]goroutineSig, watchOrigIdle *map[uint64]goroutineSig, covered map[string]bool, ignore []string) []string {
-	triggered, firedOrig := checkResumeWatches(snap, testStartIdle, covered, ignore)
+func checkEndWatchesAndStreaks(snap goroutineSnapshot, testContaminated []string, testStartIdle map[uint64]startBaseline, watchOrigIdle *map[uint64]goroutineSig, covered map[string]bool, ignore []string) []string {
+	triggered, firedOrig, _ := checkResumeWatches(snap, testStartIdle, covered, ignore)
 	if len(triggered) > 0 {
 		seen := make(map[string]struct{}, len(testContaminated)+len(triggered))
 		for _, m := range testContaminated {
@@ -1511,7 +1553,7 @@ func checkEndWatchesAndStreaks(snap goroutineSnapshot, testContaminated []string
 		if !curSig.active || curSig == origIdle {
 			lastQuiescentSigs[gid] = curSig
 			if testStartIdle != nil {
-				testStartIdle[gid] = curSig
+				testStartIdle[gid] = startBaseline{idle: curSig}
 			}
 			delete(*watchOrigIdle, gid)
 		}
@@ -1528,8 +1570,11 @@ func checkEndWatchesAndStreaks(snap goroutineSnapshot, testContaminated []string
 // (START -> END -> START, after their birth test was cut and the next test was
 // tainted tail:<testID>) move onto a one-time resumeWatch (bounded by
 // maxResumeWatches) rather than staying permanently tainted or being trusted
-// silently. Called with controlMu held.
-func pruneLingeringTails(snap goroutineSnapshot, covered map[string]bool, ignore []string, onStart bool) {
+// silently. Targets in skipStreak (e.g. freshly re-attached from a fired
+// resumeWatch on this same START) skip the current START streak increment so
+// they still undergo two full windows of observation before settling. Called
+// with controlMu held.
+func pruneLingeringTails(snap goroutineSnapshot, skipStreak map[uint64]struct{}, covered map[string]bool, ignore []string, onStart bool) {
 	if len(lingeringTails) == 0 {
 		return
 	}
@@ -1556,7 +1601,8 @@ func pruneLingeringTails(snap goroutineSnapshot, covered map[string]bool, ignore
 				continue
 			}
 			_, justAdopted := newlyAdopted[t.gid]
-			canRebaseline := canRebaselineTarget(t, g, curSig, justAdopted)
+			_, justAdded := skipStreak[t.gid]
+			canRebaseline := canRebaselineTarget(t, g, curSig, justAdopted || justAdded)
 			if onStart {
 				if canRebaseline {
 					st := lingeringStreaks[t.gid]
@@ -1632,7 +1678,7 @@ func pruneLingeringTails(snap goroutineSnapshot, covered map[string]bool, ignore
 // resolves pending truncated cuts, adopts children, prunes finished lingering
 // goroutines, and clears prevWindowCutTestID. Called with controlMu held after
 // clearCounters succeeds.
-func collectStartContamination(unclosedID string, snap goroutineSnapshot, haveSnap bool, firedWatches []string, covered map[string]bool, ignore []string) []string {
+func collectStartContamination(unclosedID string, snap goroutineSnapshot, haveSnap bool, firedWatches []string, skipStreak map[uint64]struct{}, covered map[string]bool, ignore []string) []string {
 	var reasons []string
 	seen := map[string]struct{}{}
 	add := func(r string) {
@@ -1661,7 +1707,7 @@ func collectStartContamination(unclosedID string, snap goroutineSnapshot, haveSn
 	}
 	if haveSnap && !snap.truncated {
 		resolveTruncatedCutWindows(snap, covered, ignore)
-		pruneLingeringTails(snap, covered, ignore, true)
+		pruneLingeringTails(snap, skipStreak, covered, ignore, true)
 	}
 	for _, tc := range pendingTruncatedCuts {
 		add("tail:" + tc.testID)

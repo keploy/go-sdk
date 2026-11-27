@@ -1500,6 +1500,12 @@ func (w *Writer) run() {
 		}
 	}
 }
+
+// Call stands in for a blocking third-party driver or RPC call (e.g. DB driver,
+// client.Do) that parks solely in uncovered third-party library frames.
+func Call(gate <-chan struct{}) {
+	<-gate
+}
 `
 
 const deltaProbeApp = `package main
@@ -1517,30 +1523,45 @@ import (
 )
 
 var (
-	deliveredFraud atomic.Int64
-	auditedFraud   atomic.Int64
-	flushedFraud   atomic.Int64
-	jobFraud       atomic.Int64
-	janitorTicks   atomic.Int64
-	periodicTicks  atomic.Int64
+	deliveredFraud    atomic.Int64
+	auditedFraud      atomic.Int64
+	flushedFraud      atomic.Int64
+	jobFraud          atomic.Int64
+	shallowFraud      atomic.Int64
+	shallowBG         atomic.Int64
+	janitorTicks      atomic.Int64
+	sleepJanitorTicks atomic.Int64
+	periodicTicks     atomic.Int64
+	gapPings          atomic.Int64
 
 	batchQ         = make(chan string)
 	batchFlushCh   = make(chan chan struct{})
 	jobQ           = make(chan deltaJob, 64)
+	shallowQ       = &appQueue{ch: make(chan deltaJob, 64)}
 	periodicTickCh = make(chan chan struct{})
 	auditDoneMu    sync.Mutex
 	auditDone      chan struct{}
 
-	deltaGateMu  sync.Mutex
-	deltaGates   = map[string]chan struct{}{}
-	lazyOnce     sync.Once
-	periodicOnce sync.Once
+	deltaGateMu   sync.Mutex
+	deltaGates    = map[string]chan struct{}{}
+	lazyOnce      sync.Once
+	sleepLazyOnce sync.Once
+	periodicOnce  sync.Once
 )
 
 type deltaJob struct {
 	kind string
 	gate chan struct{}
 }
+
+// appQueue wraps a channel receive so idle shallowWorker parks inside Pop
+// (2 app frames), one app frame deeper than its mid-job call into asynclib.Call
+// (1 app frame).
+type appQueue struct {
+	ch chan deltaJob
+}
+
+func (q *appQueue) Pop() deltaJob { return <-q.ch }
 
 func onDelivered(msgs []string) {
 	for _, m := range msgs {
@@ -1581,11 +1602,15 @@ func batcher() {
 	}
 }
 
-func processJob(j deltaJob) {
-	<-j.gate
-	if j.kind == "fraud" {
+func finishJob(kind string) {
+	if kind == "fraud" {
 		jobFraud.Add(1)
 	}
+}
+
+func processJob(j deltaJob) {
+	<-j.gate
+	finishJob(j.kind)
 }
 
 func jobWorker() {
@@ -1594,11 +1619,54 @@ func jobWorker() {
 	}
 }
 
+func finishShallowJob(kind string) {
+	if kind == "fraud" {
+		shallowFraud.Add(1)
+	} else {
+		shallowBG.Add(1)
+	}
+}
+
+func shallowWorker() {
+	for {
+		j := shallowQ.Pop()
+		asynclib.Call(j.gate)
+		finishShallowJob(j.kind)
+	}
+}
+
 func janitor() {
 	t := time.NewTicker(time.Hour)
 	for range t.C {
 		janitorTicks.Add(1)
 	}
+}
+
+func sleepJanitor() {
+	for {
+		time.Sleep(time.Hour)
+		sleepJanitorTicks.Add(1)
+	}
+}
+
+func waitShallowWorker(inCall bool) bool {
+	buf := make([]byte, 256<<10)
+	for i := 0; i < 1500; i++ {
+		n := runtime.Stack(buf, true)
+		for _, g := range strings.Split(string(buf[:n]), "\n\n") {
+			if !strings.Contains(g, "main.shallowWorker(") {
+				continue
+			}
+			if inCall && strings.Contains(g, "example.com/asynclib.Call") && strings.Contains(g, "[chan receive") {
+				return true
+			}
+			if !inCall && strings.Contains(g, "main.(*appQueue).Pop") && strings.Contains(g, "[chan receive") {
+				return true
+			}
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	return false
 }
 
 func periodicLoop() {
@@ -1637,8 +1705,13 @@ func waitNotInFrame(fn string) bool {
 func init() {
 	go batcher()
 	go jobWorker()
+	go shallowWorker()
 	http.HandleFunc("/plain", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "plain")
+	})
+	http.HandleFunc("/gap-ping", func(w http.ResponseWriter, r *http.Request) {
+		gapPings.Add(1)
+		fmt.Fprint(w, "gap-ping")
 	})
 	http.HandleFunc("/produce", func(w http.ResponseWriter, r *http.Request) {
 		asyncWriter.WriteMessages(r.URL.Query().Get("kind"))
@@ -1757,6 +1830,62 @@ func init() {
 			return
 		}
 		fmt.Fprint(w, "periodic-ticked")
+	})
+	http.HandleFunc("/shallow-wait-idle", func(w http.ResponseWriter, r *http.Request) {
+		if !waitShallowWorker(false) {
+			http.Error(w, "shallowWorker did not park in Pop", 500)
+			return
+		}
+		fmt.Fprint(w, "shallow-idle")
+	})
+	http.HandleFunc("/shallow-job", func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("gate")
+		g := make(chan struct{})
+		deltaGateMu.Lock()
+		deltaGates[name] = g
+		deltaGateMu.Unlock()
+		before := shallowBG.Load()
+		shallowQ.ch <- deltaJob{kind: r.URL.Query().Get("kind"), gate: g}
+		if rel := r.URL.Query().Get("release"); rel != "" {
+			deltaGateMu.Lock()
+			rg := deltaGates[rel]
+			deltaGateMu.Unlock()
+			close(rg)
+			for i := 0; i < 1500 && shallowBG.Load() == before; i++ {
+				time.Sleep(time.Millisecond)
+			}
+		}
+		if !waitShallowWorker(true) {
+			http.Error(w, "shallowWorker did not park in asynclib.Call", 500)
+			return
+		}
+		fmt.Fprint(w, "shallow-job")
+	})
+	http.HandleFunc("/shallow-open", func(w http.ResponseWriter, r *http.Request) {
+		deltaGateMu.Lock()
+		g := deltaGates[r.URL.Query().Get("gate")]
+		deltaGateMu.Unlock()
+		close(g)
+		if !waitShallowWorker(false) {
+			http.Error(w, "shallowWorker did not return to Pop", 500)
+			return
+		}
+		fmt.Fprint(w, "shallow-opened")
+	})
+	http.HandleFunc("/lazy-sleep", func(w http.ResponseWriter, r *http.Request) {
+		sleepLazyOnce.Do(func() {
+			started := make(chan struct{})
+			go func() {
+				close(started)
+				sleepJanitor()
+			}()
+			<-started
+		})
+		if !waitParkedDelta("main.sleepJanitor(", "sleep") {
+			http.Error(w, "sleepJanitor did not park", 500)
+			return
+		}
+		fmt.Fprint(w, "lazy-sleep")
 	})
 }
 `
@@ -1955,12 +2084,7 @@ func TestRealGoApp_SF1MidJobWorkerBaselineCatchesNAndNotInnocentN1(t *testing.T)
 	if !containsInt(linesOfRecord(t, recN1)[deltaFile], fraudLine) {
 		t.Fatalf("SF1 setup: fraud line %d did not spill into N+1: %v", fraudLine, linesOfRecord(t, recN1))
 	}
-	if !reflect.DeepEqual(recN1["contaminated"], []any{"tail:set-0/N"}) {
-		t.Fatalf("SF1 failed: N+1 contaminated = %v, want [tail:set-0/N]", recN1["contaminated"])
-	}
-	if _, hasCut := recN1["windowCut"]; hasCut {
-		t.Fatalf("SF1 failed: innocent N+1 was falsely marked windowCut: %v", recN1)
-	}
+	assertTailOnlyOrBetweenTests(t, "N+1", recN1, "tail:set-0/N")
 
 	// Test N+2: worker is back at idle -> 100% CLEAN!
 	recN2 := measure(t, k, a, "set-0/N2", "/plain")
@@ -1972,15 +2096,64 @@ func TestRealGoApp_SF1MidJobWorkerBaselineCatchesNAndNotInnocentN1(t *testing.T)
 	}
 }
 
+// assertTailOnlyOrBetweenTests verifies that rec carries wantTail in
+// contaminated, has NO windowCut and NO "window-cut" mark, and that any
+// additional contamination entry is solely a legitimate "between-tests:" mark.
+func assertTailOnlyOrBetweenTests(t *testing.T, label string, rec map[string]any, wantTail string) {
+	t.Helper()
+	if _, hasCut := rec["windowCut"]; hasCut {
+		t.Fatalf("%s was falsely marked windowCut: %v", label, rec)
+	}
+	raw, _ := rec["contaminated"].([]any)
+	foundTail := false
+	for _, entry := range raw {
+		s, _ := entry.(string)
+		if s == wantTail {
+			foundTail = true
+			continue
+		}
+		if s == "window-cut" || !strings.HasPrefix(s, "between-tests:") {
+			t.Fatalf("%s contaminated = %v, want %s (and optional between-tests: only)", label, raw, wantTail)
+		}
+	}
+	if !foundTail {
+		t.Fatalf("%s contaminated = %v, missing %s", label, raw, wantTail)
+	}
+}
+
+// assertNonEmptyCleanBG asserts that bgs contains at least one BACKGROUND
+// record with afterCut != true and a non-empty executedLinesByFile containing
+// wantLine in wantFile.
+func assertNonEmptyCleanBG(t *testing.T, label string, bgs []map[string]any, wantFile string, wantLine int) int {
+	t.Helper()
+	if len(bgs) == 0 {
+		t.Fatalf("%s expected at least one BACKGROUND record for non-empty gap, got 0", label)
+	}
+	clean := 0
+	for _, bg := range bgs {
+		if bg["afterCut"] == true {
+			t.Fatalf("%s gap BACKGROUND unexpectedly stuck afterCut:true: %v", label, bg)
+		}
+		ls := linesOfRecord(t, bg)
+		if len(ls) == 0 || !containsInt(ls[wantFile], wantLine) {
+			t.Fatalf("%s gap BACKGROUND missing expected line %d in %s: %v", label, wantLine, wantFile, bg)
+		}
+		clean++
+	}
+	return clean
+}
+
 // TestRealGoApp_SF2LazyOnceJanitorRebaselinesAfterT2 verifies on a real -cover
 // binary that a permanent background goroutine lazily started via sync.Once in
 // T1 marks T1 windowCut:true and T2 contaminated:["tail:set-0/T1"], then
-// settles onto a one-time resumeWatch so T3..T10 are ALL 100% CLEAN (and
-// subsequent BACKGROUND gaps are no longer stuck as afterCut:true).
+// settles onto a one-time resumeWatch so T3..T10 are ALL 100% CLEAN AND
+// non-empty BACKGROUND records with afterCut=false resume after T3.
 func TestRealGoApp_SF2LazyOnceJanitorRebaselinesAfterT2(t *testing.T) {
 	k := newKeploySide(t)
 	bin := buildDeltaProbeApp(t, k)
 	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=30")
+	deltaFile := appModule + "/delta.go"
+	gapPingLine := deltaLineOf(t, "gapPings.Add(1)")
 
 	if got := send(t, k.sock, backgroundAsk+" sf2"); got != replyTaken {
 		t.Fatalf("BACKGROUND: %q", got)
@@ -2036,8 +2209,14 @@ func TestRealGoApp_SF2LazyOnceJanitorRebaselinesAfterT2(t *testing.T) {
 		t.Fatalf("SF2: T2 unexpectedly marked windowCut: %v", rec2)
 	}
 
-	// T3..T10: janitor moved onto resumeWatch at START T3 -> ALL 8 tests MUST be 100% CLEAN!
+	// T3..T10: janitor moved onto resumeWatch at START T3 -> ALL 8 tests MUST
+	// be 100% CLEAN, and app lines executed in gaps before T4..T10 MUST emit
+	// non-empty BACKGROUND records with afterCut != true!
+	cleanBGs := 0
 	for i := 3; i <= 10; i++ {
+		if i >= 4 {
+			getOK(t, a, "/gap-ping")
+		}
 		id := fmt.Sprintf("set-0/T%d", i)
 		rec, bgs := run(id, "/plain")
 		if _, hasCut := rec["windowCut"]; hasCut {
@@ -2047,11 +2226,264 @@ func TestRealGoApp_SF2LazyOnceJanitorRebaselinesAfterT2(t *testing.T) {
 			t.Fatalf("SF2 failed: %s got contaminated (lazy janitor stuck forever): %v", id, rec)
 		}
 		if i >= 4 {
-			for _, bg := range bgs {
-				if bg["afterCut"] == true {
-					t.Fatalf("SF2 failed: gap before %s still stuck afterCut:true: %v", id, bg)
-				}
+			cleanBGs += assertNonEmptyCleanBG(t, id, bgs, deltaFile, gapPingLine)
+		}
+	}
+	if cleanBGs < 7 {
+		t.Fatalf("SF2: expected >= 7 clean non-empty BACKGROUND records after T3, got %d", cleanBGs)
+	}
+}
+
+// TestRealGoApp_ShallowerMidJobWorkerBaselineAndNoPersistentTaint verifies on a
+// real -cover binary a worker that idles inside an app queue helper
+// (main.(*appQueue).Pop, 2 app frames) and blocks mid-job inside an uncovered
+// vendored driver call made directly from the loop body (1 app frame, strictly
+// shallower than idle):
+//   - (a) when a gap job is caught mid-call at START N and N's fraud job parks
+//     at the exact same driver call before END N, N is honestly marked
+//     windowCut:true, N+1 carries tail:set-0/N without a false windowCut, and
+//     N+2..N+8 are clean;
+//   - (b) when the gap job finishes during N and the worker returns to Pop,
+//     N+1..N+8 are clean and normal BACKGROUND resumes;
+//   - (c) even when the worker is already mid-call at the very first START
+//     (no prior idle history) and returns to its deeper Pop idle during N, it
+//     settles onto resumeWatch so N+2..N+8 are clean (no persistent taint).
+func TestRealGoApp_ShallowerMidJobWorkerBaselineAndNoPersistentTaint(t *testing.T) {
+	deltaFile := appModule + "/delta.go"
+	fraudLine := deltaLineOf(t, "shallowFraud.Add(1)")
+	gapPingLine := deltaLineOf(t, "gapPings.Add(1)")
+
+	t.Run("same-line-fraud-catches-N-and-not-innocent-N1", func(t *testing.T) {
+		k := newKeploySide(t)
+		bin := buildDeltaProbeApp(t, k)
+		a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=30")
+
+		// Establish Pop idle baseline in lastQuiescentSigs.
+		getOK(t, a, "/shallow-wait-idle")
+		if warm := measure(t, k, a, "set-0/warm", "/plain"); warm["windowCut"] != nil {
+			t.Fatalf("warm unexpected windowCut: %v", warm)
+		}
+
+		// Gap: worker dequeues bg job and parks inside vendored asynclib.Call (1 app frame).
+		getOK(t, a, "/shallow-job?kind=bg&gate=g0")
+
+		// N: enqueues fraud job and releases g0 so worker parks at the exact same asynclib.Call line.
+		recN := measure(t, k, a, "set-0/N", "/shallow-job?kind=fraud&gate=g1&release=g0")
+		if recN["windowCut"] != true {
+			t.Fatalf("N missed shallower mid-job worker (windowCut=%v, rec=%v)", recN["windowCut"], recN)
+		}
+		lingN, _ := recN["lingeringGoroutines"].([]any)
+		if len(lingN) == 0 || !strings.Contains(fmt.Sprint(lingN), "shallowWorker") {
+			t.Fatalf("N lingeringGoroutines = %v, want entry naming shallowWorker", lingN)
+		}
+		if containsInt(linesOfRecord(t, recN)[deltaFile], fraudLine) {
+			t.Fatalf("setup: shallowFraud line %d should not have run in N", fraudLine)
+		}
+
+		// N+1: opens g1 so fraud runs inside N+1 and worker returns to Pop.
+		if got := send(t, k.sock, "START set-0/N1"); got != replyStartUnasked {
+			t.Fatalf("START N1: %q", got)
+		}
+		getOK(t, a, "/shallow-open?gate=g1")
+		getOK(t, a, "/plain")
+		if got := send(t, k.sock, "END set-0/N1"); got != replyTaken {
+			t.Fatalf("END N1: %q", got)
+		}
+		recN1 := readNextRecord(t, k, a)
+		if !containsInt(linesOfRecord(t, recN1)[deltaFile], fraudLine) {
+			t.Fatalf("setup: shallowFraud line %d did not land in N+1: %v", fraudLine, linesOfRecord(t, recN1))
+		}
+		assertTailOnlyOrBetweenTests(t, "N+1", recN1, "tail:set-0/N")
+
+		// N+2..N+8: worker is back at Pop -> ALL clean!
+		for i := 2; i <= 8; i++ {
+			id := fmt.Sprintf("set-0/N%d", i)
+			rec := measure(t, k, a, id, "/plain")
+			if _, hasCut := rec["windowCut"]; hasCut {
+				t.Fatalf("%s unexpectedly marked windowCut: %v", id, rec)
+			}
+			if _, hasCont := rec["contaminated"]; hasCont {
+				t.Fatalf("%s unexpectedly marked contaminated: %v", id, rec)
 			}
 		}
+	})
+
+	t.Run("gap-job-finishes-during-N-no-persistent-taint", func(t *testing.T) {
+		k := newKeploySide(t)
+		bin := buildDeltaProbeApp(t, k)
+		a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=30")
+		if got := send(t, k.sock, backgroundAsk+" sh2"); got != replyTaken {
+			t.Fatalf("BACKGROUND: %q", got)
+		}
+
+		runBG := func(id, path string) (map[string]any, []map[string]any) {
+			t.Helper()
+			if got := send(t, k.sock, "START "+id); got != replyStartAskedBy("sh2") {
+				t.Fatalf("START %s: %q", id, got)
+			}
+			getOK(t, a, path)
+			if got := send(t, k.sock, "END "+id); got != replyTaken {
+				t.Fatalf("END %s: %q", id, got)
+			}
+			var bgs []map[string]any
+			for {
+				r := readNextRecord(t, k, a)
+				if r["kind"] == "background" {
+					bgs = append(bgs, r)
+					continue
+				}
+				if r["id"] != id {
+					t.Fatalf("got record %v, want id %s", r, id)
+				}
+				return r, bgs
+			}
+		}
+
+		getOK(t, a, "/shallow-wait-idle")
+		_, _ = runBG("set-0/warm", "/plain")
+
+		// Gap parks shallowWorker in asynclib.Call; N releases it back to Pop
+		// (finishing gap work during N -> N is honestly windowCut, N+1 gets
+		// tail:set-0/N, and N+2..N+8 are 100% clean with normal BACKGROUND).
+		getOK(t, a, "/shallow-job?kind=bg&gate=g0")
+		recN, _ := runBG("set-0/N", "/shallow-open?gate=g0")
+		if recN["windowCut"] != true {
+			t.Fatalf("N windowCut = %v, want true (gap job finished during N)", recN["windowCut"])
+		}
+		recN1, _ := runBG("set-0/N1", "/plain")
+		assertTailOnlyOrBetweenTests(t, "N+1", recN1, "tail:set-0/N")
+
+		cleanBGs := 0
+		for i := 2; i <= 8; i++ {
+			if i >= 3 {
+				getOK(t, a, "/gap-ping")
+			}
+			id := fmt.Sprintf("set-0/N%d", i)
+			rec, bgs := runBG(id, "/plain")
+			if _, hasCut := rec["windowCut"]; hasCut {
+				t.Fatalf("%s unexpectedly marked windowCut: %v", id, rec)
+			}
+			if _, hasCont := rec["contaminated"]; hasCont {
+				t.Fatalf("%s persistently tainted: %v", id, rec)
+			}
+			if i >= 3 {
+				cleanBGs += assertNonEmptyCleanBG(t, id, bgs, deltaFile, gapPingLine)
+			}
+		}
+		if cleanBGs < 6 {
+			t.Fatalf("expected >= 6 clean non-empty BACKGROUND records, got %d", cleanBGs)
+		}
+	})
+
+	t.Run("first-start-mid-job-returns-to-deeper-idle-settles-cleanly", func(t *testing.T) {
+		k := newKeploySide(t)
+		bin := buildDeltaProbeApp(t, k)
+		a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=30")
+
+		// No warm START before the gap: worker is already mid-job at the VERY FIRST START!
+		getOK(t, a, "/shallow-job?kind=bg&gate=g0")
+		recN := measure(t, k, a, "set-0/N", "/shallow-open?gate=g0")
+		if recN["windowCut"] != true {
+			t.Fatalf("first-START mid-job N windowCut = %v, want true", recN["windowCut"])
+		}
+		recN1 := measure(t, k, a, "set-0/N1", "/plain")
+		assertTailOnlyOrBetweenTests(t, "N+1", recN1, "tail:set-0/N")
+
+		// N+2..N+8: settled onto resumeWatch at deeper Pop idle -> ALL clean!
+		for i := 2; i <= 8; i++ {
+			id := fmt.Sprintf("set-0/N%d", i)
+			rec := measure(t, k, a, id, "/plain")
+			if _, hasCut := rec["windowCut"]; hasCut {
+				t.Fatalf("%s unexpectedly marked windowCut: %v", id, rec)
+			}
+			if _, hasCont := rec["contaminated"]; hasCont {
+				t.Fatalf("%s stuck in permanent taint after returning to deeper idle: %v", id, rec)
+			}
+		}
+	})
+}
+
+// TestRealGoApp_LazyOnceSleepJanitorRebaselinesAfterT2 verifies on a real
+// -cover binary that a permanent background goroutine lazily started via
+// sync.Once running `for { time.Sleep(time.Hour); ticks.Add(1) }` marks T1
+// windowCut:true and T2 contaminated:["tail:set-0/T1"], then settles onto a
+// resumeWatch so T3..T10 are ALL 100% CLEAN and normal BACKGROUND records
+// resume after T3.
+func TestRealGoApp_LazyOnceSleepJanitorRebaselinesAfterT2(t *testing.T) {
+	k := newKeploySide(t)
+	bin := buildDeltaProbeApp(t, k)
+	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=30")
+	deltaFile := appModule + "/delta.go"
+	gapPingLine := deltaLineOf(t, "gapPings.Add(1)")
+
+	if got := send(t, k.sock, backgroundAsk+" sleepj"); got != replyTaken {
+		t.Fatalf("BACKGROUND: %q", got)
+	}
+
+	run := func(id, path string) (map[string]any, []map[string]any) {
+		t.Helper()
+		if got := send(t, k.sock, "START "+id); got != replyStartAskedBy("sleepj") {
+			t.Fatalf("START %s: %q", id, got)
+		}
+		getOK(t, a, path)
+		if got := send(t, k.sock, "END "+id); got != replyTaken {
+			t.Fatalf("END %s: %q", id, got)
+		}
+		var bgs []map[string]any
+		for {
+			r := readNextRecord(t, k, a)
+			if r["kind"] == "background" {
+				bgs = append(bgs, r)
+				continue
+			}
+			if r["id"] != id {
+				t.Fatalf("got record %v, want id %s", r, id)
+			}
+			return r, bgs
+		}
+	}
+
+	_, _ = run("set-0/warm", "/plain")
+
+	// T1: lazily starts sync.Once time.Sleep janitor -> windowCut:true naming sleepJanitor.
+	rec1, _ := run("set-0/T1", "/lazy-sleep")
+	if rec1["windowCut"] != true {
+		t.Fatalf("T1 windowCut = %v, want true (rec=%v)", rec1["windowCut"], rec1)
+	}
+	ling1, _ := rec1["lingeringGoroutines"].([]any)
+	if len(ling1) == 0 || !strings.Contains(fmt.Sprint(ling1), "sleepJanitor") {
+		t.Fatalf("T1 lingeringGoroutines = %v, want entry naming sleepJanitor", ling1)
+	}
+
+	// T2: tainted tail:set-0/T1, no windowCut.
+	rec2, _ := run("set-0/T2", "/plain")
+	if !reflect.DeepEqual(rec2["contaminated"], []any{"tail:set-0/T1"}) {
+		t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", rec2["contaminated"])
+	}
+	if _, hasCut := rec2["windowCut"]; hasCut {
+		t.Fatalf("T2 unexpectedly marked windowCut: %v", rec2)
+	}
+
+	// T3..T10: sleep janitor settled onto resumeWatch at START T3 -> ALL clean
+	// and non-empty BACKGROUND with afterCut != true resumes after T3!
+	cleanBGs := 0
+	for i := 3; i <= 10; i++ {
+		if i >= 4 {
+			getOK(t, a, "/gap-ping")
+		}
+		id := fmt.Sprintf("set-0/T%d", i)
+		rec, bgs := run(id, "/plain")
+		if _, hasCut := rec["windowCut"]; hasCut {
+			t.Fatalf("%s got windowCut (sleep janitor not settled): %v", id, rec)
+		}
+		if _, hasCont := rec["contaminated"]; hasCont {
+			t.Fatalf("%s got contaminated (sleep janitor stuck): %v", id, rec)
+		}
+		if i >= 4 {
+			cleanBGs += assertNonEmptyCleanBG(t, id, bgs, deltaFile, gapPingLine)
+		}
+	}
+	if cleanBGs < 7 {
+		t.Fatalf("expected >= 7 clean non-empty BACKGROUND records after T3, got %d", cleanBGs)
 	}
 }

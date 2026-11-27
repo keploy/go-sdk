@@ -618,7 +618,7 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 		if !found100 {
 			t.Fatal("oldest live goroutine 100 was dropped instead of merged into overflow catch-all")
 		}
-		startMarks := collectStartContamination("", goroutineSnapshot{all: alive}, true, nil, nil, nil)
+		startMarks := collectStartContamination("", goroutineSnapshot{all: alive}, true, nil, nil, nil, nil)
 		gapMarks := []string{"between-tests:a.go", "between-tests:b.go", "+4"}
 		merged := mergeContaminated(startMarks, gapMarks)
 		plusCount := 0
@@ -1866,6 +1866,102 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 				t.Fatalf("N2 should be clean: %v", h.test("set-0/N2"))
 			}
 		})
+
+		t.Run("shallower mid-job at START keeps deeper Pop idle baseline and no persistent taint", func(t *testing.T) {
+			h := newGapHarness(t,
+				lines(appFile, 1), none(), // warm
+				lines(appFile, 2), none(), // N (mid-job in shallower vendored Call at START and END)
+				lines(appFile, 3), none(), // N+1 (finishes and returns to Pop)
+				lines(appFile, 4), // N+2 (clean)
+			)
+			popIdle := &goroutineInfo{
+				id: 43, baseStatus: "chan receive", topLine: "/app/q.go:10",
+				frames:      []string{"main.(*appQueue).Pop", "main.worker3"},
+				framePkgs:   []string{"main", "main"},
+				frameLines:  []string{"/app/q.go:10", "/app/worker.go:20"},
+				createdByFn: "main.init", createdByPkg: "main",
+			}
+			shallowMid := &goroutineInfo{
+				id: 43, baseStatus: "chan receive", topLine: "/mod/drv/drv.go:5",
+				frames:      []string{"example.com/drv.Call", "main.worker3"},
+				framePkgs:   []string{"example.com/drv", "main"},
+				frameLines:  []string{"/mod/drv/drv.go:5", "/app/worker.go:21"},
+				createdByFn: "main.init", createdByPkg: "main",
+			}
+			cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 43: popIdle}}
+			snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+			h.run("set-0/warm")
+			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 43: shallowMid}}
+			h.run("set-0/N")
+			recN := h.test("set-0/N")
+			if recN["windowCut"] != true {
+				t.Fatalf("shallower mid-job at START missed N (windowCut=%v, rec=%v)", recN["windowCut"], recN)
+			}
+
+			h.do("START set-0/N1", replyStartUnasked)
+			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 43: popIdle}}
+			h.do("END set-0/N1", replyTaken)
+			recN1 := h.test("set-0/N1")
+			if !reflect.DeepEqual(recN1["contaminated"], []interface{}{"tail:set-0/N"}) {
+				t.Fatalf("N+1 contaminated = %v, want [tail:set-0/N]", recN1["contaminated"])
+			}
+			if _, hasCut := recN1["windowCut"]; hasCut {
+				t.Fatalf("innocent N+1 falsely marked windowCut: %v", recN1)
+			}
+
+			h.run("set-0/N2")
+			if _, hasCont := h.test("set-0/N2")["contaminated"]; hasCont {
+				t.Fatalf("N+2 should be clean: %v", h.test("set-0/N2"))
+			}
+		})
+
+		t.Run("first-START shallower mid-job returning to deeper real idle settles onto resumeWatch without permanent taint", func(t *testing.T) {
+			h := newGapHarness(t,
+				lines(appFile, 1), none(), // N (very first START sees shallowMid, END returns to deeper popIdle)
+				lines(appFile, 2), none(), // N+1 (tail:N, streak 1)
+				lines(appFile, 3), none(), // N+2 (settled onto resumeWatch -> CLEAN!)
+				lines(appFile, 4), // N+3 (CLEAN!)
+			)
+			popIdle := &goroutineInfo{
+				id: 44, baseStatus: "chan receive", topLine: "/app/q.go:10",
+				frames:      []string{"main.(*appQueue).Pop", "main.worker3"},
+				framePkgs:   []string{"main", "main"},
+				frameLines:  []string{"/app/q.go:10", "/app/worker.go:20"},
+				createdByFn: "main.init", createdByPkg: "main",
+			}
+			shallowMid := &goroutineInfo{
+				id: 44, baseStatus: "chan receive", topLine: "/mod/drv/drv.go:5",
+				frames:      []string{"example.com/drv.Call", "main.worker3"},
+				framePkgs:   []string{"example.com/drv", "main"},
+				frameLines:  []string{"/mod/drv/drv.go:5", "/app/worker.go:21"},
+				createdByFn: "main.init", createdByPkg: "main",
+			}
+			cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 44: shallowMid}}
+			snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+			h.do("START set-0/N", replyStartUnasked)
+			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 44: popIdle}}
+			h.do("END set-0/N", replyTaken)
+			if h.test("set-0/N")["windowCut"] != true {
+				t.Fatalf("N windowCut = %v, want true", h.test("set-0/N")["windowCut"])
+			}
+
+			h.run("set-0/N1")
+			if !reflect.DeepEqual(h.test("set-0/N1")["contaminated"], []interface{}{"tail:set-0/N"}) {
+				t.Fatalf("N1 contaminated = %v, want [tail:set-0/N]", h.test("set-0/N1")["contaminated"])
+			}
+
+			for _, id := range []string{"set-0/N2", "set-0/N3"} {
+				h.run(id)
+				if _, hasCut := h.test(id)["windowCut"]; hasCut {
+					t.Fatalf("%s unexpectedly marked windowCut: %v", id, h.test(id))
+				}
+				if _, hasCont := h.test(id)["contaminated"]; hasCont {
+					t.Fatalf("%s stuck in permanent taint: %v", id, h.test(id))
+				}
+			}
+		})
 	})
 
 	t.Run("SF2 16 MiB stack-cap truncation logs one-time recovery diagnostic", func(t *testing.T) {
@@ -1966,6 +2062,61 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 		}
 
 		// T6: clean again!
+		h.run("set-0/T6")
+		if _, hasCont := h.test("set-0/T6")["contaminated"]; hasCont {
+			t.Fatalf("T6 should be clean: %v", h.test("set-0/T6"))
+		}
+	})
+
+	t.Run("lazy sync.Once time.Sleep janitor settles onto resumeWatch after T2 and catches later wakeup", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		h := newGapHarness(t,
+			lines(appFile, 1), none(), // T1: spawns lazy sleep janitor
+			lines(appFile, 2), none(), // T2: tail:T1 (streak 1)
+			lines(appFile, 3), none(), // T3: settled onto resumeWatch -> CLEAN!
+			lines(appFile, 4), none(), // T4: still sleeping -> CLEAN!
+			lines(appFile, 5), none(), // T5: janitor wakes up inside T5 -> tail:T1!
+			lines(appFile, 6), // T6: janitor exited -> CLEAN!
+		)
+		sleepJanitor := &goroutineInfo{
+			id: 72, baseStatus: "sleep", topLine: "/go/src/runtime/time.go:200",
+			frames:      []string{"time.Sleep", "main.sleepJanitor"},
+			framePkgs:   []string{"time", "main"},
+			frameLines:  []string{"/go/src/runtime/time.go:200", "/app/janitor.go:30"},
+			createdByFn: "main.initSleep.func1", createdByPkg: "main",
+		}
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}}
+		snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+		h.do("START set-0/T1", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 72: sleepJanitor}}
+		h.do("END set-0/T1", replyTaken)
+		if h.test("set-0/T1")["windowCut"] != true {
+			t.Fatalf("T1 windowCut = %v, want true", h.test("set-0/T1")["windowCut"])
+		}
+
+		h.run("set-0/T2")
+		if !reflect.DeepEqual(h.test("set-0/T2")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T2")["contaminated"])
+		}
+
+		for _, id := range []string{"set-0/T3", "set-0/T4"} {
+			h.run(id)
+			if _, hasCut := h.test(id)["windowCut"]; hasCut {
+				t.Fatalf("%s got windowCut: %v", id, h.test(id))
+			}
+			if _, hasCont := h.test(id)["contaminated"]; hasCont {
+				t.Fatalf("%s got contaminated: %v", id, h.test(id))
+			}
+		}
+
+		h.do("START set-0/T5", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}}
+		h.do("END set-0/T5", replyTaken)
+		if !reflect.DeepEqual(h.test("set-0/T5")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("T5 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T5")["contaminated"])
+		}
+
 		h.run("set-0/T6")
 		if _, hasCont := h.test("set-0/T6")["contaminated"]; hasCont {
 			t.Fatalf("T6 should be clean: %v", h.test("set-0/T6"))
@@ -2381,8 +2532,8 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 		}
 		addLingeringTail("set-0/T1", []lingeringTarget{{gid: 9999, mustExit: true}}, nil)
 		snap := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 9999: j}}
-		pruneLingeringTails(snap, nil, nil, true)
-		pruneLingeringTails(snap, nil, nil, true)
+		pruneLingeringTails(snap, nil, nil, nil, true)
+		pruneLingeringTails(snap, nil, nil, nil, true)
 		if len(resumeWatches) != maxResumeWatches {
 			t.Fatalf("len(resumeWatches) = %d, want capped at %d", len(resumeWatches), maxResumeWatches)
 		}
@@ -2394,9 +2545,10 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 
 // TestV3WireRepliesAndRecordsAgainstCollectorParsers pins the exact wire
 // format of go-sdk's v3 control-socket replies (ACK/IGNORED, proto=3, bg=,
-// caps=) and JSON coverage/background records against a mirror of the paired
-// R1 ParseCapsString / IsHonest contract (cross-repo parser golden tests
-// against enterprise and k8s-proxy live in those collector PRs), verifying:
+// caps=) and JSON coverage/background records, checking the individual cap
+// values against a mirror of the collector ParseCapsString format (cross-repo
+// parser golden tests against enterprise and k8s-proxy live in those collector
+// PRs), verifying:
 //   - replies stay well under the 1024-byte control buffer cap and parse
 //     cleanly under both proto>=2 token parsing and v3 caps= parsing,
 //   - IGNORED proto=3 <reason> and START replies with bg=<token> parse cleanly,
