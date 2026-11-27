@@ -187,7 +187,7 @@ func stubCoverage(t *testing.T, clearErrs []error, publishErr error) *[]string {
 // non-START commands (END, BACKGROUND, TABLE), START before any BACKGROUND ask,
 // and START after an ask that named token.
 const (
-	defaultCaps       = "windowCut=true,contaminated=true,classMismatch=false,background=true,asyncExecutors=true,listenerContamination=false"
+	defaultCaps       = "windowCut=true,contaminated=true,classMismatch=false,background=true,asyncExecutors=false,listenerContamination=false"
 	replyTaken        = "ACK proto=3 caps=" + defaultCaps + "\n"
 	replyStartUnasked = "ACK proto=3 bg=- caps=" + defaultCaps + "\n"
 )

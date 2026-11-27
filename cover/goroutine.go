@@ -142,6 +142,7 @@ var (
 	pendingTailTestIDs   []string
 	pendingTruncatedCuts []truncatedCutWindow
 	saidLingering        = map[string]bool{}
+	saidStackTruncated   bool
 
 	// pendingEnd* carry finalized END-time tail metadata into reportCoverage
 	// while controlMu is held, keeping publishCoverage's signature unchanged.
@@ -156,7 +157,76 @@ var (
 
 	// snapshotGoroutines captures all live goroutines; a variable for tests.
 	snapshotGoroutines = liveGoroutineSnapshot
+
+	// runtimeGoVersion returns the Go toolchain version; a variable for tests.
+	runtimeGoVersion = runtime.Version
 )
+
+// supportsGoroutineChildAdoption reports whether goVersion (as returned by
+// runtime.Version()) is Go 1.21+ (which emits "created by ... in goroutine N"
+// parent-goid lines required for child adoption) or a custom devel build.
+// Returns false (fail-closed) for Go < 1.21 or unrecognized version strings.
+func supportsGoroutineChildAdoption(goVersion string) bool {
+	v := strings.TrimSpace(goVersion)
+	if strings.HasPrefix(v, "devel") {
+		fields := strings.Fields(v)
+		if len(fields) >= 2 && strings.HasPrefix(fields[1], "go") {
+			v = fields[1]
+		} else {
+			return true
+		}
+	}
+	if !strings.HasPrefix(v, "go") {
+		return false
+	}
+	rest := v[2:]
+	major, n1 := parseLeadingDigits(rest)
+	if n1 == 0 {
+		return false
+	}
+	if major > 1 {
+		return true
+	}
+	if major < 1 {
+		return false
+	}
+	rest = rest[n1:]
+	if len(rest) == 0 || rest[0] != '.' {
+		return false
+	}
+	minor, n2 := parseLeadingDigits(rest[1:])
+	if n2 == 0 {
+		return false
+	}
+	return minor >= 21
+}
+
+func parseLeadingDigits(s string) (int, int) {
+	i := 0
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		i++
+	}
+	if i == 0 {
+		return 0, 0
+	}
+	n, err := strconv.Atoi(s[:i])
+	if err != nil {
+		return 0, 0
+	}
+	return n, i
+}
+
+// logStackTruncatedOnce logs a one-time operator diagnostic when runtime.Stack
+// reaches the 16 MiB cap and truncates, explaining the cap and recovery options.
+// Called with controlMu held.
+func logStackTruncatedOnce() {
+	if saidStackTruncated {
+		return
+	}
+	saidStackTruncated = true
+	log.Printf("[keploy coverage] runtime.Stack hit the %d MiB cap and was truncated; tests will be marked windowCut/stack-truncated until stacks fit (reduce idle goroutines, filter via %s, or set %s=off)",
+		stackMaxBufSize>>20, envIgnoreGoroutines, envGoroutineTracking)
+}
 
 // goroutineTrackingEnabled reports whether honest goroutine-tail tracking is
 // enabled. Enabled by default; disabled by KEPLOY_GO_GOROUTINE_TRACKING=off.
@@ -859,11 +929,22 @@ func snapshotStartBaseline(snap goroutineSnapshot, covered map[string]bool, igno
 			lastQuiescentSigs[id] = goroutineSig{}
 		} else if isQuiescentStatus(g.baseStatus) {
 			// Pre-existing app worker goroutine waiting quiescently (e.g.
-			// blocked on <-jobsCh, select, syscall, sync.Mutex.Lock): baseline
-			// its idle signature for this test window without permanently
-			// whitelisting it globally.
-			idle[id] = sig
-			lastQuiescentSigs[id] = sig
+			// blocked on <-jobsCh, select, syscall, sync.Mutex.Lock). Compare
+			// against its established quiescent idle signature in
+			// lastQuiescentSigs: if a known idle signature exists and differs
+			// from sig at equal or shallower app-frame depth (or non-app idle),
+			// the goroutine was caught mid-job at START (e.g. parked inside
+			// processJob on background/gap work). Fail closed by keeping the
+			// established idle signature instead of adopting the mid-job stack
+			// as idle. Only replace prevQ when sig is strictly shallower
+			// (meaning prevQ itself was an initial mid-job capture).
+			if prevQ, hadPrev := lastQuiescentSigs[id]; hadPrev && prevQ != sig &&
+				(!prevQ.active || sig.appFrameCount >= prevQ.appFrameCount) {
+				idle[id] = prevQ
+			} else {
+				idle[id] = sig
+				lastQuiescentSigs[id] = sig
+			}
 		} else if prevQ, ok := lastQuiescentSigs[id]; ok {
 			// Pre-existing goroutine was unparked (e.g. runnable) at START,
 			// but has a prior quiescent baseline from an earlier complete START.
@@ -1237,10 +1318,11 @@ func resolveTruncatedCutWindows(snap goroutineSnapshot, covered map[string]bool,
 // Runs to a fixed point for multi-hop child chains (G1 -> G2 -> G3) spawned
 // between snapshots, and logs any newly adopted function names once.
 // Called with controlMu held.
-func adoptLingeringChildren(snap goroutineSnapshot, covered map[string]bool, ignore []string) {
+func adoptLingeringChildren(snap goroutineSnapshot, covered map[string]bool, ignore []string) map[uint64]struct{} {
 	if len(lingeringTails) == 0 {
-		return
+		return nil
 	}
+	var newlyAdopted map[uint64]struct{}
 	ownerByGid := make(map[uint64]*lingeringTail)
 	for _, lt := range lingeringTails {
 		for _, t := range lt.targets {
@@ -1272,6 +1354,10 @@ func adoptLingeringChildren(snap goroutineSnapshot, covered map[string]bool, ign
 				idleSig:  goroutineSig{},
 			})
 			ownerByGid[id] = parentTail
+			if newlyAdopted == nil {
+				newlyAdopted = make(map[uint64]struct{})
+			}
+			newlyAdopted[id] = struct{}{}
 			logLingeringOnce(parentTail.testID, []string{describeAppGoroutine(g, covered)})
 			adopted = true
 		}
@@ -1279,20 +1365,39 @@ func adoptLingeringChildren(snap goroutineSnapshot, covered map[string]bool, ign
 			break
 		}
 	}
+	return newlyAdopted
+}
+
+// isHTTPHandlerGoroutine reports whether g is a stdlib/x/net HTTP server or
+// client goroutine (or has an active ServeHTTP / RoundTrip frame). Stuck HTTP
+// handlers must never be re-baselined onto a resumeWatch as if they were
+// permanent background loops.
+func isHTTPHandlerGoroutine(g *goroutineInfo) bool {
+	if g.createdByPkg == "net/http" || g.createdByPkg == "golang.org/x/net/http2" {
+		return true
+	}
+	for _, fn := range g.frames {
+		if strings.Contains(fn, "ServeHTTP") || strings.Contains(fn, "RoundTrip") {
+			return true
+		}
+	}
+	return false
 }
 
 // pruneLingeringTails adopts eligible live children of lingering goroutines
 // first, then removes targets whose goroutines have exited, match an ignore
-// pattern, or (for non-mustExit targets) stopped running app frames, returned
-// to their quiescent START idle state, or settled into a quiescent state at
-// appFrameCount <= idleSig.appFrameCount across consecutive STARTs (moving
-// them onto a one-time resumeWatch rather than trusting them silently).
+// pattern, or (for non-mustExit targets) stopped running app frames or
+// returned to their quiescent START idle state. Eligible targets that remain
+// parked at the exact same quiescent signature across consecutive windows
+// (START -> END -> START, after their birth test was cut and the next test was
+// tainted tail:<testID>) move onto a one-time resumeWatch rather than staying
+// permanently tainted or being trusted silently.
 // Called with controlMu held.
 func pruneLingeringTails(snap goroutineSnapshot, covered map[string]bool, ignore []string, onStart bool) {
 	if len(lingeringTails) == 0 {
 		return
 	}
-	adoptLingeringChildren(snap, covered, ignore)
+	newlyAdopted := adoptLingeringChildren(snap, covered, ignore)
 	w := 0
 	for _, lt := range lingeringTails {
 		tw := 0
@@ -1306,21 +1411,33 @@ func pruneLingeringTails(snap goroutineSnapshot, covered map[string]bool, ignore
 				delete(lingeringStreaks, t.gid)
 				continue
 			}
-			if !t.mustExit {
-				curSig := goroutineStateSig(g, snap.selfID, covered, ignore)
-				if !curSig.active || curSig == t.idleSig {
-					delete(lingeringStreaks, t.gid)
-					continue
+			curSig := goroutineStateSig(g, snap.selfID, covered, ignore)
+			if !t.mustExit && (!curSig.active || curSig == t.idleSig) {
+				delete(lingeringStreaks, t.gid)
+				if curSig == t.idleSig {
+					lastQuiescentSigs[t.gid] = t.idleSig
 				}
-				// Only re-baseline a pre-existing app goroutine (t.idleSig.active)
-				// when its app-frame depth is no deeper than its START baseline
-				// (ignoring stdlib wrappers, with NO sleep exemption and NEVER
-				// for new stdlib/third-party handler goroutines whose idleSig
-				// has active==false!) AND move it onto a one-time resumeWatch
-				// so if it ever leaves that state during a later test or gap,
-				// that window is honestly marked tail:<testID>.
-				if onStart && isQuiescentStatus(g.baseStatus) &&
-					t.idleSig.active && curSig.appFrameCount <= t.idleSig.appFrameCount {
+				continue
+			}
+			// Eligible for one-time resumeWatch re-baselining when stably
+			// parked at the same quiescent signature across consecutive windows:
+			//  - Pre-existing app goroutines (t.idleSig.active): only when no
+			//    deeper than their START app-frame depth (so outboxPoller
+			//    parked deeper in deliver is never re-baselined).
+			//  - Lazily-started app goroutines (t.mustExit, e.g. sync.Once
+			//    starting go janitor()) and lazily-started non-HTTP third-party
+			//    goroutines with app frames (e.g. a lazily dialed gRPC client
+			//    over an app-wrapped net.Conn): eligible when parked in a
+			//    non-sleep event wait (chan/select/IO wait/sync, NEVER time.Sleep)
+			//    and not an HTTP handler (so stuck handlers like g50/g51 never
+			//    re-baseline), skipping the initial START on which a child was
+			//    freshly adopted.
+			_, justAdopted := newlyAdopted[t.gid]
+			canRebaseline := curSig.active && isQuiescentStatus(g.baseStatus) && !justAdopted &&
+				((!t.mustExit && t.idleSig.active && curSig.appFrameCount <= t.idleSig.appFrameCount) ||
+					((t.mustExit || !t.idleSig.active) && g.baseStatus != "sleep" && !isHTTPHandlerGoroutine(g)))
+			if onStart {
+				if canRebaseline {
 					st := lingeringStreaks[t.gid]
 					if st.sig == curSig {
 						st.count++
@@ -1329,8 +1446,7 @@ func pruneLingeringTails(snap goroutineSnapshot, covered map[string]bool, ignore
 					}
 					if st.count >= rebaselineStreakLimit {
 						// Preserve every child of t.gid already alive at watch
-						// creation (anything alive now predates the watch) plus
-						// any prior preExistingChildren of t.gid.
+						// creation (anything alive now predates the watch).
 						var preserved map[uint64]struct{}
 						for cid, cg := range snap.all {
 							if cg.createdByGoid == t.gid && !isSDKGoroutine(cg, snap.selfID) {
@@ -1346,11 +1462,18 @@ func pruneLingeringTails(snap goroutineSnapshot, covered map[string]bool, ignore
 							watchSig:            curSig,
 							preExistingChildren: preserved,
 						}
+						lastQuiescentSigs[t.gid] = curSig
 						delete(lingeringStreaks, t.gid)
 						continue
 					}
 					lingeringStreaks[t.gid] = st
-				} else if onStart {
+				} else {
+					delete(lingeringStreaks, t.gid)
+				}
+			} else if st, ok := lingeringStreaks[t.gid]; ok {
+				// On END, reset any in-progress streak if the goroutine woke
+				// up or moved off its quiescent signature during the window.
+				if !canRebaseline || st.sig != curSig {
 					delete(lingeringStreaks, t.gid)
 				}
 			}
@@ -1488,6 +1611,7 @@ func resetGoroutineState() {
 	pendingTailTestIDs = nil
 	pendingTruncatedCuts = nil
 	saidLingering = map[string]bool{}
+	saidStackTruncated = false
 	pendingEndWindowCut = false
 	pendingEndLingering = nil
 	pendingEndContaminated = nil

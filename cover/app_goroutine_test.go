@@ -682,8 +682,9 @@ func TestRealGoApp_IdleHTTPKeepAliveZeroFalsePositives(t *testing.T) {
 }
 
 // TestRealGoApp_MultiWindowLingeringGoroutine spawns a gate-controlled
-// goroutine in T1 that stays alive across T2 and T3 and exits before T4 ->
-// asserts T1 windowCut:true, T2 and T3 contaminated:["tail:set-0/T1"], and T4 clean!
+// goroutine in T1 that stays alive across T2 and wakes/exits inside T3 ->
+// asserts T1 windowCut:true, T2 and T3 contaminated:["tail:set-0/T1"] (T3 via
+// resumeWatch wakeup), and T4 clean!
 func TestRealGoApp_MultiWindowLingeringGoroutine(t *testing.T) {
 	k := newKeploySide(t)
 	bin := buildAsyncApp(t, k)
@@ -702,16 +703,23 @@ func TestRealGoApp_MultiWindowLingeringGoroutine(t *testing.T) {
 		t.Fatalf("T2 unexpectedly marked windowCut: %v", rec2)
 	}
 
-	rec3 := measure(t, k, a, "set-0/T3", "/twin?n=3")
+	// T3: goroutine settles onto resumeWatch at START T3, then wakes and executes
+	// INSIDE T3 -> resumeWatch MUST fire and mark T3 contaminated tail:set-0/T1!
+	if got := send(t, k.sock, "START set-0/T3"); got != replyStartUnasked {
+		t.Fatalf("START T3: %q", got)
+	}
+	get(t, a, "/twin?n=3")
+	getOK(t, a, "/release?gate=multi&wait=1&fn=gatedWork")
+	if got := send(t, k.sock, "END set-0/T3"); got != replyTaken {
+		t.Fatalf("END T3: %q", got)
+	}
+	rec3 := readNextRecord(t, k, a)
 	if !reflect.DeepEqual(rec3["contaminated"], []any{"tail:set-0/T1"}) {
 		t.Fatalf("T3 contaminated = %v, want [tail:set-0/T1]", rec3["contaminated"])
 	}
 	if _, hasCut := rec3["windowCut"]; hasCut {
 		t.Fatalf("T3 unexpectedly marked windowCut: %v", rec3)
 	}
-
-	// Deterministically release T1's goroutine and wait for it to finish before T4!
-	getOK(t, a, "/release?gate=multi&wait=1&fn=gatedWork")
 
 	rec4 := measure(t, k, a, "set-0/T4", "/twin?n=4")
 	if _, hasCut := rec4["windowCut"]; hasCut {
@@ -1440,5 +1448,539 @@ func TestRealGoApp_WrappedConnKeepAlive(t *testing.T) {
 	}
 	if _, hasCont := rec8["contaminated"]; hasCont {
 		t.Fatalf("T8 unexpectedly got contaminated after slow-flush finished & conn #2 closed: %v", rec8)
+	}
+}
+
+// Vendored third-party async writer mimicking kafka-go Writer{Async:true,
+// Completion} / sarama AsyncProducer (uncovered third-party module).
+const deltaAsyncLib = `package asynclib
+
+import (
+	"sync"
+)
+
+type Writer struct {
+	Completion func(msgs []string)
+	once       sync.Once
+	q          chan string
+	flushCh    chan chan struct{}
+}
+
+func (w *Writer) ensure() {
+	w.once.Do(func() {
+		w.q = make(chan string)
+		w.flushCh = make(chan chan struct{})
+		go w.run()
+	})
+}
+
+func (w *Writer) WriteMessages(m string) {
+	w.ensure()
+	w.q <- m
+}
+
+func (w *Writer) Flush() {
+	w.ensure()
+	done := make(chan struct{})
+	w.flushCh <- done
+	<-done
+}
+
+func (w *Writer) run() {
+	var batch []string
+	for {
+		select {
+		case m := <-w.q:
+			batch = append(batch, m)
+		case done := <-w.flushCh:
+			msgs := batch
+			batch = nil
+			w.Completion(msgs)
+			close(done)
+		}
+	}
+}
+`
+
+const deltaProbeApp = `package main
+
+import (
+	"fmt"
+	"net/http"
+	"runtime"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"example.com/asynclib"
+)
+
+var (
+	deliveredFraud atomic.Int64
+	auditedFraud   atomic.Int64
+	flushedFraud   atomic.Int64
+	jobFraud       atomic.Int64
+	janitorTicks   atomic.Int64
+
+	batchQ       = make(chan string)
+	batchFlushCh = make(chan chan struct{})
+	jobQ         = make(chan deltaJob, 64)
+	auditDoneMu  sync.Mutex
+	auditDone    chan struct{}
+
+	deltaGateMu sync.Mutex
+	deltaGates  = map[string]chan struct{}{}
+	lazyOnce    sync.Once
+)
+
+type deltaJob struct {
+	kind string
+	gate chan struct{}
+}
+
+func onDelivered(msgs []string) {
+	for _, m := range msgs {
+		if m == "fraud" {
+			deliveredFraud.Add(1)
+		}
+	}
+}
+
+var asyncWriter = &asynclib.Writer{Completion: onDelivered}
+
+func auditFraud(id string) {
+	if id != "" {
+		auditedFraud.Add(1)
+	}
+}
+
+func flushBatch(b []string) {
+	for _, m := range b {
+		if m == "fraud" {
+			flushedFraud.Add(1)
+		}
+	}
+}
+
+func batcher() {
+	var batch []string
+	for {
+		select {
+		case m := <-batchQ:
+			batch = append(batch, m)
+		case done := <-batchFlushCh:
+			b := batch
+			batch = nil
+			flushBatch(b)
+			close(done)
+		}
+	}
+}
+
+func processJob(j deltaJob) {
+	<-j.gate
+	if j.kind == "fraud" {
+		jobFraud.Add(1)
+	}
+}
+
+func jobWorker() {
+	for j := range jobQ {
+		processJob(j)
+	}
+}
+
+func janitor() {
+	t := time.NewTicker(time.Hour)
+	for range t.C {
+		janitorTicks.Add(1)
+	}
+}
+
+func waitParkedDelta(fn, status string) bool {
+	buf := make([]byte, 256<<10)
+	for i := 0; i < 1500; i++ {
+		n := runtime.Stack(buf, true)
+		for _, g := range strings.Split(string(buf[:n]), "\n\n") {
+			if strings.Contains(g, fn) && strings.Contains(g, "["+status) {
+				return true
+			}
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	return false
+}
+
+func waitNotInFrame(fn string) bool {
+	buf := make([]byte, 256<<10)
+	for i := 0; i < 1500; i++ {
+		n := runtime.Stack(buf, true)
+		if !strings.Contains(string(buf[:n]), fn) {
+			return true
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	return false
+}
+
+func init() {
+	go batcher()
+	go jobWorker()
+	http.HandleFunc("/plain", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "plain")
+	})
+	http.HandleFunc("/produce", func(w http.ResponseWriter, r *http.Request) {
+		asyncWriter.WriteMessages(r.URL.Query().Get("kind"))
+		if !waitParkedDelta("example.com/asynclib.(*Writer).run(", "select") {
+			http.Error(w, "writer did not re-park", 500)
+			return
+		}
+		fmt.Fprint(w, "produced")
+	})
+	http.HandleFunc("/flush-writer", func(w http.ResponseWriter, r *http.Request) {
+		asyncWriter.Flush()
+		fmt.Fprint(w, "flushed-writer")
+	})
+	http.HandleFunc("/audit", func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Query().Get("id")
+		done := make(chan struct{})
+		auditDoneMu.Lock()
+		auditDone = done
+		auditDoneMu.Unlock()
+		time.AfterFunc(100*time.Millisecond, func() {
+			auditFraud(id)
+			close(done)
+		})
+		fmt.Fprint(w, "audit-scheduled")
+	})
+	http.HandleFunc("/wait-audit", func(w http.ResponseWriter, r *http.Request) {
+		auditDoneMu.Lock()
+		done := auditDone
+		auditDoneMu.Unlock()
+		if done != nil {
+			<-done
+		}
+		fmt.Fprint(w, "audit-done")
+	})
+	http.HandleFunc("/enqueue", func(w http.ResponseWriter, r *http.Request) {
+		batchQ <- r.URL.Query().Get("kind")
+		if !waitParkedDelta("main.batcher(", "select") {
+			http.Error(w, "batcher did not re-park", 500)
+			return
+		}
+		fmt.Fprint(w, "enqueued")
+	})
+	http.HandleFunc("/flush-batch", func(w http.ResponseWriter, r *http.Request) {
+		done := make(chan struct{})
+		batchFlushCh <- done
+		<-done
+		fmt.Fprint(w, "flushed-batch")
+	})
+	http.HandleFunc("/job", func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("gate")
+		g := make(chan struct{})
+		deltaGateMu.Lock()
+		deltaGates[name] = g
+		deltaGateMu.Unlock()
+		jobQ <- deltaJob{kind: r.URL.Query().Get("kind"), gate: g}
+		if rel := r.URL.Query().Get("release"); rel != "" {
+			deltaGateMu.Lock()
+			rg := deltaGates[rel]
+			deltaGateMu.Unlock()
+			close(rg)
+		}
+		if r.URL.Query().Get("waitpark") == "1" && !waitParkedDelta("main.processJob(", "chan receive") {
+			http.Error(w, "worker did not park in processJob", 500)
+			return
+		}
+		fmt.Fprint(w, "job")
+	})
+	http.HandleFunc("/open", func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("gate")
+		deltaGateMu.Lock()
+		g := deltaGates[name]
+		deltaGateMu.Unlock()
+		close(g)
+		if r.URL.Query().Get("waitidle") == "1" && !waitNotInFrame("main.processJob(") {
+			http.Error(w, "worker did not leave processJob", 500)
+			return
+		}
+		fmt.Fprint(w, "opened")
+	})
+	http.HandleFunc("/lazy", func(w http.ResponseWriter, r *http.Request) {
+		lazyOnce.Do(func() {
+			started := make(chan struct{})
+			go func() {
+				close(started)
+				janitor()
+			}()
+			<-started
+		})
+		if !waitParkedDelta("main.janitor(", "chan receive") {
+			http.Error(w, "janitor did not park", 500)
+			return
+		}
+		fmt.Fprint(w, "lazy")
+	})
+}
+`
+
+func buildDeltaProbeApp(t *testing.T, k *keploySide) string {
+	t.Helper()
+	hook := hookCopy(t, k.sock, k.data)
+	mod := appModuleDir(t)
+	files := map[string]string{
+		"go.mod":                             "module " + appModule + "\n\ngo 1.21\n\nrequire example.com/asynclib v1.0.0\n",
+		"delta.go":                           deltaProbeApp,
+		"vendor/modules.txt":                 "# example.com/asynclib v1.0.0\n## explicit; go 1.21\nexample.com/asynclib\n",
+		"vendor/example.com/asynclib/lib.go": deltaAsyncLib,
+	}
+	for name, body := range files {
+		p := filepath.Join(mod, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bin, _ := stage(t, hook, mod, nil)
+	return bin
+}
+
+func deltaLineOf(t *testing.T, needle string) int {
+	t.Helper()
+	for i, l := range strings.Split(deltaProbeApp, "\n") {
+		if strings.Contains(l, needle) {
+			return i + 1
+		}
+	}
+	t.Fatalf("deltaProbeApp has no line holding %q", needle)
+	return 0
+}
+
+// TestRealGoApp_B1DeferredAsyncScopeLimitsPinAsyncExecutorsFalse builds a real
+// -cover -covermode=atomic app with a vendored uncovered third-party async
+// writer and pins all three R1 scope limits from B1:
+//   - (a) library-owned third-party async writer (kafka-go/sarama style)
+//   - (b) dormant time.AfterFunc timer firing after END
+//   - (c) pre-existing app batcher/debouncer re-parking at the same idle sig
+//
+// In all three patterns, test N's deferred fraud line lands in test N+1 without
+// goroutine marks, AND every START/END reply declares asyncExecutors=false so
+// Go stays soft-mark-only and never authorizes removal in R1.
+func TestRealGoApp_B1DeferredAsyncScopeLimitsPinAsyncExecutorsFalse(t *testing.T) {
+	k := newKeploySide(t)
+	bin := buildDeltaProbeApp(t, k)
+	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=20")
+	deltaFile := appModule + "/delta.go"
+
+	runWithCapsCheck := func(id string, paths ...string) map[string]any {
+		t.Helper()
+		startAck := send(t, k.sock, "START "+id)
+		if startAck != replyStartUnasked || !strings.Contains(startAck, "asyncExecutors=false") {
+			t.Fatalf("START %s reply = %q, want %q with asyncExecutors=false", id, startAck, replyStartUnasked)
+		}
+		for _, p := range paths {
+			getOK(t, a, p)
+		}
+		endAck := send(t, k.sock, "END "+id)
+		if endAck != replyTaken || !strings.Contains(endAck, "asyncExecutors=false") {
+			t.Fatalf("END %s reply = %q, want %q with asyncExecutors=false", id, endAck, replyTaken)
+		}
+		return readNextRecord(t, k, a)
+	}
+
+	// Warm up baseline.
+	_ = runWithCapsCheck("set-0/warm", "/plain")
+
+	for _, tc := range []struct {
+		name       string
+		nPath      string
+		n1Path     string
+		fraudToken string
+	}{
+		{"a-library-async-writer", "/produce?kind=fraud", "/flush-writer", "deliveredFraud.Add(1)"},
+		{"b-time-afterfunc", "/audit?id=5", "/wait-audit", "auditedFraud.Add(1)"},
+		{"c-preexisting-app-batcher", "/enqueue?kind=fraud", "/flush-batch", "flushedFraud.Add(1)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			line := deltaLineOf(t, tc.fraudToken)
+			recN := runWithCapsCheck("set-0/N-"+tc.name, tc.nPath)
+			recN1 := runWithCapsCheck("set-0/N1-"+tc.name, tc.n1Path)
+
+			inN := containsInt(linesOfRecord(t, recN)[deltaFile], line)
+			inN1 := containsInt(linesOfRecord(t, recN1)[deltaFile], line)
+			if inN || !inN1 {
+				t.Fatalf("%s: expected deferred line %d in N+1 only (inN=%v inN1=%v)", tc.name, line, inN, inN1)
+			}
+			// Pin documented R1 scope limit: stack snapshots cannot observe these
+			// three deferred hand-offs, which is why caps MUST declare asyncExecutors=false.
+			if _, cutN := recN["windowCut"]; cutN {
+				t.Fatalf("%s: unexpected windowCut on N: %v", tc.name, recN)
+			}
+			if _, contN1 := recN1["contaminated"]; contN1 {
+				t.Fatalf("%s: unexpected contaminated on N+1: %v", tc.name, recN1)
+			}
+		})
+	}
+}
+
+// TestRealGoApp_SF1MidJobWorkerBaselineCatchesNAndNotInnocentN1 reproduces SF1
+// on a real -cover binary: a pre-existing jobWorker is mid-job at START N (on
+// gap/background work), takes N's fraud job and parks at the exact same line
+// in processJob before END N, and finishes the fraud job during N+1. Asserts N
+// is honestly marked windowCut:true (using lastQuiescentSigs), N+1 carries
+// contaminated:["tail:set-0/N"] WITHOUT being falsely marked windowCut, and
+// N+2 is clean.
+func TestRealGoApp_SF1MidJobWorkerBaselineCatchesNAndNotInnocentN1(t *testing.T) {
+	k := newKeploySide(t)
+	bin := buildDeltaProbeApp(t, k)
+	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=30")
+	deltaFile := appModule + "/delta.go"
+	fraudLine := deltaLineOf(t, "jobFraud.Add(1)")
+
+	// warm establishes jobWorker's idle baseline (for j := range jobQ).
+	warm := measure(t, k, a, "set-0/warm", "/plain")
+	if _, hasCut := warm["windowCut"]; hasCut {
+		t.Fatalf("warm got unexpected windowCut: %v", warm)
+	}
+
+	// Gap work: jobWorker takes bg job and parks mid-job in processJob on g0.
+	getOK(t, a, "/job?kind=bg&gate=g0&waitpark=1")
+
+	// Test N: enqueues fraud job on g1, releases g0 -> worker finishes bg, picks
+	// up fraud job, and parks at the EXACT same <-j.gate line in processJob!
+	if got := send(t, k.sock, "START set-0/N"); got != replyStartUnasked {
+		t.Fatalf("START N: %q", got)
+	}
+	getOK(t, a, "/job?kind=fraud&gate=g1&waitpark=1&release=g0")
+	if got := send(t, k.sock, "END set-0/N"); got != replyTaken {
+		t.Fatalf("END N: %q", got)
+	}
+	recN := readNextRecord(t, k, a)
+	if recN["windowCut"] != true {
+		t.Fatalf("SF1 failed: N missed mid-job worker (windowCut=%v, rec=%v)", recN["windowCut"], recN)
+	}
+	lingN, _ := recN["lingeringGoroutines"].([]any)
+	if len(lingN) == 0 || !strings.Contains(fmt.Sprint(lingN), "processJob") {
+		t.Fatalf("SF1: N lingeringGoroutines = %v, want entry naming processJob", lingN)
+	}
+	if containsInt(linesOfRecord(t, recN)[deltaFile], fraudLine) {
+		t.Fatalf("SF1 setup: fraud line %d should not have run in N", fraudLine)
+	}
+
+	// Test N+1: opens g1 so fraud job runs inside N+1 and worker returns to idle.
+	if got := send(t, k.sock, "START set-0/N1"); got != replyStartUnasked {
+		t.Fatalf("START N1: %q", got)
+	}
+	getOK(t, a, "/open?gate=g1&waitidle=1")
+	getOK(t, a, "/plain")
+	if got := send(t, k.sock, "END set-0/N1"); got != replyTaken {
+		t.Fatalf("END N1: %q", got)
+	}
+	recN1 := readNextRecord(t, k, a)
+	if !containsInt(linesOfRecord(t, recN1)[deltaFile], fraudLine) {
+		t.Fatalf("SF1 setup: fraud line %d did not spill into N+1: %v", fraudLine, linesOfRecord(t, recN1))
+	}
+	if !reflect.DeepEqual(recN1["contaminated"], []any{"tail:set-0/N"}) {
+		t.Fatalf("SF1 failed: N+1 contaminated = %v, want [tail:set-0/N]", recN1["contaminated"])
+	}
+	if _, hasCut := recN1["windowCut"]; hasCut {
+		t.Fatalf("SF1 failed: innocent N+1 was falsely marked windowCut: %v", recN1)
+	}
+
+	// Test N+2: worker is back at idle -> 100% CLEAN!
+	recN2 := measure(t, k, a, "set-0/N2", "/plain")
+	if _, hasCut := recN2["windowCut"]; hasCut {
+		t.Fatalf("SF1: N+2 unexpectedly got windowCut: %v", recN2)
+	}
+	if _, hasCont := recN2["contaminated"]; hasCont {
+		t.Fatalf("SF1: N+2 unexpectedly got contaminated: %v", recN2)
+	}
+}
+
+// TestRealGoApp_SF2LazyOnceJanitorRebaselinesAfterT2 verifies on a real -cover
+// binary that a permanent background goroutine lazily started via sync.Once in
+// T1 marks T1 windowCut:true and T2 contaminated:["tail:set-0/T1"], then
+// settles onto a one-time resumeWatch so T3..T10 are ALL 100% CLEAN (and
+// subsequent BACKGROUND gaps are no longer stuck as afterCut:true).
+func TestRealGoApp_SF2LazyOnceJanitorRebaselinesAfterT2(t *testing.T) {
+	k := newKeploySide(t)
+	bin := buildDeltaProbeApp(t, k)
+	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=30")
+
+	if got := send(t, k.sock, backgroundAsk+" sf2"); got != replyTaken {
+		t.Fatalf("BACKGROUND: %q", got)
+	}
+
+	readTest := func(wantID string) (map[string]any, []map[string]any) {
+		t.Helper()
+		var bgs []map[string]any
+		for {
+			r := readNextRecord(t, k, a)
+			if r["kind"] == "background" {
+				bgs = append(bgs, r)
+				continue
+			}
+			if r["id"] != wantID {
+				t.Fatalf("got record %v, want id %s", r, wantID)
+			}
+			return r, bgs
+		}
+	}
+
+	run := func(id, path string) (map[string]any, []map[string]any) {
+		t.Helper()
+		if got := send(t, k.sock, "START "+id); got != replyStartAskedBy("sf2") {
+			t.Fatalf("START %s: %q", id, got)
+		}
+		getOK(t, a, path)
+		if got := send(t, k.sock, "END "+id); got != replyTaken {
+			t.Fatalf("END %s: %q", id, got)
+		}
+		return readTest(id)
+	}
+
+	// warm test before lazy janitor exists.
+	_, _ = run("set-0/warm", "/plain")
+
+	// T1: lazily starts sync.Once janitor -> windowCut:true naming janitor.
+	rec1, _ := run("set-0/T1", "/lazy")
+	if rec1["windowCut"] != true {
+		t.Fatalf("SF2: T1 windowCut = %v, want true (rec=%v)", rec1["windowCut"], rec1)
+	}
+	ling1, _ := rec1["lingeringGoroutines"].([]any)
+	if len(ling1) == 0 || !strings.Contains(fmt.Sprint(ling1), "janitor") {
+		t.Fatalf("SF2: T1 lingeringGoroutines = %v, want entry naming janitor", ling1)
+	}
+
+	// T2: tainted tail:set-0/T1 (janitor streak 1 across START T2 -> END T2).
+	rec2, _ := run("set-0/T2", "/plain")
+	if !reflect.DeepEqual(rec2["contaminated"], []any{"tail:set-0/T1"}) {
+		t.Fatalf("SF2: T2 contaminated = %v, want [tail:set-0/T1]", rec2["contaminated"])
+	}
+	if _, hasCut := rec2["windowCut"]; hasCut {
+		t.Fatalf("SF2: T2 unexpectedly marked windowCut: %v", rec2)
+	}
+
+	// T3..T10: janitor moved onto resumeWatch at START T3 -> ALL 8 tests MUST be 100% CLEAN!
+	for i := 3; i <= 10; i++ {
+		id := fmt.Sprintf("set-0/T%d", i)
+		rec, bgs := run(id, "/plain")
+		if _, hasCut := rec["windowCut"]; hasCut {
+			t.Fatalf("SF2 failed: %s got windowCut (lazy janitor not re-baselined): %v", id, rec)
+		}
+		if _, hasCont := rec["contaminated"]; hasCont {
+			t.Fatalf("SF2 failed: %s got contaminated (lazy janitor stuck forever): %v", id, rec)
+		}
+		if i >= 4 {
+			for _, bg := range bgs {
+				if bg["afterCut"] == true {
+					t.Fatalf("SF2 failed: gap before %s still stuck afterCut:true: %v", id, bg)
+				}
+			}
+		}
 	}
 }

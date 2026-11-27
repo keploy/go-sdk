@@ -46,15 +46,23 @@ const (
 
 // capsString formats the v3 honesty capability token (no spaces) from live
 // runtime state. Called with controlMu held (or after verifying coverage).
+//
+// In R1, Go always declares asyncExecutors=false (staying soft-mark-only and
+// never removal-eligible) because runtime.Stack snapshots cannot observe work
+// handed off to library-owned third-party async writers/producers (e.g.
+// kafka-go / sarama), dormant time.AfterFunc timers not yet fired by END, or
+// pre-existing app batchers/debouncers that re-park at the same idle signature
+// before END. Go also declares windowCut=false on Go < 1.21 toolchains (which
+// lack "created by ... in goroutine N" parent-goid lines) or when
+// KEPLOY_GO_GOROUTINE_TRACKING=off.
 func capsString(coverageActive bool) string {
 	tracking := goroutineTrackingActive()
-	windowCut := coverageActive && tracking
+	windowCut := coverageActive && tracking && supportsGoroutineChildAdoption(runtimeGoVersion())
 	contaminated := coverageActive
 	background := coverageActive
-	asyncExecutors := coverageActive && tracking
 	return fmt.Sprintf(
-		"windowCut=%t,contaminated=%t,classMismatch=false,background=%t,asyncExecutors=%t,listenerContamination=false",
-		windowCut, contaminated, background, asyncExecutors,
+		"windowCut=%t,contaminated=%t,classMismatch=false,background=%t,asyncExecutors=false,listenerContamination=false",
+		windowCut, contaminated, background,
 	)
 }
 
@@ -416,6 +424,9 @@ func runTestCommand(command string) string {
 		if tracking || len(lingeringTails) > 0 || len(pendingTruncatedCuts) > 0 || len(resumeWatches) > 0 {
 			curSnap = snapshotGoroutines()
 			haveSnap = true
+			if curSnap.truncated {
+				logStackTruncatedOnce()
+			}
 		}
 		// Check one-time resume watches BEFORE unclosed-window handling and
 		// BEFORE computing afterCut so a watched goroutine that woke up during
@@ -605,6 +616,7 @@ func runTestCommand(command string) string {
 					lastCompleteGids = complete
 				}
 				if snap.truncated {
+					logStackTruncatedOnce()
 					windowCut = true
 					if len(active) > 0 {
 						targets := make([]lingeringTarget, len(active))
@@ -887,8 +899,8 @@ func reportCoverage(testID string) error {
 	}
 	if pendingEndWindowCut && len(startMarks) == 0 {
 		// Also mark contaminated:["window-cut"] when no start-time mark is
-		// already present so older proto=2 collectors (which ignore windowCut)
-		// fail closed on the cut test itself.
+		// already present so enterprise proto>=2 collectors that ignore
+		// windowCut still fail closed on the cut test itself.
 		startMarks = []string{"window-cut"}
 	}
 	partial := mergeContaminated(startMarks, gapPartial)

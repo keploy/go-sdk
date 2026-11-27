@@ -1,8 +1,10 @@
 package cover
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"reflect"
 	"strconv"
 	"strings"
@@ -212,18 +214,58 @@ func TestIsAppRelevantGoroutine(t *testing.T) {
 
 func TestCapsStringAndProto3BackwardCompat(t *testing.T) {
 	stubCoverage(t, nil, nil)
+	origGoVersion := runtimeGoVersion
+	t.Cleanup(func() { runtimeGoVersion = origGoVersion })
 
-	// Default: enabled + active block coverage.
+	// Default (Go >= 1.21): windowCut=true, asyncExecutors=false ALWAYS in R1.
 	t.Setenv(envGoroutineTracking, "")
+	runtimeGoVersion = func() string { return "go1.27.3" }
 	got := capsString(true)
 	if got != defaultCaps {
 		t.Fatalf("default caps = %q, want %q", got, defaultCaps)
+	}
+	if !strings.Contains(got, "asyncExecutors=false") {
+		t.Fatalf("B1 violated: default caps must declare asyncExecutors=false, got %q", got)
 	}
 	if strings.ContainsAny(got, " \t\r\n") {
 		t.Fatalf("caps must not contain whitespace: %q", got)
 	}
 
-	// Kill switch disables windowCut and asyncExecutors.
+	// SF3: tie windowCut cap to runtime.Version() (Go < 1.21 -> windowCut=false),
+	// and assert asyncExecutors=false in ALL cases.
+	for _, tc := range []struct {
+		ver           string
+		wantAdoption  bool
+		wantWindowCut bool
+	}{
+		{"go1.20.14", false, false},
+		{"go1.20", false, false},
+		{"go1.20rc1", false, false},
+		{"go1.19.13", false, false},
+		{"go1.21.0", true, true},
+		{"go1.21rc2", true, true},
+		{"go1.27.3", true, true},
+		{"go1.24.0 X:boringcrypto", true, true},
+		{"go2.0.0", true, true},
+		{"devel +abc123", true, true},
+		{"devel go1.24-abc123 Thu Jan 1 00:00:00 2026 +0000", true, true},
+		{"devel go1.20-abc123", false, false},
+		{"", false, false},
+		{"unknown", false, false},
+	} {
+		if gotAdopt := supportsGoroutineChildAdoption(tc.ver); gotAdopt != tc.wantAdoption {
+			t.Fatalf("supportsGoroutineChildAdoption(%q) = %v, want %v", tc.ver, gotAdopt, tc.wantAdoption)
+		}
+		runtimeGoVersion = func() string { return tc.ver }
+		caps := capsString(true)
+		wantCaps := fmt.Sprintf("windowCut=%t,contaminated=true,classMismatch=false,background=true,asyncExecutors=false,listenerContamination=false", tc.wantWindowCut)
+		if caps != wantCaps {
+			t.Fatalf("runtime.Version()=%q -> caps = %q, want %q", tc.ver, caps, wantCaps)
+		}
+	}
+	runtimeGoVersion = origGoVersion
+
+	// Kill switch disables windowCut and keeps asyncExecutors=false.
 	for _, offVal := range []string{"off", "OFF", "false", "0", "no"} {
 		t.Setenv(envGoroutineTracking, offVal)
 		offCaps := capsString(true)
@@ -240,8 +282,8 @@ func TestCapsStringAndProto3BackwardCompat(t *testing.T) {
 		t.Fatalf("inactive caps = %q, want %q", got, wantInactive)
 	}
 
-	// Per-func granularity (non-block coverage) disables windowCut, asyncExecutors,
-	// AND runtime goroutine tracking consistently.
+	// Per-func granularity (non-block coverage) disables windowCut, keeps
+	// asyncExecutors=false, AND disables runtime goroutine tracking consistently.
 	meta = &metaFile{mode: ctrModeAtomic, granularity: ctrGranularityPerFunc}
 	wantPerFunc := "windowCut=false,contaminated=true,classMismatch=false,background=true,asyncExecutors=false,listenerContamination=false"
 	if got := capsString(true); got != wantPerFunc {
@@ -1714,5 +1756,253 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 			t.Fatalf("Nit1 failed: gid 15 duplicated across %d tails, want 1", count15)
 		}
 		h.do("END set-0/T2", replyTaken)
+	})
+
+	t.Run("SF1 mid-job START baseline compares against lastQuiescentSigs and fails closed", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		t.Run("deeper mid-job worker at START", func(t *testing.T) {
+			h := newGapHarness(t,
+				lines(appFile, 1), none(), // warm
+				lines(appFile, 2), none(), // N (mid-job at START and END!)
+				lines(appFile, 3), none(), // N+1 (worker finishes fraud job and returns to idle!)
+				lines(appFile, 4), // N+2 (clean!)
+			)
+			idle := &goroutineInfo{
+				id: 40, baseStatus: "chan receive", topLine: "/app/worker.go:193",
+				frames: []string{"main.jobWorker"}, framePkgs: []string{"main"}, frameLines: []string{"/app/worker.go:193"},
+				createdByFn: "main.init", createdByPkg: "main",
+			}
+			midJob := &goroutineInfo{
+				id: 40, baseStatus: "chan receive", topLine: "/app/worker.go:186",
+				frames: []string{"main.processJob", "main.jobWorker"}, framePkgs: []string{"main", "main"}, frameLines: []string{"/app/worker.go:186", "/app/worker.go:194"},
+				createdByFn: "main.init", createdByPkg: "main",
+			}
+			cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 40: idle}}
+			snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+			// warm establishes lastQuiescentSigs[40] = idle (depth 1).
+			h.run("set-0/warm")
+
+			// Gap puts worker 40 mid-job (depth 2); during N it takes a new fraud job and parks at the EXACT same midJob line!
+			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 40: midJob}}
+			h.run("set-0/N")
+			recN := h.test("set-0/N")
+			if recN["windowCut"] != true {
+				t.Fatalf("SF1 failed: N missed mid-job worker baseline (windowCut=%v, rec=%v)", recN["windowCut"], recN)
+			}
+			if !reflect.DeepEqual(recN["lingeringGoroutines"], []interface{}{"main.processJob"}) {
+				t.Fatalf("SF1: N lingeringGoroutines = %v, want [main.processJob]", recN["lingeringGoroutines"])
+			}
+
+			// N+1: worker finishes fraud job and returns to idle before END N+1.
+			// N+1 MUST be contaminated tail:set-0/N and MUST NOT get blamed with windowCut!
+			h.do("START set-0/N1", replyStartUnasked)
+			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 40: idle}}
+			h.do("END set-0/N1", replyTaken)
+			recN1 := h.test("set-0/N1")
+			if !reflect.DeepEqual(recN1["contaminated"], []interface{}{"tail:set-0/N"}) {
+				t.Fatalf("SF1 failed: N+1 contaminated = %v, want [tail:set-0/N]", recN1["contaminated"])
+			}
+			if _, hasCut := recN1["windowCut"]; hasCut {
+				t.Fatalf("SF1 failed: innocent N+1 was falsely marked windowCut: %v", recN1)
+			}
+
+			// N+2: worker is back at idle -> 100% clean!
+			h.run("set-0/N2")
+			if _, hasCont := h.test("set-0/N2")["contaminated"]; hasCont {
+				t.Fatalf("SF1: N+2 should be clean, got %v", h.test("set-0/N2"))
+			}
+		})
+
+		t.Run("same-depth mid-job at START and non-app idle conn caught mid-handler at START", func(t *testing.T) {
+			h := newGapHarness(t,
+				lines(appFile, 1), none(), // warm
+				lines(appFile, 2), none(), // N
+				lines(appFile, 3), none(), // N+1
+				lines(appFile, 4), // N+2
+			)
+			workerIdle := &goroutineInfo{
+				id: 41, baseStatus: "chan receive", topLine: "/app/worker.go:10",
+				frames: []string{"main.inlineWorker"}, framePkgs: []string{"main"}, frameLines: []string{"/app/worker.go:10"},
+				createdByFn: "main.init", createdByPkg: "main",
+			}
+			workerMid := &goroutineInfo{
+				id: 41, baseStatus: "chan receive", topLine: "/app/worker.go:25",
+				frames: []string{"main.inlineWorker"}, framePkgs: []string{"main"}, frameLines: []string{"/app/worker.go:25"},
+				createdByFn: "main.init", createdByPkg: "main",
+			}
+			connIdle := &goroutineInfo{
+				id: 42, baseStatus: "IO wait", topLine: "/go/net/http/server.go:100",
+				frames: []string{"net/http.(*conn).readRequest", "net/http.(*conn).serve"}, framePkgs: []string{"net/http", "net/http"},
+				createdByFn: "net/http.(*Server).Serve", createdByPkg: "net/http",
+			}
+			connMid := &goroutineInfo{
+				id: 42, baseStatus: "chan receive", topLine: "/app/h.go:40",
+				frames: []string{"main.slowHandler", "net/http.serverHandler.ServeHTTP", "net/http.(*conn).serve"}, framePkgs: []string{"main", "net/http", "net/http"}, frameLines: []string{"/app/h.go:40", "/go/s.go:1", "/go/s.go:2"},
+				createdByFn: "net/http.(*Server).Serve", createdByPkg: "net/http",
+			}
+			cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 41: workerIdle, 42: connIdle}}
+			snapshotGoroutines = func() goroutineSnapshot { return cur }
+			h.run("set-0/warm")
+
+			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 41: workerMid, 42: connMid}}
+			h.run("set-0/N")
+			recN := h.test("set-0/N")
+			if recN["windowCut"] != true {
+				t.Fatalf("SF1 same-depth/conn failed: N windowCut=%v, want true", recN["windowCut"])
+			}
+			if !reflect.DeepEqual(recN["lingeringGoroutines"], []interface{}{"main.inlineWorker", "main.slowHandler"}) {
+				t.Fatalf("SF1 same-depth/conn: lingering = %v, want [main.inlineWorker main.slowHandler]", recN["lingeringGoroutines"])
+			}
+
+			h.do("START set-0/N1", replyStartUnasked)
+			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 41: workerIdle, 42: connIdle}}
+			h.do("END set-0/N1", replyTaken)
+			if _, hasCut := h.test("set-0/N1")["windowCut"]; hasCut {
+				t.Fatalf("innocent N1 falsely marked windowCut: %v", h.test("set-0/N1"))
+			}
+			h.run("set-0/N2")
+			if _, hasCont := h.test("set-0/N2")["contaminated"]; hasCont {
+				t.Fatalf("N2 should be clean: %v", h.test("set-0/N2"))
+			}
+		})
+	})
+
+	t.Run("SF2 16 MiB stack-cap truncation logs one-time recovery diagnostic", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		var buf bytes.Buffer
+		origOut := log.Writer()
+		log.SetOutput(&buf)
+		t.Cleanup(func() { log.SetOutput(origOut) })
+
+		h := newGapHarness(t, lines(appFile, 1), none(), lines(appFile, 2))
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}, truncated: true}
+		snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+		// Two truncated tests must emit the diagnostic log EXACTLY ONCE.
+		h.run("set-0/T1")
+		h.run("set-0/T2")
+
+		logged := buf.String()
+		if !strings.Contains(logged, "16 MiB") {
+			t.Fatalf("SF2 truncation log missing 16 MiB cap: %q", logged)
+		}
+		if !strings.Contains(logged, envIgnoreGoroutines) {
+			t.Fatalf("SF2 truncation log missing %s: %q", envIgnoreGoroutines, logged)
+		}
+		if !strings.Contains(logged, envGoroutineTracking+"=off") {
+			t.Fatalf("SF2 truncation log missing %s=off: %q", envGoroutineTracking, logged)
+		}
+		if cnt := strings.Count(logged, "16 MiB"); cnt != 1 {
+			t.Fatalf("SF2 truncation diagnostic logged %d times, want once:\n%s", cnt, logged)
+		}
+	})
+
+	t.Run("SF2 lazy sync.Once janitor and non-HTTP third-party goroutine settle onto resumeWatch after T2", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		h := newGapHarness(t,
+			lines(appFile, 1), none(), // T1: spawns lazy janitor + lazy gRPC over wrapped conn
+			lines(appFile, 2), none(), // T2: tail:T1 (streak 1)
+			lines(appFile, 3), none(), // T3: settled onto resumeWatch -> CLEAN!
+			lines(appFile, 4), none(), // T4: still parked -> CLEAN!
+			lines(appFile, 5), none(), // T5: janitor wakes up inside T5 -> tail:T1!
+			lines(appFile, 6), // T6: janitor exited -> CLEAN!
+		)
+		meta = &metaFile{
+			mode:        ctrModeAtomic,
+			granularity: ctrGranularityPerBlk,
+			pkgs:        []metaPkg{{path: "example.com/app"}},
+		}
+		janitorPark := &goroutineInfo{
+			id: 70, baseStatus: "chan receive", topLine: "/app/janitor.go:10",
+			frames: []string{"main.janitor"}, framePkgs: []string{"main"}, frameLines: []string{"/app/janitor.go:10"},
+			createdByFn: "main.initLazy.func1", createdByPkg: "main",
+		}
+		grpcConnPark := &goroutineInfo{
+			id: 71, baseStatus: "IO wait", topLine: "/go/poll.go:84",
+			frames:      []string{"internal/poll.runtime_pollWait", "main.(*wrappedConn).Read", "google.golang.org/grpc/internal/transport.(*http2Client).reader"},
+			framePkgs:   []string{"internal/poll", "main", "google.golang.org/grpc/internal/transport"},
+			frameLines:  []string{"/go/poll.go:84", "/app/conn.go:20", "/mod/grpc/http2_client.go:100"},
+			createdByFn: "google.golang.org/grpc/internal/transport.newHTTP2Client", createdByPkg: "google.golang.org/grpc/internal/transport",
+		}
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}}
+		snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+		// T1 lazily starts both goroutines -> windowCut:true.
+		h.do("START set-0/T1", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 70: janitorPark, 71: grpcConnPark}}
+		h.do("END set-0/T1", replyTaken)
+		if h.test("set-0/T1")["windowCut"] != true {
+			t.Fatalf("T1 windowCut = %v, want true", h.test("set-0/T1")["windowCut"])
+		}
+
+		// T2: tail:T1 (streak 1 across START T2 -> END T2).
+		h.run("set-0/T2")
+		if !reflect.DeepEqual(h.test("set-0/T2")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T2")["contaminated"])
+		}
+
+		// T3 & T4: both settled onto resumeWatches -> 100% CLEAN!
+		for _, id := range []string{"set-0/T3", "set-0/T4"} {
+			h.run(id)
+			rec := h.test(id)
+			if _, hasCut := rec["windowCut"]; hasCut {
+				t.Fatalf("SF2 failed: %s got windowCut: %v", id, rec)
+			}
+			if _, hasCont := rec["contaminated"]; hasCont {
+				t.Fatalf("SF2 failed: %s got contaminated: %v", id, rec)
+			}
+		}
+
+		// T5: janitor wakes up and exits during T5 -> resumeWatch MUST fire tail:set-0/T1 on T5!
+		h.do("START set-0/T5", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 71: grpcConnPark}}
+		h.do("END set-0/T5", replyTaken)
+		if !reflect.DeepEqual(h.test("set-0/T5")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("SF2 wakeup failed: T5 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T5")["contaminated"])
+		}
+
+		// T6: clean again!
+		h.run("set-0/T6")
+		if _, hasCont := h.test("set-0/T6")["contaminated"]; hasCont {
+			t.Fatalf("T6 should be clean: %v", h.test("set-0/T6"))
+		}
+	})
+
+	t.Run("SF2 END streak reset prevents active mustExit goroutine from prematurely settling", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		h := newGapHarness(t,
+			lines(appFile, 1), none(), // T1
+			lines(appFile, 2), none(), // T2 (goroutine active at END T2 -> resets streak!)
+			lines(appFile, 3), // T3 (MUST still be tail:T1, not clean!)
+		)
+		parked := &goroutineInfo{
+			id: 75, baseStatus: "chan receive", topLine: "/app/w.go:10",
+			frames: []string{"main.worker"}, framePkgs: []string{"main"}, frameLines: []string{"/app/w.go:10"},
+			createdByFn: "main.handle", createdByPkg: "main",
+		}
+		running := &goroutineInfo{
+			id: 75, baseStatus: "runnable", topLine: "/app/w.go:20",
+			frames: []string{"main.doWork", "main.worker"}, framePkgs: []string{"main", "main"}, frameLines: []string{"/app/w.go:20", "/app/w.go:12"},
+			createdByFn: "main.handle", createdByPkg: "main",
+		}
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}}}
+		snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+		h.do("START set-0/T1", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 75: parked}}
+		h.do("END set-0/T1", replyTaken)
+
+		// START T2 sees parked (streak 1), END T2 sees running (streak reset!).
+		h.do("START set-0/T2", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 75: running}}
+		h.do("END set-0/T2", replyTaken)
+
+		// START T3 sees parked again, but streak was reset at END T2 -> T3 MUST stay tail:T1!
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 75: parked}}
+		h.run("set-0/T3")
+		if !reflect.DeepEqual(h.test("set-0/T3")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("SF2 END streak reset failed: T3 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T3")["contaminated"])
+		}
 	})
 }
