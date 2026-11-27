@@ -9,11 +9,13 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/http/httptrace"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -280,6 +282,10 @@ func init() {
 	}
 
 	http.HandleFunc("/wrapped-addr", func(w http.ResponseWriter, r *http.Request) {
+		if wrappedAddr != "" {
+			_ = waitForFuncState("main.(*countingListener).Accept(", "IO wait")
+		}
+		_ = waitForFuncState("main.poolWorker(", "chan receive")
 		fmt.Fprint(w, wrappedAddr)
 	})
 	http.HandleFunc("/slow-flush", slowFlushHandler)
@@ -987,6 +993,9 @@ func TestRealGoApp_UnclosedWindowContaminatesNextTest(t *testing.T) {
 	k := newKeploySide(t)
 	bin := buildAsyncApp(t, k)
 	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=50")
+	// Warm the server before U1 so main.main is past os.Stdout.Sync() and
+	// parked in http.Serve (and init's poolWorker is parked) before START U1.
+	get(t, a, "/twin?n=0")
 
 	if got := send(t, k.sock, "START set-0/U1"); got != replyStartUnasked {
 		t.Fatalf("START U1: %q", got)
@@ -1000,13 +1009,8 @@ func TestRealGoApp_UnclosedWindowContaminatesNextTest(t *testing.T) {
 		t.Fatalf("END U2: %q", got)
 	}
 	rec2 := readNextRecord(t, k, a)
-	// Because U1 never had an END (and thus no END_WAIT), U1's /twin handler
-	// goroutine may still be returning from ServeHTTP at START U2, legitimately
-	// adding tail:set-0/U1 alongside unclosed:set-0/U1.
-	cont, _ := rec2["contaminated"].([]any)
-	if len(cont) == 0 || cont[0] != "unclosed:set-0/U1" ||
-		(len(cont) == 2 && cont[1] != "tail:set-0/U1") || len(cont) > 2 {
-		t.Fatalf("U2 contaminated = %v, want [unclosed:set-0/U1] (or with tail:set-0/U1)", rec2["contaminated"])
+	if !reflect.DeepEqual(rec2["contaminated"], []any{"unclosed:set-0/U1"}) {
+		t.Fatalf("U2 contaminated = %v, want [unclosed:set-0/U1]", rec2["contaminated"])
 	}
 }
 
@@ -2644,4 +2648,338 @@ func TestRealGoApp_LazyOnceSleepJanitorRebaselinesAfterSecondTest(t *testing.T) 
 	if cleanBGs < 7 {
 		t.Fatalf("expected >= 7 clean non-empty BACKGROUND records after T3, got %d", cleanBGs)
 	}
+}
+
+const gapBornApp = `package main
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"sync/atomic"
+	"time"
+)
+
+var (
+	gbStarted atomic.Int64
+	gbDone    atomic.Int64
+	gbInfo    string
+	gbClient  *http.Client
+)
+
+type gbConn struct{ net.Conn }
+
+func (c *gbConn) Read(b []byte) (int, error)  { return c.Conn.Read(b) }
+func (c *gbConn) Write(b []byte) (int, error) { return c.Conn.Write(b) }
+
+type gbListener struct{ net.Listener }
+
+func (l *gbListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &gbConn{Conn: c}, nil
+}
+
+func gbFinishJob(s string) int {
+	gbDone.Add(1) // GB-JOB-DONE
+	return len(s)
+}
+
+func gbJob(s string) {
+	gbStarted.Add(1)
+	time.Sleep(30 * time.Millisecond)
+	gbFinishJob(s)
+}
+
+func gbConsumeSpawn(c net.Conn) {
+	r := bufio.NewReader(c)
+	for {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			return
+		}
+		go gbJob(line)
+	}
+}
+
+func gbAcceptSpawn(ln net.Listener) {
+	for {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		go gbConsumeSpawn(c)
+	}
+}
+
+func gbFinishHTTP(m string) int {
+	gbDone.Add(1) // GB-HTTP-DONE
+	return len(m)
+}
+
+func gbSlow(w http.ResponseWriter, r *http.Request) {
+	gbStarted.Add(1)
+	time.Sleep(30 * time.Millisecond)
+	gbFinishHTTP(r.Method)
+	fmt.Fprint(w, "slow")
+}
+
+func gbListen() net.Listener {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic(err)
+	}
+	return ln
+}
+
+func init() {
+	spw, hp, hw := gbListen(), gbListen(), gbListen()
+	gbInfo = spw.Addr().String() + " " + hp.Addr().String() + " " + hw.Addr().String()
+	go gbAcceptSpawn(spw)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/gb-slow", gbSlow)
+	mux.HandleFunc("/gb-fast", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "fast") })
+	go func() { _ = http.Serve(hp, mux) }()
+	go func() { _ = http.Serve(&gbListener{Listener: hw}, mux) }()
+	gbClient = &http.Client{Transport: &http.Transport{
+		MaxIdleConnsPerHost: 2,
+		DialContext: func(ctx context.Context, n, a string) (net.Conn, error) {
+			var d net.Dialer
+			c, err := d.DialContext(ctx, n, a)
+			if err != nil {
+				return nil, err
+			}
+			return &gbConn{Conn: c}, nil
+		},
+	}}
+	http.HandleFunc("/gb-info", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, gbInfo) })
+	http.HandleFunc("/gb-started", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, gbStarted.Load()) })
+	http.HandleFunc("/gb-out", func(w http.ResponseWriter, r *http.Request) {
+		resp, err := gbClient.Get(r.URL.Query().Get("url"))
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		fmt.Fprint(w, "out")
+	})
+}
+`
+
+func gapBornLineOf(t *testing.T, needle string) int {
+	t.Helper()
+	for i, l := range strings.Split(gapBornApp, "\n") {
+		if strings.Contains(l, needle) {
+			return i + 1
+		}
+	}
+	t.Fatalf("gapBornApp has no line holding %q", needle)
+	return 0
+}
+
+// TestRealGoApp_GapBornAndEndSeenCarryOverFailClosed verifies on a real -cover
+// binary that work handed off just before START and finishing inside the test
+// window fails closed (windowCut:true) across goroutines that no prior START
+// recorded:
+//   - a pre-existing socket consumer spawning `go gbJob(line)` in the gap;
+//   - a keep-alive HTTP connection (plain or wrapped net.Conn) dialed inside
+//     the previous test and mid-request in gbSlow at START;
+//   - a fresh HTTP connection (plain or wrapped net.Conn) dialed in the gap
+//     and mid-request in gbSlow at START;
+//
+// while an app outbound HTTP client over a wrapped dialer stays 100% clean.
+func TestRealGoApp_GapBornAndEndSeenCarryOverFailClosed(t *testing.T) {
+	file := appModule + "/gapborn.go"
+	gbGet := func(t *testing.T, addr, path string) string {
+		t.Helper()
+		resp, err := http.Get("http://" + addr + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		return strings.TrimSpace(string(b))
+	}
+	gbWaitStarted := func(t *testing.T, a app, after int) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			n, _ := strconv.Atoi(gbGet(t, a.addr, "/gb-started"))
+			if n > after {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("handed-over job did not start")
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	buildGapBorn := func(t *testing.T) (*keploySide, app, []string) {
+		t.Helper()
+		k := newKeploySide(t)
+		hook := hookCopy(t, k.sock, k.data)
+		mod := appModuleDir(t)
+		if err := os.WriteFile(filepath.Join(mod, "gapborn.go"), []byte(gapBornApp), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		bin, _ := stage(t, hook, mod, nil)
+		a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=20")
+		info := strings.Fields(gbGet(t, a.addr, "/gb-info"))
+		if len(info) != 3 {
+			t.Fatalf("unexpected /gb-info: %v", info)
+		}
+		return k, a, info
+	}
+
+	for _, mode := range []string{
+		"spawned-consumer",
+		"keepalive-prev-test-plain",
+		"keepalive-prev-test-wrapped",
+		"fresh-conn-plain",
+		"fresh-conn-wrapped",
+	} {
+		t.Run(mode, func(t *testing.T) {
+			k, a, info := buildGapBorn(t)
+			var line int
+			var wantName string
+			var hand func() func()
+			inWindow := func() {}
+
+			switch mode {
+			case "spawned-consumer":
+				cc, err := net.Dial("tcp", info[0])
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = cc.Close() })
+				s0, _ := strconv.Atoi(gbGet(t, a.addr, "/gb-started"))
+				if _, err := cc.Write([]byte("warm\n")); err != nil {
+					t.Fatal(err)
+				}
+				gbWaitStarted(t, a, s0)
+				time.Sleep(60 * time.Millisecond)
+				line = gapBornLineOf(t, "GB-JOB-DONE")
+				wantName = "gbJob"
+				hand = func() func() {
+					s, _ := strconv.Atoi(gbGet(t, a.addr, "/gb-started"))
+					if _, err := cc.Write([]byte("m\n")); err != nil {
+						t.Fatal(err)
+					}
+					gbWaitStarted(t, a, s)
+					return func() {}
+				}
+			default:
+				addr := info[1]
+				if strings.HasSuffix(mode, "wrapped") {
+					addr = info[2]
+				}
+				line = gapBornLineOf(t, "GB-HTTP-DONE")
+				wantName = "gbSlow"
+				openedInPrev := strings.HasPrefix(mode, "keepalive-prev-test")
+				var next *http.Client
+				if openedInPrev {
+					inWindow = func() {
+						next = &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 1}}
+						resp, err := next.Get("http://" + addr + "/gb-fast")
+						if err != nil {
+							t.Fatal(err)
+						}
+						_, _ = io.Copy(io.Discard, resp.Body)
+						_ = resp.Body.Close()
+					}
+				}
+				hand = func() func() {
+					c := next
+					if !openedInPrev {
+						c = &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 1}}
+					}
+					s, _ := strconv.Atoi(gbGet(t, a.addr, "/gb-started"))
+					done := make(chan struct{})
+					go func() {
+						defer close(done)
+						resp, err := c.Get("http://" + addr + "/gb-slow")
+						if err == nil {
+							_, _ = io.Copy(io.Discard, resp.Body)
+							_ = resp.Body.Close()
+						}
+					}()
+					gbWaitStarted(t, a, s)
+					return func() {
+						<-done
+						c.Transport.(*http.Transport).CloseIdleConnections()
+					}
+				}
+			}
+
+			// Warm up baseline (and for keepalive-prev-test, dial the keep-alive
+			// conn inside warm1 so it is seen idle at END warm1, never at START).
+			for i := 0; i < 2; i++ {
+				id := fmt.Sprintf("set-0/warm%d", i)
+				if got := send(t, k.sock, "START "+id); got != replyStartUnasked {
+					t.Fatalf("START %s: %q", id, got)
+				}
+				if i == 1 {
+					inWindow()
+				}
+				if got := send(t, k.sock, "END "+id); got != replyTaken {
+					t.Fatalf("END %s: %q", id, got)
+				}
+				readNextRecord(t, k, a)
+			}
+
+			for i := 0; i < 5; i++ {
+				id := fmt.Sprintf("set-0/g%d", i)
+				wait := hand()
+				if got := send(t, k.sock, "START "+id); got != replyStartUnasked {
+					t.Fatalf("START %s: %q", id, got)
+				}
+				time.Sleep(60 * time.Millisecond)
+				inWindow()
+				if got := send(t, k.sock, "END "+id); got != replyTaken {
+					t.Fatalf("END %s: %q", id, got)
+				}
+				rec := readNextRecord(t, k, a)
+				wait()
+				if !containsInt(linesOfRecord(t, rec)[file], line) {
+					t.Fatalf("%s trial %d: setup did not land line %d in window: %v", mode, i, line, linesOfRecord(t, rec))
+				}
+				if rec["windowCut"] != true {
+					t.Fatalf("%s trial %d: falsely reported clean with handed-over work in window: %v", mode, i, rec)
+				}
+				if !strings.Contains(fmt.Sprint(rec["lingeringGoroutines"]), wantName) {
+					t.Fatalf("%s trial %d: lingeringGoroutines = %v, want entry naming %s", mode, i, rec["lingeringGoroutines"], wantName)
+				}
+			}
+		})
+	}
+
+	t.Run("wrapped-outbound-keepalive-stays-clean", func(t *testing.T) {
+		up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "1") }))
+		defer up.Close()
+		k, a, _ := buildGapBorn(t)
+		for i := 0; i < 10; i++ {
+			id := fmt.Sprintf("set-0/out%d", i)
+			if got := send(t, k.sock, "START "+id); got != replyStartUnasked {
+				t.Fatalf("START %s: %q", id, got)
+			}
+			gbGet(t, a.addr, "/gb-out?url="+up.URL)
+			if got := send(t, k.sock, "END "+id); got != replyTaken {
+				t.Fatalf("END %s: %q", id, got)
+			}
+			rec := readNextRecord(t, k, a)
+			if _, hasCut := rec["windowCut"]; hasCut {
+				t.Fatalf("%s got unexpected windowCut on wrapped outbound keep-alive: %v", id, rec)
+			}
+			if _, hasCont := rec["contaminated"]; hasCont {
+				t.Fatalf("%s got unexpected contaminated on wrapped outbound keep-alive: %v", id, rec)
+			}
+		}
+	})
 }

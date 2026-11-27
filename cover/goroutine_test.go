@@ -3234,6 +3234,374 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 			t.Fatalf("T4 should be clean after gid 60 settled onto resumeWatch: %v", h.test("set-0/T4"))
 		}
 	})
+
+	t.Run("gap-born and END-seen goroutines carrying work at START fail closed", func(t *testing.T) {
+		dispIdle := &goroutineInfo{
+			id: 52, baseStatus: "chan receive", topLine: "/app/disp.go:10",
+			frames: []string{"main.dispatcher"}, framePkgs: []string{"main"}, frameLines: []string{"/app/disp.go:10"},
+			createdByFn: "main.init", createdByPkg: "main",
+		}
+		childRunnable := &goroutineInfo{
+			id: 60, baseStatus: "runnable", topLine: "/app/disp.go:20",
+			frames: []string{"main.handleJob"}, framePkgs: []string{"main"}, frameLines: []string{"/app/disp.go:20"},
+			createdByFn: "main.dispatcher", createdByPkg: "main", createdByGoid: 52,
+		}
+		childSleep := &goroutineInfo{
+			id: 60, baseStatus: "sleep", topLine: "/go/src/runtime/time.go:300",
+			frames: []string{"time.Sleep", "main.handleJob"}, framePkgs: []string{"time", "main"}, frameLines: []string{"/go/src/runtime/time.go:300", "/app/disp.go:21"},
+			createdByFn: "main.dispatcher", createdByPkg: "main", createdByGoid: 52,
+		}
+		childIO := &goroutineInfo{
+			id: 60, baseStatus: "IO wait", topLine: "/go/netpoll.go:351",
+			frames:      []string{"internal/poll.runtime_pollWait", "internal/poll.(*FD).Read", "net.(*conn).Read", "main.callDownstream", "main.handleJob"},
+			framePkgs:   []string{"internal/poll", "internal/poll", "net", "main", "main"},
+			frameLines:  []string{"/go/netpoll.go:351", "/go/fd.go:160", "/go/net.go:179", "/app/down.go:5", "/app/disp.go:22"},
+			createdByFn: "main.dispatcher", createdByPkg: "main", createdByGoid: 52,
+		}
+		afterFuncChild := &goroutineInfo{
+			id: 61, baseStatus: "sleep", topLine: "/go/src/runtime/time.go:300",
+			frames: []string{"time.Sleep", "main.auditLater.func1"}, framePkgs: []string{"time", "main"}, frameLines: []string{"/go/src/runtime/time.go:300", "/app/audit.go:9"},
+			createdByFn: "time.goFunc", createdByPkg: "time", createdByGoid: 7,
+		}
+		libIdle := &goroutineInfo{
+			id: 70, baseStatus: "select", topLine: "/mod/vendorlib/w.go:40",
+			frames: []string{"vendorlib.(*Writer).run"}, framePkgs: []string{"vendorlib"}, frameLines: []string{"/mod/vendorlib/w.go:40"},
+			createdByFn: "vendorlib.(*Writer).WriteMessages.func1", createdByPkg: "vendorlib",
+		}
+		libInCallback := &goroutineInfo{
+			id: 70, baseStatus: "runnable", topLine: "/app/deliver.go:12",
+			frames: []string{"main.onDelivered", "vendorlib.(*Writer).run"}, framePkgs: []string{"main", "vendorlib"}, frameLines: []string{"/app/deliver.go:12", "/mod/vendorlib/w.go:52"},
+			createdByFn: "vendorlib.(*Writer).WriteMessages.func1", createdByPkg: "vendorlib",
+		}
+		connIdle := &goroutineInfo{
+			id: 80, baseStatus: "IO wait", topLine: "/go/netpoll.go:351",
+			frames:      []string{"internal/poll.runtime_pollWait", "internal/poll.(*FD).Read", "net.(*conn).Read", "net/http.(*connReader).Read", "bufio.(*Reader).fill", "bufio.(*Reader).Peek", "net/http.(*conn).serve"},
+			framePkgs:   []string{"internal/poll", "internal/poll", "net", "net/http", "bufio", "bufio", "net/http"},
+			frameLines:  make([]string, 7),
+			createdByFn: "net/http.(*Server).Serve", createdByPkg: "net/http",
+		}
+		wrappedConnIdle := &goroutineInfo{
+			id: 80, baseStatus: "IO wait", topLine: "/go/netpoll.go:351",
+			frames:      []string{"internal/poll.runtime_pollWait", "internal/poll.(*FD).Read", "net.(*conn).Read", "main.(*countingConn).Read", "net/http.(*connReader).Read", "bufio.(*Reader).fill", "bufio.(*Reader).Peek", "net/http.(*conn).serve"},
+			framePkgs:   []string{"internal/poll", "internal/poll", "net", "main", "net/http", "bufio", "bufio", "net/http"},
+			frameLines:  make([]string, 8),
+			createdByFn: "net/http.(*Server).Serve", createdByPkg: "net/http",
+		}
+		connInHandler := &goroutineInfo{
+			id: 80, baseStatus: "sleep", topLine: "/go/src/runtime/time.go:300",
+			frames:      []string{"time.Sleep", "main.bgSlow", "net/http.HandlerFunc.ServeHTTP", "net/http.(*ServeMux).ServeHTTP", "net/http.serverHandler.ServeHTTP", "net/http.(*conn).serve"},
+			framePkgs:   []string{"time", "main", "net/http", "net/http", "net/http", "net/http"},
+			frameLines:  []string{"/go/src/runtime/time.go:300", "/app/bg.go:8", "", "", "", ""},
+			createdByFn: "net/http.(*Server).Serve", createdByPkg: "net/http",
+		}
+		type snaps struct {
+			startT1, endT1, startT2, endT2, t3, t4 map[uint64]*goroutineInfo
+		}
+		base := func(extra ...*goroutineInfo) map[uint64]*goroutineInfo {
+			m := map[uint64]*goroutineInfo{1: {id: 1}, 52: dispIdle}
+			for _, g := range extra {
+				m[g.id] = g
+			}
+			return m
+		}
+		for _, tc := range []struct {
+			name     string
+			s        snaps
+			wantName string
+		}{
+			{
+				name:     "gap-born child runnable at START exits in window",
+				s:        snaps{base(), base(), base(childRunnable), base(), base(), base()},
+				wantName: "main.handleJob",
+			},
+			{
+				name:     "gap-born child parked in time.Sleep mid-job at START exits in window",
+				s:        snaps{base(), base(), base(childSleep), base(), base(), base()},
+				wantName: "main.handleJob",
+			},
+			{
+				name:     "gap-born child parked in downstream IO mid-job at START exits in window",
+				s:        snaps{base(), base(), base(childIO), base(), base(), base()},
+				wantName: "main.callDownstream",
+			},
+			{
+				name:     "time.AfterFunc closure fired in gap mid-job at START exits in window",
+				s:        snaps{base(), base(), base(afterFuncChild), base(), base(), base()},
+				wantName: "main.auditLater.func1",
+			},
+			{
+				name:     "library goroutine born in T1 in app callback at START T2 back to library idle by END",
+				s:        snaps{base(), base(libIdle), base(libInCallback), base(libIdle), base(libIdle), base(libIdle)},
+				wantName: "main.onDelivered",
+			},
+			{
+				name:     "keep-alive conn opened in T1 mid-request at START T2 back to idle by END",
+				s:        snaps{base(), base(connIdle), base(connInHandler), base(connIdle), base(connIdle), base(connIdle)},
+				wantName: "main.bgSlow",
+			},
+			{
+				name:     "wrapped keep-alive conn opened in T1 mid-request at START T2 back to idle by END",
+				s:        snaps{base(), base(wrappedConnIdle), base(connInHandler), base(wrappedConnIdle), base(wrappedConnIdle), base(wrappedConnIdle)},
+				wantName: "main.bgSlow",
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Setenv(envEndWaitMS, "0")
+				h := newGapHarness(t,
+					lines(appFile, 1), none(), // T0
+					lines(appFile, 2), none(), // T1
+					map[string][]int{appFile: {3, 4}, workerFile: {25, 26}}, none(), // T2
+					lines(appFile, 5), none(), // T3
+					lines(appFile, 6), // T4
+				)
+				cur := goroutineSnapshot{all: base()}
+				snapshotGoroutines = func() goroutineSnapshot { return cur }
+				h.run("set-0/T0")
+
+				cur = goroutineSnapshot{all: tc.s.startT1}
+				h.do("START set-0/T1", replyStartUnasked)
+				cur = goroutineSnapshot{all: tc.s.endT1}
+				h.do("END set-0/T1", replyTaken)
+
+				cur = goroutineSnapshot{all: tc.s.startT2}
+				h.do("START set-0/T2", replyStartUnasked)
+				cur = goroutineSnapshot{all: tc.s.endT2}
+				h.do("END set-0/T2", replyTaken)
+
+				cur = goroutineSnapshot{all: tc.s.t3}
+				h.run("set-0/T3")
+				cur = goroutineSnapshot{all: tc.s.t4}
+				h.run("set-0/T4")
+
+				r2 := h.test("set-0/T2")
+				if r2["windowCut"] != true {
+					t.Fatalf("T2 missed gap-born/END-seen carry-over (windowCut=%v, rec=%v)", r2["windowCut"], r2)
+				}
+				if !reflect.DeepEqual(r2["lingeringGoroutines"], []interface{}{tc.wantName}) {
+					t.Fatalf("T2 lingeringGoroutines = %v, want [%s]", r2["lingeringGoroutines"], tc.wantName)
+				}
+				if !reflect.DeepEqual(h.test("set-0/T3")["contaminated"], []interface{}{"tail:set-0/T2"}) {
+					t.Fatalf("T3 contaminated = %v, want [tail:set-0/T2]", h.test("set-0/T3")["contaminated"])
+				}
+				if _, hasCut := h.test("set-0/T4")["windowCut"]; hasCut {
+					t.Fatalf("T4 unexpectedly marked windowCut: %v", h.test("set-0/T4"))
+				}
+				if _, hasCont := h.test("set-0/T4")["contaminated"]; hasCont {
+					t.Fatalf("T4 unexpectedly marked contaminated: %v", h.test("set-0/T4"))
+				}
+			})
+		}
+
+		t.Run("long-lived gap-born quiescent goroutine cuts once then settles onto resumeWatch", func(t *testing.T) {
+			t.Setenv(envEndWaitMS, "0")
+			gapJanitor := &goroutineInfo{
+				id: 62, baseStatus: "chan receive", topLine: "/app/janitor.go:10",
+				frames: []string{"main.gapJanitor"}, framePkgs: []string{"main"}, frameLines: []string{"/app/janitor.go:10"},
+				createdByFn: "main.initLazy", createdByPkg: "main",
+			}
+			h := newGapHarness(t,
+				lines(appFile, 1), none(), // T0
+				lines(appFile, 2), none(), // T1
+				lines(appFile, 3), none(), // T2 (gap-born janitor appears at START T2 -> cut)
+				lines(appFile, 4), none(), // T3 (streak 1 -> tail:T2)
+				lines(appFile, 5), // T4 (streak 2 -> settles onto resumeWatch -> clean!)
+			)
+			cur := goroutineSnapshot{all: base()}
+			snapshotGoroutines = func() goroutineSnapshot { return cur }
+			h.run("set-0/T0")
+			h.run("set-0/T1")
+
+			cur = goroutineSnapshot{all: base(gapJanitor)}
+			h.run("set-0/T2")
+			if h.test("set-0/T2")["windowCut"] != true {
+				t.Fatalf("T2 windowCut = %v, want true for gap-born janitor", h.test("set-0/T2")["windowCut"])
+			}
+			h.run("set-0/T3")
+			if !reflect.DeepEqual(h.test("set-0/T3")["contaminated"], []interface{}{"tail:set-0/T2"}) {
+				t.Fatalf("T3 contaminated = %v, want [tail:set-0/T2]", h.test("set-0/T3")["contaminated"])
+			}
+			h.run("set-0/T4")
+			if _, armed := resumeWatches[62]; !armed {
+				t.Fatal("expected gap-born janitor to settle onto resumeWatch at START T4")
+			}
+			if _, hasCut := h.test("set-0/T4")["windowCut"]; hasCut {
+				t.Fatalf("T4 unexpectedly marked windowCut: %v", h.test("set-0/T4"))
+			}
+			if _, hasCont := h.test("set-0/T4")["contaminated"]; hasCont {
+				t.Fatalf("T4 unexpectedly marked contaminated: %v", h.test("set-0/T4"))
+			}
+		})
+
+		t.Run("runnable at very first START with no history fails closed on exit and return to non-app idle", func(t *testing.T) {
+			for _, tc := range []struct {
+				name     string
+				startG   *goroutineInfo
+				endG     *goroutineInfo // nil means exited
+				wantName string
+			}{
+				{
+					name: "exits before END",
+					startG: &goroutineInfo{
+						id: 75, baseStatus: "runnable", topLine: "/app/job.go:10",
+						frames: []string{"main.firstStartJob"}, framePkgs: []string{"main"}, frameLines: []string{"/app/job.go:10"},
+						createdByFn: "main.init", createdByPkg: "main",
+					},
+					endG:     nil,
+					wantName: "main.firstStartJob",
+				},
+				{
+					name: "returns to non-app idle before END",
+					startG: &goroutineInfo{
+						id: 76, baseStatus: "runnable", topLine: "/app/deliver.go:12",
+						frames: []string{"main.onDelivered", "vendorlib.(*Writer).run"}, framePkgs: []string{"main", "vendorlib"}, frameLines: []string{"/app/deliver.go:12", "/mod/vendorlib/w.go:52"},
+						createdByFn: "vendorlib.(*Writer).WriteMessages.func1", createdByPkg: "vendorlib",
+					},
+					endG: &goroutineInfo{
+						id: 76, baseStatus: "select", topLine: "/mod/vendorlib/w.go:40",
+						frames: []string{"vendorlib.(*Writer).run"}, framePkgs: []string{"vendorlib"}, frameLines: []string{"/mod/vendorlib/w.go:40"},
+						createdByFn: "vendorlib.(*Writer).WriteMessages.func1", createdByPkg: "vendorlib",
+					},
+					wantName: "main.onDelivered",
+				},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					t.Setenv(envEndWaitMS, "0")
+					h := newGapHarness(t, lines(appFile, 1), none(), lines(appFile, 2), none(), lines(appFile, 3))
+					cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, tc.startG.id: tc.startG}}
+					snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+					h.do("START set-0/T1", replyStartUnasked)
+					endAll := map[uint64]*goroutineInfo{1: {id: 1}}
+					if tc.endG != nil {
+						endAll[tc.endG.id] = tc.endG
+					}
+					cur = goroutineSnapshot{all: endAll}
+					h.do("END set-0/T1", replyTaken)
+
+					t1 := h.test("set-0/T1")
+					if t1["windowCut"] != true {
+						t.Fatalf("T1 missed runnable no-history goroutine (%s): %v", tc.name, t1)
+					}
+					if !reflect.DeepEqual(t1["lingeringGoroutines"], []interface{}{tc.wantName}) {
+						t.Fatalf("T1 lingeringGoroutines = %v, want [%s]", t1["lingeringGoroutines"], tc.wantName)
+					}
+					h.run("set-0/T2")
+					if !reflect.DeepEqual(h.test("set-0/T2")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+						t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T2")["contaminated"])
+					}
+					h.run("set-0/T3")
+					if _, hasCont := h.test("set-0/T3")["contaminated"]; hasCont {
+						t.Fatalf("T3 should be clean: %v", h.test("set-0/T3"))
+					}
+				})
+			}
+		})
+	})
+
+	t.Run("END_WAIT polls for transiently runnable HTTP keep-alive goroutines without ever marking windowCut", func(t *testing.T) {
+		wrappedRunnablePeek := &goroutineInfo{
+			id: 85, baseStatus: "runnable", topLine: "/app/async.go:79",
+			frames:      []string{"main.(*countingConn).Read", "net/http.(*connReader).Read", "bufio.(*Reader).fill", "bufio.(*Reader).Peek", "net/http.(*conn).serve"},
+			framePkgs:   []string{"main", "net/http", "bufio", "bufio", "net/http"},
+			frameLines:  []string{"/app/async.go:79", "/go/server.go:856", "/go/bufio.go:113", "/go/bufio.go:152", "/go/server.go:2193"},
+			createdByFn: "net/http.(*Server).Serve", createdByPkg: "net/http",
+		}
+		finishReqRunnable := &goroutineInfo{
+			id: 85, baseStatus: "runnable", topLine: "/go/server.go:1700",
+			frames:      []string{"net/http.(*response).finishRequest", "net/http.(*conn).serve"},
+			framePkgs:   []string{"net/http", "net/http"},
+			frameLines:  []string{"/go/server.go:1700", "/go/server.go:2100"},
+			createdByFn: "net/http.(*Server).Serve", createdByPkg: "net/http",
+		}
+		wrappedParked := &goroutineInfo{
+			id: 85, baseStatus: "IO wait", topLine: "/go/poll.go:84",
+			frames:      []string{"internal/poll.runtime_pollWait", "net.(*conn).Read", "main.(*countingConn).Read", "net/http.(*connReader).Read", "bufio.(*Reader).fill", "bufio.(*Reader).Peek", "net/http.(*conn).serve"},
+			framePkgs:   []string{"internal/poll", "net", "main", "net/http", "bufio", "bufio", "net/http"},
+			frameLines:  []string{"/go/poll.go:84", "/go/net.go:180", "/app/async.go:79", "/go/server.go:856", "/go/bufio.go:113", "/go/bufio.go:152", "/go/server.go:2193"},
+			createdByFn: "net/http.(*Server).Serve", createdByPkg: "net/http",
+		}
+
+		for _, tc := range []struct {
+			name   string
+			firstG *goroutineInfo
+		}{
+			{"runnable in wrapped countingConn.Read under Peek", wrappedRunnablePeek},
+			{"runnable in finishRequest before Peek", finishReqRunnable},
+		} {
+			t.Run("polls until settled in IO wait: "+tc.name, func(t *testing.T) {
+				t.Setenv(envEndWaitMS, "150")
+				h := newGapHarness(t, lines(appFile, 1), none(), lines(appFile, 2))
+				var seq []goroutineSnapshot
+				cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 85: wrappedParked}}
+				endPolls := 0
+				counting := false
+				snapshotGoroutines = func() goroutineSnapshot {
+					if counting {
+						endPolls++
+					}
+					if len(seq) > 0 {
+						s := seq[0]
+						seq = seq[1:]
+						return s
+					}
+					return cur
+				}
+				h.run("set-0/T0")
+
+				h.do("START set-0/T1", replyStartUnasked)
+				seq = []goroutineSnapshot{
+					{all: map[uint64]*goroutineInfo{1: {id: 1}, 85: tc.firstG}},
+					{all: map[uint64]*goroutineInfo{1: {id: 1}, 85: wrappedParked}},
+				}
+				counting = true
+				h.do("END set-0/T1", replyTaken)
+				counting = false
+
+				if endPolls != 2 {
+					t.Fatalf("END polled %d snapshots, want 2 (wait for runnable keep-alive conn to park in IO wait)", endPolls)
+				}
+				rec := h.test("set-0/T1")
+				if _, hasCut := rec["windowCut"]; hasCut {
+					t.Fatalf("T1 unexpectedly marked windowCut: %v", rec)
+				}
+				if _, hasCont := rec["contaminated"]; hasCont {
+					t.Fatalf("T1 unexpectedly marked contaminated: %v", rec)
+				}
+			})
+		}
+
+		t.Run("deadline expiry while runnable never marks windowCut", func(t *testing.T) {
+			t.Setenv(envEndWaitMS, "20")
+			h := newGapHarness(t, lines(appFile, 1), none(), lines(appFile, 2))
+			cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 85: wrappedParked}}
+			endPolls := 0
+			counting := false
+			snapshotGoroutines = func() goroutineSnapshot {
+				if counting {
+					endPolls++
+				}
+				return cur
+			}
+			h.run("set-0/T0")
+
+			h.do("START set-0/T1", replyStartUnasked)
+			cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 85: wrappedRunnablePeek}}
+			counting = true
+			h.do("END set-0/T1", replyTaken)
+			counting = false
+
+			if endPolls < 2 {
+				t.Fatalf("END polled %d snapshots, want >= 2 before 20ms deadline", endPolls)
+			}
+			rec := h.test("set-0/T1")
+			if _, hasCut := rec["windowCut"]; hasCut {
+				t.Fatalf("T1 must NEVER be windowCut when END_WAIT expires on runnable wrapped keep-alive conn: %v", rec)
+			}
+			if _, hasCont := rec["contaminated"]; hasCont {
+				t.Fatalf("T1 must NEVER be contaminated when END_WAIT expires on runnable wrapped keep-alive conn: %v", rec)
+			}
+		})
+	})
 }
 
 // TestV3WireRepliesAndRecordsAgainstCollectorParsers pins the exact wire

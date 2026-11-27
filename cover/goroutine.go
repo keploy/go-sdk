@@ -1015,11 +1015,21 @@ func checkResumeWatches(snap goroutineSnapshot, activeIdle map[uint64]startBasel
 
 // snapshotStartBaseline captures the set of live non-SDK goroutine IDs and the
 // baseline idle state signatures of pre-existing goroutines at START (skipping
-// any goroutine already tracked as busy in lingeringTails). Pre-existing app
-// goroutines that happen to be unparked (e.g. runnable) at START fall back to
-// their last known quiescent signature from an earlier complete START, or if
-// never seen quiescent, an unparked-at-START baseline (status == "") that fails
-// closed at END whenever the goroutine still has app frames. It also updates
+// any goroutine already tracked as busy in lingeringTails). An app-relevant
+// goroutine is marked drifted (failing closed on every END outcome: still
+// active, returned to idle, or exited) whenever:
+//   - it has a prior quiescent signature in lastQuiescentSigs (from an earlier
+//     complete START or END) and is either unparked or parked at a different
+//     signature,
+//   - it has no prior quiescent signature and is absent from a non-nil
+//     lastCompleteGids (born since the last complete snapshot, e.g. a gap-born
+//     child, AfterFunc closure, or fresh HTTP conn mid-handler), or
+//   - it is unparked (e.g. runnable/running) at START with no prior history.
+//
+// Non-drifted quiescent adoption applies only when matching a prior idle
+// signature, or when no prior complete snapshot exists (lastCompleteGids ==
+// nil, i.e. the very first START) or the goroutine was already present in
+// lastCompleteGids without a quiescent entry. It also updates
 // lastCompleteGids/lastQuiescentSigs and prunes dead gids.
 func snapshotStartBaseline(snap goroutineSnapshot, covered map[string]bool, ignore []string) (map[uint64]struct{}, map[uint64]startBaseline) {
 	alreadyLingering := lingeringGidSet()
@@ -1047,38 +1057,50 @@ func snapshotStartBaseline(snap goroutineSnapshot, covered map[string]bool, igno
 			// against its established quiescent idle signature in
 			// lastQuiescentSigs: whenever a different quiescent idle signature
 			// is already on record (whether deeper, equal, or shallower, or
-			// non-app idle), fail closed by preserving prevQ alongside sig
-			// (drifted=true) instead of adopting sig as idle. A goroutine that
-			// genuinely moved to a new steady state settles through the
-			// existing streak/resumeWatch path.
-			if prevQ, hadPrev := lastQuiescentSigs[id]; hadPrev && prevQ != sig {
-				idle[id] = startBaseline{idle: prevQ, drifted: true, startName: describeAppGoroutine(g, covered)}
+			// non-app idle recorded at an earlier START or END), fail closed
+			// by preserving prevQ (drifted=true) instead of adopting sig as
+			// idle. If it has no prior entry and is absent from a non-nil
+			// lastCompleteGids (born since the last complete snapshot), also
+			// fail closed as drifted so gap-born mid-job children and fresh
+			// mid-handler HTTP conns cannot slip through clean; genuine
+			// long-lived goroutines still settle through the streak/watch path.
+			if prevQ, hadPrev := lastQuiescentSigs[id]; hadPrev {
+				if prevQ != sig {
+					idle[id] = startBaseline{idle: prevQ, drifted: true, startName: describeAppGoroutine(g, covered)}
+				} else {
+					idle[id] = startBaseline{idle: sig}
+				}
+			} else if lastCompleteGids != nil {
+				if _, existed := lastCompleteGids[id]; !existed {
+					idle[id] = startBaseline{idle: goroutineSig{}, drifted: true, startName: describeAppGoroutine(g, covered)}
+				} else {
+					idle[id] = startBaseline{idle: sig}
+					lastQuiescentSigs[id] = sig
+				}
 			} else {
 				idle[id] = startBaseline{idle: sig}
 				lastQuiescentSigs[id] = sig
 			}
 		} else if prevQ, ok := lastQuiescentSigs[id]; ok {
 			// Pre-existing goroutine was unparked (e.g. runnable) at START,
-			// with a prior quiescent baseline from an earlier complete START.
-			// Becoming runnable means its wake event (channel send/close,
-			// socket data, or timer) already fired in the gap, so fail closed
-			// (drifted=true) even if the job finishes and returns to prevQ or
-			// exits before END. Idle wrapped HTTP keep-alive connections
-			// waking on peer close/IdleTimeout are handled above via
-			// isIdleWrappedHTTPKeepAlive and do not enter this branch.
+			// with a prior quiescent baseline from an earlier complete START
+			// or END. Becoming runnable means its wake event (channel
+			// send/close, socket data, or timer) already fired in the gap, so
+			// fail closed (drifted=true) even if the job finishes and returns
+			// to prevQ or exits before END. Idle wrapped HTTP keep-alive
+			// connections waking on peer close/IdleTimeout are handled above
+			// via isIdleWrappedHTTPKeepAlive and do not enter this branch.
 			idle[id] = startBaseline{idle: prevQ, drifted: true, startName: describeAppGoroutine(g, covered)}
 		} else {
-			// Pre-existing goroutine was unparked at START with no prior
-			// quiescent baseline: record its app-frame depth with status == ""
-			// so END fails closed whenever the goroutine still has app frames
-			// (e.g. still runnable or parked mid-job at the same or deeper depth).
+			// App-relevant goroutine was unparked (e.g. runnable/running) at
+			// START with no prior quiescent baseline (very first START, after
+			// truncation, or born in the gap): fail closed as drifted on every
+			// END outcome — whether it stays active in app code, returns to
+			// non-app idle, or exits during the window.
 			idle[id] = startBaseline{
-				idle: goroutineSig{
-					active:        true,
-					status:        "",
-					appFrameCount: sig.appFrameCount,
-					frameHash:     0,
-				},
+				idle:      goroutineSig{},
+				drifted:   true,
+				startName: describeAppGoroutine(g, covered),
 			}
 		}
 	}
@@ -1094,6 +1116,28 @@ func snapshotStartBaseline(snap goroutineSnapshot, covered map[string]bool, igno
 	}
 	lastCompleteGids = gids
 	return gids, idle
+}
+
+// recordCompleteEndSnapshot refreshes lastCompleteGids with all live non-SDK
+// goroutine IDs from a complete END snapshot and records a zero quiescent
+// signature in lastQuiescentSigs for each live non-SDK, non-app-relevant
+// goroutine that does not yet have an entry (such as a keep-alive connection
+// dialed during the test or a third-party library goroutine started lazily).
+// If that goroutine later enters an app handler or callback before the next
+// START, START observes the prior non-app idle entry and fails closed as
+// drifted. Called with controlMu held.
+func recordCompleteEndSnapshot(snap goroutineSnapshot, covered map[string]bool, ignore []string) {
+	complete := make(map[uint64]struct{}, len(snap.all))
+	for gid, g := range snap.all {
+		if isSDKGoroutine(g, snap.selfID) {
+			continue
+		}
+		complete[gid] = struct{}{}
+		if _, exists := lastQuiescentSigs[gid]; !exists && !isAppRelevantGoroutineWithIgnore(g, snap.selfID, covered, ignore) {
+			lastQuiescentSigs[gid] = goroutineSig{}
+		}
+	}
+	lastCompleteGids = complete
 }
 
 // lingeringGidSet returns all goroutine IDs currently tracked across
@@ -1178,6 +1222,44 @@ func hasWaitableActive(gs []activeTestGoroutine) bool {
 		}
 	}
 	return false
+}
+
+// hasSettlingHTTPKeepAlive reports whether snap contains a non-app-relevant
+// stdlib/x/net HTTP keep-alive goroutine (including a carved-out wrapped
+// net.Conn keep-alive goroutine via isIdleWrappedHTTPKeepAlive) that is
+// transiently unparked (runnable/running/preempted/syscall — for example
+// returning from finishRequest into bufio.(*Reader).Peek -> wrappedConn.Read,
+// or closing on peer EOF) rather than settled in IO wait/select. Letting
+// END_WAIT wait briefly for it to settle into IO wait (or exit) keeps its
+// wrapped Read/Close block inside the test window instead of landing in a
+// clean gap and poisoning everGap, without ever marking the test windowCut
+// if END_WAIT expires.
+func hasSettlingHTTPKeepAlive(snap goroutineSnapshot, covered map[string]bool, ignore []string) bool {
+	for _, g := range snap.all {
+		if isSDKGoroutine(g, snap.selfID) || matchesIgnorePatterns(g, ignore) {
+			continue
+		}
+		if g.createdByPkg != "net/http" && g.createdByPkg != "golang.org/x/net/http2" {
+			continue
+		}
+		switch g.baseStatus {
+		case "runnable", "running", "preempted", "syscall":
+		default:
+			continue
+		}
+		if !isAppRelevantGoroutineWithIgnore(g, snap.selfID, covered, ignore) {
+			return true
+		}
+	}
+	return false
+}
+
+// shouldWaitAtEnd reports whether END_WAIT should continue polling for either
+// active test goroutines (which may cause windowCut if they remain active at
+// deadline) or transiently unparked HTTP keep-alive goroutines settling back
+// into IO wait (which never cause windowCut at deadline).
+func shouldWaitAtEnd(snap goroutineSnapshot, active []activeTestGoroutine, covered map[string]bool, ignore []string) bool {
+	return hasWaitableActive(active) || hasSettlingHTTPKeepAlive(snap, covered, ignore)
 }
 
 // findActiveTestGoroutines returns all goroutines currently executing work

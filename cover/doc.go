@@ -73,17 +73,23 @@
 //
 // At each START, the hook snapshots live goroutines and quiescent pre-existing
 // app worker baselines via runtime.Stack (zero overhead when unarmed or when
-// KEPLOY_GO_GOROUTINE_TRACKING=off), preserving each goroutine's established
-// idle signature so a worker caught mid-job at START fails closed instead of
-// adopting the mid-job stack as idle (failing closed on a mid-job START
-// requires a prior idle START in history; a worker already mid-job at the very
-// first START it is seen at has no prior idle history). At END, it checks for
-// newly-spawned app-relevant goroutines AND pre-existing app workers/handlers
-// still off their quiescent idle baseline (excluding go-sdk's own goroutines,
-// idle stdlib keep-alive/housekeeping goroutines including idle HTTP
-// keep-alive reads through a wrapped app net.Conn, and any patterns listed in
-// KEPLOY_GO_IGNORE_GOROUTINES), polling adaptively up to KEPLOY_GO_END_WAIT_MS
-// (default 200ms, max 2000ms; 0 checks immediately) for them to drain. If any
+// KEPLOY_GO_GOROUTINE_TRACKING=off). Every complete START and END records live
+// non-SDK goroutine IDs and records non-app idle signatures for live
+// non-app-relevant goroutines (such as keep-alive connections dialed or
+// third-party library goroutines started during a test). At START, any
+// app-relevant goroutine that is off its established idle signature, born since
+// the last complete snapshot, or unparked fails closed as drifted across every
+// END outcome (still active, returned to idle, or exited) instead of adopting a
+// mid-job stack as idle (only a parked worker already mid-job at the very first
+// START, before any complete snapshot exists, has no prior idle history). At
+// END, it checks for newly-spawned app-relevant goroutines AND pre-existing app
+// workers/handlers still off their quiescent idle baseline (excluding go-sdk's
+// own goroutines, idle stdlib keep-alive/housekeeping goroutines including idle
+// HTTP keep-alive reads through a wrapped app net.Conn, and any patterns listed
+// in KEPLOY_GO_IGNORE_GOROUTINES), polling adaptively up to
+// KEPLOY_GO_END_WAIT_MS (default 200ms, max 2000ms; 0 checks immediately) for
+// them (and for transiently unparked HTTP keep-alive goroutines settling back
+// into IO wait, which never trigger windowCut at deadline) to drain. If any
 // remain active when the wait expires (or if runtime.Stack hits its 16 MiB
 // cap, marked "stack-truncated" with a one-time diagnostic log advising to
 // reduce live goroutines or set KEPLOY_GO_GOROUTINE_TRACKING=off, noting that

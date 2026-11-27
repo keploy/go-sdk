@@ -573,10 +573,15 @@ func runTestCommand(command string) string {
 				// Never burn END_WAIT repeating stop-the-world 16 MiB dumps when
 				// already truncated, or when the only active entries are drifted
 				// goroutines that have already returned to their idle baseline.
-				if !snap.truncated && hasWaitableActive(active) && waitDur > 0 {
+				// Also wait briefly when a non-app HTTP keep-alive goroutine
+				// (such as a wrapped net.Conn returning from finishRequest into
+				// Peek) is transiently unparked so its wrapped Read counts inside
+				// the test window rather than poisoning everGap, without ever
+				// marking windowCut if END_WAIT expires.
+				if !snap.truncated && shouldWaitAtEnd(snap, active, covered, ignore) && waitDur > 0 {
 					deadline := time.Now().Add(waitDur)
 					poll := endWaitPollMin
-					for !snap.truncated && hasWaitableActive(active) {
+					for !snap.truncated && shouldWaitAtEnd(snap, active, covered, ignore) {
 						rem := time.Until(deadline)
 						if rem <= 0 {
 							break
@@ -606,14 +611,7 @@ func runTestCommand(command string) string {
 				if !snap.truncated {
 					resolveTruncatedCutWindows(snap, covered, ignore)
 					pruneLingeringTails(snap, nil, covered, ignore, false)
-					// Refresh lastCompleteGids with non-SDK gids from this complete END.
-					complete := make(map[uint64]struct{}, len(snap.all))
-					for gid, g := range snap.all {
-						if !isSDKGoroutine(g, snap.selfID) {
-							complete[gid] = struct{}{}
-						}
-					}
-					lastCompleteGids = complete
+					recordCompleteEndSnapshot(snap, covered, ignore)
 				}
 				if snap.truncated {
 					logStackTruncatedOnce()
