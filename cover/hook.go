@@ -457,6 +457,7 @@ func runTestCommand(command string) string {
 				var targets []lingeringTarget
 				for _, ag := range alive {
 					if ag.alreadyAtIdle {
+						armMarkOnlyWatch(unclosedID, ag, curSnap)
 						continue
 					}
 					targets = append(targets, lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig})
@@ -620,6 +621,7 @@ func runTestCommand(command string) string {
 					var targets []lingeringTarget
 					for _, ag := range active {
 						if ag.alreadyAtIdle {
+							armMarkOnlyWatch(id, ag, snap)
 							continue
 						}
 						targets = append(targets, lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig})

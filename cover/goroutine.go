@@ -163,6 +163,7 @@ var (
 	pendingTruncatedCuts []truncatedCutWindow
 	saidLingering        = map[string]bool{}
 	saidStackTruncated   bool
+	saidWatchCap         bool
 
 	// pendingEnd* carry finalized END-time tail metadata into reportCoverage
 	// while controlMu is held, keeping publishCoverage's signature unchanged.
@@ -1088,6 +1089,11 @@ func armMarkOnlyWatch(testID string, ag activeTestGoroutine, snap goroutineSnaps
 		return
 	}
 	if len(resumeWatches) >= maxResumeWatches {
+		if !saidWatchCap {
+			saidWatchCap = true
+			log.Printf("[keploy coverage] active resume watches reached cap (%d); skipping one-time guard for goroutine %d (test %s)",
+				maxResumeWatches, ag.info.id, testID)
+		}
 		return
 	}
 	var preserved map[uint64]struct{}
@@ -1880,6 +1886,7 @@ func resetGoroutineState() {
 	pendingTruncatedCuts = nil
 	saidLingering = map[string]bool{}
 	saidStackTruncated = false
+	saidWatchCap = false
 	pendingEndWindowCut = false
 	pendingEndLingering = nil
 	pendingEndContaminated = nil

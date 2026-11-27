@@ -1594,6 +1594,123 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 			}
 		})
 
+		t.Run("unclosed START->START and truncated END arm markOnly watch on drifted at-idle return", func(t *testing.T) {
+			t.Setenv(envEndWaitMS, "0")
+			midJob := &goroutineInfo{
+				id: 35, baseStatus: "chan receive", topLine: "/mod/drv/drv.go:5",
+				frames: []string{"example.com/drv.Call", "main.worker3"}, framePkgs: []string{"example.com/drv", "main"}, frameLines: []string{"/mod/drv/drv.go:5", "/app/w.go:21"},
+				createdByFn: "main.init", createdByPkg: "main",
+			}
+			popIdle := &goroutineInfo{
+				id: 35, baseStatus: "chan receive", topLine: "/app/q.go:10",
+				frames: []string{"main.(*appQueue).Pop", "main.worker3"}, framePkgs: []string{"main", "main"}, frameLines: []string{"/app/q.go:10", "/app/w.go:20"},
+				createdByFn: "main.init", createdByPkg: "main",
+			}
+
+			t.Run("unclosed START->START", func(t *testing.T) {
+				h := newGapHarness(t,
+					lines(appFile, 1), none(), // T0 (first-START sees midJob)
+					lines(appFile, 2), lines(workerFile, 9), // T2 (after unclosed T1), gap T2->T3 runs workerFile line 9!
+					lines(appFile, 3), // T3
+				)
+				h.ask("u1")
+				cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 35: midJob}}
+				snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+				// T0 records midJob as initial idle.
+				h.run("set-0/T0")
+
+				// Gap returns to popIdle; START T1 is drifted, then T1 parks back at midJob and END T1 is lost!
+				cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 35: popIdle}}
+				h.do("START set-0/T1", replyStartAskedBy("u1"))
+				cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 35: midJob}}
+				h.do("START set-0/T2", replyStartAskedBy("u1"))
+				if rw, armed := resumeWatches[35]; !armed || !rw.markOnly || rw.testID != "set-0/T1" {
+					t.Fatalf("expected markOnly watch armed for set-0/T1 on unclosed START->START, got armed=%v rw=%+v", armed, rw)
+				}
+				h.do("END set-0/T2", replyTaken)
+
+				// Gap T2->T3: worker departs midJob back to popIdle -> watch MUST mark gap afterCut:true!
+				cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 35: popIdle}}
+				h.run("set-0/T3")
+				bgs := h.backgrounds()
+				var foundAfterCut bool
+				for _, bg := range bgs {
+					if bg["after"] == "set-0/T2" && bg["before"] == "set-0/T3" {
+						if bg["afterCut"] != true {
+							t.Fatalf("gap T2->T3 BACKGROUND leaked as clean after lost END T1: %v", bg)
+						}
+						if ls, _ := bg["executedLinesByFile"].(map[string]interface{}); len(ls) != 0 {
+							t.Fatalf("gap T2->T3 afterCut BACKGROUND had non-empty lines: %v", ls)
+						}
+						foundAfterCut = true
+					}
+				}
+				if !foundAfterCut {
+					t.Fatalf("missing afterCut BACKGROUND record for gap T2->T3: %v", bgs)
+				}
+				if _, polluted := everGap[workerFile]; polluted {
+					t.Fatalf("gap T2->T3 polluted everGap with %s", workerFile)
+				}
+				if !strings.Contains(fmt.Sprint(h.test("set-0/T3")["contaminated"]), "tail:set-0/T1") {
+					t.Fatalf("T3 contaminated = %v, missing tail:set-0/T1", h.test("set-0/T3")["contaminated"])
+				}
+			})
+
+			t.Run("truncated END", func(t *testing.T) {
+				h := newGapHarness(t,
+					lines(appFile, 1), none(), // T0
+					lines(appFile, 2), none(), // T1 (truncated END while visible gid 35 is back at midJob)
+					lines(appFile, 3), lines(workerFile, 9), // T2, gap T2->T3 runs workerFile line 9!
+					lines(appFile, 4), // T3
+				)
+				h.ask("t1")
+				cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 35: midJob}}
+				snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+				h.run("set-0/T0")
+
+				// T1 starts drifted at popIdle, ends truncated with visible gid 35 back at midJob!
+				cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 35: popIdle}}
+				h.do("START set-0/T1", replyStartAskedBy("t1"))
+				cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 35: midJob}, truncated: true}
+				h.do("END set-0/T1", replyTaken)
+				if rw, armed := resumeWatches[35]; !armed || !rw.markOnly || rw.testID != "set-0/T1" {
+					t.Fatalf("expected markOnly watch armed for set-0/T1 on truncated END, got armed=%v rw=%+v", armed, rw)
+				}
+
+				// T2 complete snapshot (gid 35 still parked at midJob -> pending truncated cut clears, markOnly watch stays armed!).
+				cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 35: midJob}}
+				h.run("set-0/T2")
+
+				// Gap T2->T3: worker departs midJob back to popIdle -> watch MUST mark gap afterCut:true!
+				cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 35: popIdle}}
+				h.run("set-0/T3")
+				bgs := h.backgrounds()
+				var foundAfterCut bool
+				for _, bg := range bgs {
+					if bg["after"] == "set-0/T2" && bg["before"] == "set-0/T3" {
+						if bg["afterCut"] != true {
+							t.Fatalf("gap T2->T3 BACKGROUND leaked as clean after truncated END T1: %v", bg)
+						}
+						if ls, _ := bg["executedLinesByFile"].(map[string]interface{}); len(ls) != 0 {
+							t.Fatalf("gap T2->T3 afterCut BACKGROUND had non-empty lines: %v", ls)
+						}
+						foundAfterCut = true
+					}
+				}
+				if !foundAfterCut {
+					t.Fatalf("missing afterCut BACKGROUND record for gap T2->T3: %v", bgs)
+				}
+				if _, polluted := everGap[workerFile]; polluted {
+					t.Fatalf("gap T2->T3 polluted everGap with %s", workerFile)
+				}
+				if !strings.Contains(fmt.Sprint(h.test("set-0/T3")["contaminated"]), "tail:set-0/T1") {
+					t.Fatalf("T3 contaminated = %v, missing tail:set-0/T1", h.test("set-0/T3")["contaminated"])
+				}
+			})
+		})
+
 		t.Run("runnable at first START with no prior baseline fails closed when parked mid-job at same or deeper depth at END", func(t *testing.T) {
 			h := newGapHarness(t, lines(appFile, 3), none(), lines(appFile, 4))
 			runJobA := &goroutineInfo{
