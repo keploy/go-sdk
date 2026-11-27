@@ -183,22 +183,30 @@ func stubCoverage(t *testing.T, clearErrs []error, publishErr error) *[]string {
 	return &published
 }
 
-// A taken START's answers: before any BACKGROUND ask, and after an ask that
-// named token.
-const replyStartUnasked = "ACK proto=2 bg=-\n"
+// A taken command's v3 answers with default (enabled) goroutine-tail tracking:
+// non-START commands (END, BACKGROUND, TABLE), START before any BACKGROUND ask,
+// and START after an ask that named token.
+const (
+	defaultCaps       = "windowCut=true,contaminated=true,classMismatch=false,background=true,asyncExecutors=false,listenerContamination=false"
+	replyTaken        = "ACK proto=3 caps=" + defaultCaps + "\n"
+	replyStartUnasked = "ACK proto=3 bg=- caps=" + defaultCaps + "\n"
+)
 
-func replyStartAskedBy(token string) string { return "ACK proto=2 bg=" + token + "\n" }
+func replyStartAskedBy(token string) string {
+	return "ACK proto=3 bg=" + token + " caps=" + defaultCaps + "\n"
+}
 
 // encodeRecord is a test helper for records without executedBlocksByFile.
 func encodeRecord(testID string, lines map[string][]int, partial []string, overlap map[string][]int) ([]byte, error) {
 	return encodeRecordWithBlocks(testID, lines, nil, partial, overlap)
 }
 
-// resetGaps clears the between-tests state and stubs the reads and sends a
-// gap makes, for one test: snapshotLines answers {} unless the test sets it.
+// resetGaps clears the between-tests and goroutine-tail state and stubs the
+// reads and sends a gap makes, for one test: snapshotLines answers {} unless
+// the test sets it.
 func resetGaps(t *testing.T) {
 	t.Helper()
-	oldSnap, oldCov, oldSend, oldBuild := snapshotLines, snapshotCoverage, sendRecord, buildID
+	oldSnap, oldCov, oldSend, oldBuild, oldGor := snapshotLines, snapshotCoverage, sendRecord, buildID, snapshotGoroutines
 	snapshotLines = func() (map[string][]int, error) { return map[string][]int{}, nil }
 	snapshotCoverage = func() (map[string][]int, map[string][]int, error) {
 		l, err := snapshotLines()
@@ -210,17 +218,18 @@ func resetGaps(t *testing.T) {
 		prevTestID, bgAsked, bgToken, bgLost, bgShown, lastTest = "", false, "", 0, 0, ""
 		everGap = map[string]map[int]struct{}{}
 		indexSent, indexSockInfo, indexBgToken = false, nil, ""
+		resetGoroutineState()
 	}
 	clear()
 	t.Cleanup(func() {
-		snapshotLines, snapshotCoverage, sendRecord, buildID = oldSnap, oldCov, oldSend, oldBuild
+		snapshotLines, snapshotCoverage, sendRecord, buildID, snapshotGoroutines = oldSnap, oldCov, oldSend, oldBuild, oldGor
 		clear()
 	})
 }
 
 // TestEveryCommandIsAnswered pins the SDK's side of the control socket: every
 // command it reads gets one line before the close, ACK for a command taken and
-// IGNORED for one not taken, each with proto=2, so Keploy can read a close
+// IGNORED for one not taken, each with proto=3, so Keploy can read a close
 // with no answer as a command not taken.
 func TestEveryCommandIsAnswered(t *testing.T) {
 	failed := errors.New("failed")
@@ -289,17 +298,31 @@ func TestEveryCommandIsAnswered(t *testing.T) {
 	}
 }
 
-// TestTheAnswersCarryProto2 pins the field Keploy tells an SDK that answers
-// every command by: an older SDK closed some connections with no answer.
-func TestTheAnswersCarryProto2(t *testing.T) {
-	for reply, bg := range map[string]string{replyTaken: "", replyIgnored: "", replyStartUnasked: "bg=-", replyStartAskedBy("r7"): "bg=r7"} {
-		fields := strings.Fields(reply)
-		want := 2
-		if bg != "" {
-			want = 3
+// TestTheAnswersCarryProto3AndCaps pins the v3 control-socket reply format:
+// every command gets one line before close with ACK or IGNORED first, proto=3
+// second (compatible with proto>=2 parsers), optional bg=<token>, and caps=...
+// with no spaces inside caps.
+func TestTheAnswersCarryProto3AndCaps(t *testing.T) {
+	for _, row := range []struct {
+		reply string
+		want  []string
+	}{
+		{replyTaken, []string{"ACK", "proto=3", "caps=" + defaultCaps}},
+		{replyIgnored, []string{"IGNORED", "proto=3"}},
+		{replyStartUnasked, []string{"ACK", "proto=3", "bg=-", "caps=" + defaultCaps}},
+		{replyStartAskedBy("r7"), []string{"ACK", "proto=3", "bg=r7", "caps=" + defaultCaps}},
+	} {
+		if !strings.HasSuffix(row.reply, "\n") {
+			t.Fatalf("answer %q missing trailing newline", row.reply)
 		}
-		if len(fields) != want || fields[1] != "proto=2" || !strings.HasSuffix(reply, "\n") || (bg != "" && fields[2] != bg) {
-			t.Fatalf("answer %q: want one line, a word, proto=2 and then %q", reply, bg)
+		fields := strings.Fields(row.reply)
+		if len(fields) != len(row.want) {
+			t.Fatalf("answer %q fields = %v, want %v", row.reply, fields, row.want)
+		}
+		for i := range row.want {
+			if fields[i] != row.want[i] {
+				t.Fatalf("answer %q field[%d] = %q, want %q", row.reply, i, fields[i], row.want[i])
+			}
 		}
 	}
 	stubCoverage(t, nil, nil)
