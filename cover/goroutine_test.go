@@ -701,9 +701,55 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 		}
 	})
 
-	t.Run("N3 startup-backoff consumer re-baselines cleanly after settling in steady-state IO wait", func(t *testing.T) {
+	t.Run("N3 outboxPoller parked deeper in deliver is NOT re-baselined and stays tail:T1", func(t *testing.T) {
 		t.Setenv(envEndWaitMS, "0")
 		h := newGapHarness(t, lines(appFile, 3), none(), lines(appFile, 4), none(), lines(appFile, 5), none(), lines(appFile, 6))
+		idle := &goroutineInfo{
+			id: 15, baseStatus: "sleep", topLine: "/go/src/runtime/time.go:300",
+			frames: []string{"time.Sleep", "main.outboxPoller"}, framePkgs: []string{"time", "main"},
+			createdByFn: "main.main", createdByPkg: "main",
+		}
+		parked := &goroutineInfo{
+			id: 15, baseStatus: "select", topLine: "/go/src/net/http/transport.go:2700",
+			frames:      []string{"net/http.(*persistConn).roundTrip", "net/http.(*Transport).roundTrip", "main.deliver", "main.outboxPoller"},
+			framePkgs:   []string{"net/http", "net/http", "main", "main"},
+			createdByFn: "main.main", createdByPkg: "main",
+		}
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: idle}}
+		snapshotGoroutines = func() goroutineSnapshot { return cur }
+
+		// START T1 (idle) -> END T1 (parked in deliver, appFrameCount 2 > 1): windowCut!
+		h.do("START set-0/T1", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: parked}}
+		h.do("END set-0/T1", replyTaken)
+		if h.test("set-0/T1")["windowCut"] != true {
+			t.Fatalf("T1 windowCut = %v, want true", h.test("set-0/T1")["windowCut"])
+		}
+
+		// T2 (still parked): tail:T1!
+		h.run("set-0/T2")
+		if !reflect.DeepEqual(h.test("set-0/T2")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T2")["contaminated"])
+		}
+
+		// T3 (STILL parked in deeper main.deliver -> MUST NOT be re-baselined!): tail:T1!
+		h.do("START set-0/T3", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: idle}}
+		h.do("END set-0/T3", replyTaken)
+		if !reflect.DeepEqual(h.test("set-0/T3")["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("outboxPoller regression: T3 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T3")["contaminated"])
+		}
+
+		// T4 (back to idle): clean!
+		h.run("set-0/T4")
+		if _, hasCont := h.test("set-0/T4")["contaminated"]; hasCont {
+			t.Fatalf("T4 should be clean after outboxPoller returned to idle: %v", h.test("set-0/T4"))
+		}
+	})
+
+	t.Run("N3 same-depth consumer moves to one-time resume watch and catches wakeup", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		h := newGapHarness(t, lines(appFile, 3), none(), lines(appFile, 4), none(), lines(appFile, 5), none(), lines(appFile, 6), none(), lines(appFile, 7))
 		backoff := &goroutineInfo{
 			id: 15, baseStatus: "sleep", topLine: "/app/consumer.go:12",
 			frames: []string{"time.Sleep", "main.consumerLoop"}, framePkgs: []string{"time", "main"},
@@ -711,13 +757,18 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 		}
 		steady := &goroutineInfo{
 			id: 15, baseStatus: "IO wait", topLine: "/app/consumer.go:25",
-			frames: []string{"internal/poll.runtime_pollWait", "main.consume", "main.consumerLoop"}, framePkgs: []string{"internal/poll", "main", "main"},
+			frames: []string{"internal/poll.runtime_pollWait", "main.consumerLoop"}, framePkgs: []string{"internal/poll", "main"},
+			createdByFn: "main.main", createdByPkg: "main",
+		}
+		resumed := &goroutineInfo{
+			id: 15, baseStatus: "sleep", topLine: "/app/consumer.go:40",
+			frames: []string{"time.Sleep", "main.handleMsg", "main.consumerLoop"}, framePkgs: []string{"time", "main", "main"},
 			createdByFn: "main.main", createdByPkg: "main",
 		}
 		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: backoff}}
 		snapshotGoroutines = func() goroutineSnapshot { return cur }
 
-		// T1 starts while consumer is in backoff Sleep; consumer connects into steady IO wait.
+		// T1 starts in backoff Sleep; consumer connects into steady IO wait (same appFrameCount=1).
 		h.do("START set-0/T1", replyStartUnasked)
 		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: steady}}
 		h.do("END set-0/T1", replyTaken)
@@ -731,10 +782,54 @@ func TestUnclosedWindowAndLingeringTailStateMachine(t *testing.T) {
 			t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", h.test("set-0/T2")["contaminated"])
 		}
 
-		// T3: STILL at steady IO wait (streak 2 -> re-baselined & cleared!).
+		// T3: STILL at steady IO wait (streak 2 -> moves onto one-time resume watch; T3 is clean while parked!).
 		h.run("set-0/T3")
 		if _, hasCont := h.test("set-0/T3")["contaminated"]; hasCont {
-			t.Fatalf("N3 failed: startup-backoff consumer stuck forever on T3: %v", h.test("set-0/T3"))
+			t.Fatalf("N3 failed: steady consumer should be clean while parked on resume watch, got %v", h.test("set-0/T3"))
+		}
+
+		// T4: consumer leaves steady IO wait (resumes inside T4!) -> resume watch MUST fire on T4!
+		h.do("START set-0/T4", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 15: resumed}}
+		h.do("END set-0/T4", replyTaken)
+		t4 := h.test("set-0/T4")
+		if !reflect.DeepEqual(t4["contaminated"], []interface{}{"tail:set-0/T1"}) {
+			t.Fatalf("resume watch failed: T4 contaminated = %v, want [tail:set-0/T1]", t4["contaminated"])
+		}
+		if t4["windowCut"] != true {
+			t.Fatalf("T4 should also be windowCut while resumed work is active: %v", t4)
+		}
+	})
+
+	t.Run("N3 mid-job worker at START is not permanently whitelisted for later tests", func(t *testing.T) {
+		t.Setenv(envEndWaitMS, "0")
+		h := newGapHarness(t, lines(appFile, 3), none(), lines(appFile, 4))
+		idle := &goroutineInfo{
+			id: 16, baseStatus: "chan receive", topLine: "/app/worker.go:10",
+			frames: []string{"main.worker"}, framePkgs: []string{"main"},
+			createdByFn: "main.init", createdByPkg: "main",
+		}
+		deliver := &goroutineInfo{
+			id: 16, baseStatus: "select", topLine: "/go/src/net/http/transport.go:2700",
+			frames:      []string{"net/http.(*persistConn).roundTrip", "main.deliver", "main.worker"},
+			framePkgs:   []string{"net/http", "main", "main"},
+			createdByFn: "main.init", createdByPkg: "main",
+		}
+		// T1 starts AND ends while worker 16 happens to be parked in deliver
+		// (background/startup work), then finishes in the gap before T2.
+		cur := goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 16: deliver}}
+		snapshotGoroutines = func() goroutineSnapshot { return cur }
+		h.run("set-0/T1")
+
+		// Before T2 starts, worker 16 returned to idle. During T2 it dispatches
+		// a job and is parked in deliver at END T2. deliver must NOT have been
+		// whitelisted as idle by T1's START!
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 16: idle}}
+		h.do("START set-0/T2", replyStartUnasked)
+		cur = goroutineSnapshot{all: map[uint64]*goroutineInfo{1: {id: 1}, 16: deliver}}
+		h.do("END set-0/T2", replyTaken)
+		if h.test("set-0/T2")["windowCut"] != true {
+			t.Fatalf("T2 missed worker parked in deliver because T1 START poisoned idle history: %v", h.test("set-0/T2"))
 		}
 	})
 

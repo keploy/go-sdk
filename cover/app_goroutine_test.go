@@ -62,7 +62,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -75,9 +77,12 @@ var (
 	childHits  atomic.Int64
 	poolHits   atomic.Int64
 
-	gateMu   sync.Mutex
-	gates    = map[string]*asyncGate{}
-	poolJobs = make(chan string, 8)
+	gateMu       sync.Mutex
+	gates        = map[string]*asyncGate{}
+	poolJobs     = make(chan string, 8)
+	consumerMsgs = make(chan string, 4)
+	consumerMode atomic.Int32
+	consumerHits atomic.Int64
 )
 
 type asyncGate struct {
@@ -159,8 +164,64 @@ func poolWorker() {
 	}
 }
 
+func backoffConsumer() {
+	// Starts in startup backoff sleep until consumerMode flips to 1, then
+	// settles into steady-state <-consumerMsgs (same app-frame depth = 1).
+	for consumerMode.Load() == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	for msg := range consumerMsgs {
+		g := getGate(msg)
+		<-g.release
+		if msg != "" {
+			consumerHits.Add(1)
+		}
+		close(g.done)
+	}
+}
+
+func slowFlushHandler(w http.ResponseWriter, r *http.Request) {
+	g := getGate(r.URL.Query().Get("gate"))
+	defer close(g.done)
+	w.Header().Set("Content-Length", "7")
+	_, _ = w.Write([]byte("flushed"))
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	<-g.release
+}
+
 func init() {
 	go poolWorker()
+	if os.Getenv("ENABLE_BACKOFF_CONSUMER") == "1" {
+		go backoffConsumer()
+	}
+
+	http.HandleFunc("/slow-flush", slowFlushHandler)
+	http.HandleFunc("/consumer-connect", func(w http.ResponseWriter, r *http.Request) {
+		consumerMode.Store(1)
+		// Wait until backoffConsumer transitions off time.Sleep onto <-consumerMsgs.
+		buf := make([]byte, 128<<10)
+		for i := 0; i < 200; i++ {
+			n := runtime.Stack(buf, true)
+			s := string(buf[:n])
+			idx := strings.Index(s, "main.backoffConsumer(")
+			if idx >= 0 {
+				hdr := strings.LastIndex(s[:idx], "goroutine ")
+				if hdr >= 0 && strings.Contains(s[hdr:idx], "[chan receive") {
+					break
+				}
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+		fmt.Fprint(w, "connected")
+	})
+	http.HandleFunc("/consumer-send", func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("gate")
+		_ = getGate(name)
+		consumerMsgs <- name
+		fmt.Fprint(w, "sent")
+	})
 
 	http.HandleFunc("/orders", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
@@ -225,18 +286,25 @@ func init() {
 		close(g.release)
 		if r.URL.Query().Get("wait") == "1" {
 			<-g.done
-			// Poll runtime.Stack until the released worker has fully exited
-			// (or returned to idle <-poolJobs), avoiding sleep-based races.
+			// Poll runtime.Stack for "<fn>(" (matches only the function's own
+			// call frame, never ".func1(" closures or "created by" lines) so
+			// teardown is verified deterministically without sleep races.
 			fn := r.URL.Query().Get("fn")
 			if fn != "" {
 				buf := make([]byte, 128<<10)
-				needle := []byte(fn)
-				for i := 0; i < 200; i++ {
+				needle := []byte(fn + "(")
+				exited := false
+				for i := 0; i < 400; i++ {
 					n := runtime.Stack(buf, true)
 					if !bytes.Contains(buf[:n], needle) {
+						exited = true
 						break
 					}
 					time.Sleep(2 * time.Millisecond)
+				}
+				if !exited {
+					http.Error(w, "timed out waiting for "+fn+" to exit", http.StatusInternalServerError)
+					return
 				}
 			}
 		}
@@ -362,7 +430,7 @@ func TestRealGoApp_P6FraudAlertGoroutineTailAcrossCleanGap(t *testing.T) {
 		t.Fatalf("START T6: %q", got)
 	}
 	get(t, a, "/orders?id=6")
-	get(t, a, "/release?gate=p6&wait=1&fn=fraudAlert")
+	getOK(t, a, "/release?gate=p6&wait=1&fn=fraudAlert")
 	if got := send(t, k.sock, "END set-0/T6"); got != replyTaken {
 		t.Fatalf("END T6: %q", got)
 	}
@@ -537,7 +605,7 @@ func TestRealGoApp_MultiWindowLingeringGoroutine(t *testing.T) {
 	}
 
 	// Deterministically release T1's goroutine and wait for it to finish before T4!
-	get(t, a, "/release?gate=multi&wait=1&fn=gatedWork")
+	getOK(t, a, "/release?gate=multi&wait=1&fn=gatedWork")
 
 	rec4 := measure(t, k, a, "set-0/T4", "/twin?n=4")
 	if _, hasCut := rec4["windowCut"]; hasCut {
@@ -588,7 +656,7 @@ func TestRealGoApp_B1ChildSpawnedInGapStaysTracked(t *testing.T) {
 	}
 
 	// In gap T2->T3: release parent "p1" -> parent spawns child (blocked on "c1") and EXITS!
-	get(t, a, "/release?gate=p1&wait=1&fn=parentSpawnsChildAndExits")
+	getOK(t, a, "/release?gate=p1&wait=1&fn=parentSpawnsChildAndExits")
 
 	// T3 starts: parent is DEAD, child is ALIVE -> child MUST be adopted into T1's tail!
 	if got := send(t, k.sock, "START set-0/T3"); got != replyStartAskedBy("b1") {
@@ -596,7 +664,7 @@ func TestRealGoApp_B1ChildSpawnedInGapStaysTracked(t *testing.T) {
 	}
 	get(t, a, "/twin?n=3")
 	// Release child INSIDE T3 so child executes childHits.Add(1) inside T3 and exits!
-	get(t, a, "/release?gate=c1&wait=1&fn=publishChildAlert")
+	getOK(t, a, "/release?gate=c1&wait=1&fn=publishChildAlert")
 	if got := send(t, k.sock, "END set-0/T3"); got != replyTaken {
 		t.Fatalf("END T3: %q", got)
 	}
@@ -663,7 +731,7 @@ func TestRealGoApp_B2PreExistingWorkerPoolTailDetected(t *testing.T) {
 		t.Fatalf("START T2: %q", got)
 	}
 	get(t, a, "/twin?n=2")
-	get(t, a, "/release?gate=pool1&wait=1&fn=poolProcess")
+	getOK(t, a, "/release?gate=pool1&wait=1&fn=poolProcess")
 	if got := send(t, k.sock, "END set-0/T2"); got != replyTaken {
 		t.Fatalf("END T2: %q", got)
 	}
@@ -734,7 +802,7 @@ func TestRealGoApp_P7RecurringAsyncTailsNeverPolluteBackground(t *testing.T) {
 		t.Fatalf("T1 windowCut = %v, want true", rec1["windowCut"])
 	}
 	// Deterministically release T1's notifyAsync INSIDE gap T1->T2.
-	get(t, a, "/release?gate=n1&wait=1&fn=notifyAsync")
+	getOK(t, a, "/release?gate=n1&wait=1&fn=notifyAsync")
 
 	// T2: also spawns notifyAsync blocked on "n2".
 	if got := send(t, k.sock, "START set-0/T2"); got != replyStartAskedBy("p7") {
@@ -752,7 +820,7 @@ func TestRealGoApp_P7RecurringAsyncTailsNeverPolluteBackground(t *testing.T) {
 		t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", rec2["contaminated"])
 	}
 	// Deterministically release T2's notifyAsync INSIDE gap T2->T3.
-	get(t, a, "/release?gate=n2&wait=1&fn=notifyAsync")
+	getOK(t, a, "/release?gate=n2&wait=1&fn=notifyAsync")
 
 	// T3: synchronous twin (immediately after cut T2 -> contaminated:["tail:set-0/T2"]).
 	if got := send(t, k.sock, "START set-0/T3"); got != replyStartAskedBy("p7") {
@@ -859,4 +927,148 @@ func TestRealGoApp_Proto3CapsAndKillSwitch(t *testing.T) {
 	if _, hasCut := rec["windowCut"]; hasCut {
 		t.Fatalf("kill-switch record unexpectedly had windowCut: %v", rec)
 	}
+}
+
+func getOK(t *testing.T, a app, path string) {
+	t.Helper()
+	res, err := http.Get("http://" + a.addr + path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s returned status %d: %s", path, res.StatusCode, body)
+	}
+}
+
+// TestRealGoApp_N2NewKeepAliveSlowFlushClearsWhenHandlerReturns verifies end-to-end
+// on a real -cover binary that a slow-flushing handler on a BRAND NEW HTTP/1
+// keep-alive connection triggers windowCut+contaminated:["window-cut"] on T1,
+// marks T2 tail:T1, and clears on T3 once the handler returns even though the
+// same keep-alive connection stays open and reused!
+func TestRealGoApp_N2NewKeepAliveSlowFlushClearsWhenHandlerReturns(t *testing.T) {
+	k := newKeploySide(t)
+	bin := buildAsyncApp(t, k)
+	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=30")
+
+	tr := &http.Transport{MaxIdleConns: 1, MaxIdleConnsPerHost: 1, DisableKeepAlives: false}
+	t.Cleanup(tr.CloseIdleConnections)
+	client := &http.Client{Transport: tr}
+
+	// T1 opens a brand-new keep-alive TCP connection to /slow-flush (writes
+	// Content-Length body + Flusher.Flush, then stays inside slowFlushHandler).
+	if got := send(t, k.sock, "START set-0/T1"); got != replyStartUnasked {
+		t.Fatalf("START T1: %q", got)
+	}
+	resp, err := client.Get("http://" + a.addr + "/slow-flush?gate=sf1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if got := send(t, k.sock, "END set-0/T1"); got != replyTaken {
+		t.Fatalf("END T1: %q", got)
+	}
+	rec1 := readNextRecord(t, k, a)
+	if rec1["windowCut"] != true {
+		t.Fatalf("N2 e2e: T1 windowCut = %v, want true (rec=%v)", rec1["windowCut"], rec1)
+	}
+	if !reflect.DeepEqual(rec1["contaminated"], []any{"window-cut"}) {
+		t.Fatalf("N4 e2e: T1 contaminated = %v, want [window-cut]", rec1["contaminated"])
+	}
+
+	// Release slowFlushHandler so conn.serve returns to idle keep-alive while
+	// keeping the TCP connection open!
+	getOK(t, a, "/release?gate=sf1&wait=1&fn=slowFlushHandler")
+
+	// T2 reuses that SAME keep-alive connection (immediate post-cut boundary -> tail:T1).
+	if got := send(t, k.sock, "START set-0/T2"); got != replyStartUnasked {
+		t.Fatalf("START T2: %q", got)
+	}
+	var reused2 bool
+	req2, _ := http.NewRequest("GET", "http://"+a.addr+"/twin?n=2", nil)
+	req2 = req2.WithContext(httptrace.WithClientTrace(req2.Context(), &httptrace.ClientTrace{
+		GotConn: func(info httptrace.GotConnInfo) { reused2 = info.Reused },
+	}))
+	r2, err := client.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, r2.Body)
+	_ = r2.Body.Close()
+	if !reused2 {
+		t.Fatal("expected T2 to reuse the same keep-alive connection from T1")
+	}
+	if got := send(t, k.sock, "END set-0/T2"); got != replyTaken {
+		t.Fatalf("END T2: %q", got)
+	}
+	rec2 := readNextRecord(t, k, a)
+	if !reflect.DeepEqual(rec2["contaminated"], []any{"tail:set-0/T1"}) {
+		t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", rec2["contaminated"])
+	}
+
+	// T3 reuses the SAME keep-alive connection -> MUST be 100% clean!
+	if got := send(t, k.sock, "START set-0/T3"); got != replyStartUnasked {
+		t.Fatalf("START T3: %q", got)
+	}
+	req3, _ := http.NewRequest("GET", "http://"+a.addr+"/twin?n=3", nil)
+	r3, err := client.Do(req3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, r3.Body)
+	_ = r3.Body.Close()
+	if got := send(t, k.sock, "END set-0/T3"); got != replyTaken {
+		t.Fatalf("END T3: %q", got)
+	}
+	rec3 := readNextRecord(t, k, a)
+	if _, hasCut := rec3["windowCut"]; hasCut {
+		t.Fatalf("N2 e2e failed: T3 got windowCut on idle keep-alive conn: %v", rec3)
+	}
+	if _, hasCont := rec3["contaminated"]; hasCont {
+		t.Fatalf("N2 e2e failed: T3 falsely contaminated on idle keep-alive conn: %v", rec3)
+	}
+}
+
+// TestRealGoApp_N3BackoffConsumerRebaselinesAndResumeWatchCatchesWakeup verifies
+// end-to-end on a real -cover binary that a pre-existing consumer transitioning
+// from startup time.Sleep backoff to steady-state <-consumerMsgs settles cleanly
+// onto a one-time resume watch (T3 clean while parked) AND honestly catches the
+// test in which it next wakes up (T4 contaminated tail:T1)!
+func TestRealGoApp_N3BackoffConsumerRebaselinesAndResumeWatchCatchesWakeup(t *testing.T) {
+	k := newKeploySide(t)
+	bin := buildAsyncApp(t, k)
+	a := startWithEnv(t, bin, "KEPLOY_GO_END_WAIT_MS=30", "ENABLE_BACKOFF_CONSUMER=1")
+
+	// T1: backoffConsumer transitions from time.Sleep backoff to <-consumerMsgs.
+	rec1 := measure(t, k, a, "set-0/T1", "/consumer-connect")
+	if rec1["windowCut"] != true {
+		t.Fatalf("T1 windowCut = %v, want true (rec=%v)", rec1["windowCut"], rec1)
+	}
+
+	// T2: consumer parked at <-consumerMsgs (streak 1 -> tail:T1).
+	rec2 := measure(t, k, a, "set-0/T2", "/twin?n=2")
+	if !reflect.DeepEqual(rec2["contaminated"], []any{"tail:set-0/T1"}) {
+		t.Fatalf("T2 contaminated = %v, want [tail:set-0/T1]", rec2["contaminated"])
+	}
+
+	// T3: consumer STILL parked at <-consumerMsgs (streak 2 -> moves onto resume watch; T3 is clean!).
+	rec3 := measure(t, k, a, "set-0/T3", "/twin?n=3")
+	if _, hasCut := rec3["windowCut"]; hasCut {
+		t.Fatalf("T3 should be clean while consumer parked on resume watch, got windowCut: %v", rec3)
+	}
+	if _, hasCont := rec3["contaminated"]; hasCont {
+		t.Fatalf("T3 should be clean while consumer parked on resume watch, got contaminated: %v", rec3)
+	}
+
+	// T4: message wakes consumer off <-consumerMsgs -> resume watch MUST fire on T4!
+	rec4 := measure(t, k, a, "set-0/T4", "/consumer-send?gate=cmsg1")
+	if !reflect.DeepEqual(rec4["contaminated"], []any{"tail:set-0/T1"}) {
+		t.Fatalf("N3 resume watch e2e failed: T4 contaminated = %v, want [tail:set-0/T1] (rec=%v)", rec4["contaminated"], rec4)
+	}
+	if rec4["windowCut"] != true {
+		t.Fatalf("T4 windowCut = %v, want true while consumer processes cmsg1", rec4["windowCut"])
+	}
+	getOK(t, a, "/release?gate=cmsg1&wait=1")
 }

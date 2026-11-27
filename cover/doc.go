@@ -67,22 +67,31 @@
 // newly-spawned app-relevant goroutines AND pre-existing app workers/handlers
 // still off their quiescent START baseline (excluding go-sdk's own goroutines,
 // idle stdlib keep-alive/housekeeping goroutines, and any patterns listed in
-// KEPLOY_GO_IGNORE_GOROUTINES), polling adaptively up to KEPLOY_GO_END_WAIT_MS
-// (default 200ms, max 2000ms; 0 checks immediately) for them to drain. If any
-// remain active when the wait expires, the test record carries "windowCut":true
-// and "lingeringGoroutines", subsequent tests while those goroutines (or any
-// child goroutines they spawn, adopted via Go 1.21+ "created by ... in
-// goroutine N") remain active (plus the immediate next test) carry
-// "contaminated":["tail:<test>"] with overlapLinesByFile omitted, and any
-// BACKGROUND record emitted for a gap after a cut window carries
-// "afterCut":true with an empty executedLinesByFile (and does not pollute
-// everGap) so neither v3 nor older v2 collectors can absorb recurring async
-// tails into calibrated stable background. A START arriving without a preceding
-// END marks the new test with "contaminated":["unclosed:<test>"]. Scope note:
-// stack snapshots cannot observe a child goroutine that is both spawned and
-// exits strictly between two snapshots (nor a grandchild orphaned when its
-// intermediate parent spawns and exits between snapshots), nor a dormant
-// time.AfterFunc timer that has not yet fired by END; parent-goid child
+// KEPLOY_GO_IGNORE_GOROUTINES — set this comma-separated substring list if the
+// app lazily starts an intentional permanent background goroutine during a
+// request), polling adaptively up to KEPLOY_GO_END_WAIT_MS (default 200ms, max
+// 2000ms; 0 checks immediately) for them to drain. If any remain active when
+// the wait expires (or if runtime.Stack hits its 16 MiB cap, marked
+// "stack-truncated"), the test record carries "windowCut":true,
+// "lingeringGoroutines", and "contaminated":["window-cut"] (when no start-time
+// contamination mark is already present, so older proto=2 collectors that
+// ignore windowCut still fail closed) with overlapLinesByFile omitted.
+// Subsequent tests while those goroutines (or any newly-spawned app-relevant
+// children adopted via Go 1.21+ "created by ... in goroutine N") remain active
+// (plus the immediate next test) carry "contaminated":["tail:<test>"] with
+// overlapLinesByFile omitted. Pre-existing goroutines that transition to a
+// different quiescent steady state at or above their baseline app-frame depth
+// across consecutive STARTs move onto a one-time resume watch (clearing clean
+// tests while parked, and marking the test in which they next wake up with
+// "tail:<test>"). Any BACKGROUND record emitted for a gap after a cut window
+// carries "afterCut":true with an empty executedLinesByFile (and does not
+// pollute everGap) so neither v3 nor older v2 collectors can absorb recurring
+// async tails into calibrated stable background. A START arriving without a
+// preceding END marks the new test with "contaminated":["unclosed:<test>"].
+// Scope note: stack snapshots cannot observe a child goroutine that is both
+// spawned and exits strictly between two snapshots (nor a grandchild orphaned
+// when its intermediate parent spawns and exits between snapshots), nor a
+// dormant time.AfterFunc timer that has not yet fired by END; parent-goid child
 // adoption relies on Go 1.21+ "created by ... in goroutine N" stack lines and
 // is inactive on Go 1.20 toolchains.
 //

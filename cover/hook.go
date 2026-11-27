@@ -404,7 +404,7 @@ func runTestCommand(command string) string {
 		ignore := ignoreGoroutinePatterns()
 		var curSnap goroutineSnapshot
 		haveSnap := false
-		if tracking || len(lingeringTails) > 0 || len(pendingTruncatedCuts) > 0 {
+		if tracking || len(lingeringTails) > 0 || len(pendingTruncatedCuts) > 0 || len(resumeWatches) > 0 {
 			curSnap = snapshotGoroutines()
 			haveSnap = true
 		}
@@ -429,7 +429,7 @@ func runTestCommand(command string) string {
 				for i, ag := range alive {
 					targets[i] = lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig}
 				}
-				addLingeringTail(unclosedID, targets, captureKnownGidsExcluding(curSnap, targets))
+				addLingeringTail(unclosedID, targets, capturePreExistingChildren(curSnap, targets))
 			}
 		}
 		// Compute whether the gap since prevTestID followed a cut window or ran
@@ -545,10 +545,26 @@ func runTestCommand(command string) string {
 						active = findActiveTestGoroutines(snap, testStartGids, testStartIdle, covered, ignore)
 					}
 				}
-				// Resolve any prior truncated cuts and adopt/prune lingering
-				// goroutines before this END completes so subsequent gaps and
-				// tests are clean as soon as all lingering work finishes.
+				// Check any one-time resume watches (so a re-baselined
+				// pre-existing goroutine that woke up during this test marks
+				// this test contaminated immediately), resolve any prior
+				// truncated cuts, and adopt/prune lingering goroutines before
+				// this END completes.
 				if !snap.truncated {
+					if triggered := checkResumeWatches(snap, covered, ignore); len(triggered) > 0 {
+						seen := make(map[string]struct{}, len(testContaminated)+len(triggered))
+						for _, m := range testContaminated {
+							seen[m] = struct{}{}
+						}
+						for _, tid := range triggered {
+							mark := "tail:" + tid
+							if _, dup := seen[mark]; !dup {
+								seen[mark] = struct{}{}
+								testContaminated = append(testContaminated, mark)
+							}
+						}
+						testContaminated = capContaminated(testContaminated)
+					}
 					resolveTruncatedCutWindows(snap, covered, ignore)
 					pruneLingeringTails(snap, covered, ignore, false)
 					// Refresh lastCompleteGids with non-SDK gids from this complete END.
@@ -567,7 +583,7 @@ func runTestCommand(command string) string {
 						for i, ag := range active {
 							targets[i] = lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig}
 						}
-						addLingeringTail(id, targets, captureKnownGidsExcluding(snap, targets))
+						addLingeringTail(id, targets, capturePreExistingChildren(snap, targets))
 					}
 					pendingTruncatedCuts = append(pendingTruncatedCuts, truncatedCutWindow{
 						testID:    id,
@@ -585,7 +601,7 @@ func runTestCommand(command string) string {
 						targets[i] = lingeringTarget{gid: ag.info.id, mustExit: ag.mustExit, idleSig: ag.idleSig}
 					}
 					lingeringNames = summarizeActiveNames(active, covered)
-					addLingeringTail(id, targets, captureKnownGidsExcluding(snap, targets))
+					addLingeringTail(id, targets, capturePreExistingChildren(snap, targets))
 					prevWindowCutTestID = id
 					logLingeringOnce(id, lingeringNames)
 				}
